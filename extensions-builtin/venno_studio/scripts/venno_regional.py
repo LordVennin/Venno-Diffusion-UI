@@ -33,6 +33,7 @@ import torch.nn.functional as F
 from PIL import Image
 
 from backend import memory_management
+from backend.sampling.sampling_function import compute_cond_indices, compute_cond_mark
 from modules import extra_networks, scripts
 from modules.prompt_parser import SdConditioning
 
@@ -74,10 +75,36 @@ class Region:
         key = (h, w, x.ndim, x.device, x.dtype)
         if key not in self._cache:
             m = F.interpolate(self.mask[None, None].float(), size=(h, w), mode="area")
+            # soften edges by ~1 latent pixel so neighbouring regions blend instead of leaving a seam
+            m = F.avg_pool2d(F.pad(m, (1, 1, 1, 1), mode="replicate"), kernel_size=3, stride=1)
             if x.ndim == 5:
                 m = m.unsqueeze(2)
             self._cache[key] = (m * self.strength).to(device=x.device, dtype=x.dtype)
         return self._cache[key]
+
+
+def _slice_batch(value, i: int, n: int, total: int):
+    """Take chunk i of n from anything batched along dim 0 (tensors, nested lists / dicts)."""
+    if isinstance(value, torch.Tensor):
+        return value.chunk(n)[i] if value.ndim > 0 and value.shape[0] == total else value
+    if isinstance(value, (list, tuple)):
+        return type(value)(_slice_batch(v, i, n, total) for v in value)
+    if isinstance(value, dict):
+        return {k: _slice_batch(v, i, n, total) for k, v in value.items()}
+    return value
+
+
+def chunk_conditioning(c: dict, i: int, n: int, total: int, sigma: torch.Tensor) -> dict:
+    """Conditioning dict for a single cond chunk, with transformer_options describing just that chunk."""
+    out = {k: (_slice_batch(v, i, n, total) if k not in ("transformer_options", "control_model") else v) for k, v in c.items()}
+    if "transformer_options" in c:
+        to = dict(c["transformer_options"])
+        to["cond_or_uncond"] = [0]
+        to["sigmas"] = sigma
+        to["cond_mark"] = compute_cond_mark(cond_or_uncond=[0], sigmas=sigma)
+        to["cond_indices"], to["uncond_indices"] = compute_cond_indices(cond_or_uncond=[0], sigmas=sigma)
+        out["transformer_options"] = to
+    return out
 
 
 def build_wrapper(regions: list[Region], base_strength: float, sigma_end: float, previous_wrapper=None):
@@ -120,8 +147,9 @@ def build_wrapper(regions: list[Region], base_strength: float, sigma_end: float,
             acc = base * w_base
             wsum = w_base.clone()
 
+            base_c = chunk_conditioning(c, i, n, x.shape[0], ti)
             for region, m in zip(regions, masks):
-                ci = dict(c)
+                ci = dict(base_c)
                 ci["c_crossattn"] = region.cond.to(device=crossattn[i].device, dtype=crossattn[i].dtype).expand(bsz, -1, -1)
                 pred = call_model(apply_model, xi, ti, ci, [COND])
                 acc = acc + pred * m
