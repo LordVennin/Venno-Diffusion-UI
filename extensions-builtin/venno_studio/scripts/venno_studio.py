@@ -1,7 +1,7 @@
 """
 Venno Studio: serves the canvas front-end and a few helper endpoints.
 
-Generation itself goes through the standard /sdapi/v1/txt2img and /sdapi/v1/img2img
+Generation goes through the standard /sdapi/v1/txt2img and /sdapi/v1/img2img
 endpoints (with the "venno regional prompting" and "controlnet" always-on scripts),
 so queueing, progress and interruption behave exactly like the rest of Forge.
 """
@@ -94,16 +94,7 @@ def _refresh():
         pass
 
 
-def on_app_started(demo, app: FastAPI):
-    api_only = demo is None
-
-    # Studio needs the generation API even when the classic UI was launched without --api
-    if not (cmd_opts.api or cmd_opts.nowebui):
-        from modules.api.api import Api
-        from modules.call_queue import queue_lock
-
-        Api(app, queue_lock)
-
+def on_app_started(_demo, app: FastAPI):
     app.add_api_route("/venno/api/info", _info, methods=["GET"])
 
     def refresh():
@@ -120,13 +111,10 @@ def on_app_started(demo, app: FastAPI):
     app.add_api_route("/studio", studio_index, methods=["GET"], include_in_schema=False)
     app.add_api_route("/studio/", studio_index, methods=["GET"], include_in_schema=False)
 
-    if api_only:
-        app.add_api_route("/", lambda: RedirectResponse("/studio/"), methods=["GET"], include_in_schema=False)
-        port = cmd_opts.port or 7860
-        print(f"[Venno] Studio running on: http://127.0.0.1:{port}/")
-        _maybe_open_browser(port)
-    else:
-        print("[Venno] Studio available at /studio/")
+    app.add_api_route("/", lambda: RedirectResponse("/studio/"), methods=["GET"], include_in_schema=False)
+    port = cmd_opts.port or 7860
+    print(f"[Venno] Studio running on: http://127.0.0.1:{port}/")
+    _maybe_open_browser(port)
 
 
 def _maybe_open_browser(port: int):

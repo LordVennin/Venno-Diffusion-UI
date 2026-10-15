@@ -1402,7 +1402,8 @@ class StableDiffusionProcessingTxt2Img(StableDiffusionProcessing):
         fp_additional_modules = getattr(shared.opts, "forge_additional_modules")
 
         reload = False
-        if "Use same choices" not in (getattr(self, "hr_additional_modules", []) or []):
+        hr_modules = getattr(self, "hr_additional_modules", None)
+        if hr_modules is not None and "Use same choices" not in hr_modules:  # None (e.g. API default) = use same choices
             modules_changed = main_entry.modules_change(self.hr_additional_modules, preset=None, save=False, refresh=False)
             if modules_changed:
                 reload = True

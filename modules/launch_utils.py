@@ -529,7 +529,7 @@ def configure_comfy_yaml(comfy_yaml: Path):
 
 
 def start():
-    print(f"Launching {'Venno Studio' if '--nowebui' in sys.argv else 'Web UI (classic)'} with arguments: {shlex.join(sys.argv[1:])}")
+    print(f"Launching Venno Studio with arguments: {shlex.join(sys.argv[1:])}")
 
     from modules import logging_config
 
@@ -537,10 +537,7 @@ def start():
 
     import webui
 
-    if "--nowebui" in sys.argv:
-        webui.api_only()
-    else:
-        webui.webui()
+    webui.api_only()
 
     from modules_forge import main_thread
 

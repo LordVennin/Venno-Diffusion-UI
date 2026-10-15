@@ -23,7 +23,7 @@ from PIL import PngImagePlugin
 
 import modules.shared as shared
 import modules.textual_inversion.textual_inversion
-from modules import errors, images, infotext_utils, postprocessing, restart, script_callbacks, scripts, sd_models, sd_samplers, sd_schedulers, shared_items, ui
+from modules import errors, images, infotext_utils, postprocessing, restart, script_callbacks, scripts, sd_models, sd_samplers, sd_schedulers, shared_items
 from modules.api import models
 from modules.processing import StableDiffusionProcessingImg2Img, StableDiffusionProcessingTxt2Img, process_extra_images, process_images
 from modules.progress import add_task_to_queue, create_task_id, current_task, finish_task, start_task
@@ -248,7 +248,7 @@ class Api:
         img2img_script_runner = scripts.scripts_img2img
 
         if not txt2img_script_runner.scripts or not img2img_script_runner.scripts:
-            ui.create_ui()
+            scripts.initialize_scripts_headless()
 
         if not txt2img_script_runner.scripts:
             txt2img_script_runner.initialize_scripts(False)

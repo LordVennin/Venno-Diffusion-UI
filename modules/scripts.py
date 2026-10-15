@@ -1067,3 +1067,42 @@ def reload_script_body_only():
 
 
 reload_scripts = load_scripts  # compatibility alias
+
+
+def initialize_scripts_headless():
+    """
+    Venno: there is no Gradio page. Scripts still declare their parameters as Gradio
+    components, so build those components once (never rendered) to assign each
+    script its argument slots for the API.
+    """
+    global scripts_current
+
+    from modules import script_callbacks
+
+    # extension settings used to be registered while building the Settings page
+    script_callbacks.ui_settings_callback()
+
+    with gr.Blocks(analytics_enabled=False):
+        # stand-ins for classic-UI components that some extensions (ControlNet) attach events to
+        for tab in ("txt2img", "img2img"):
+            gr.Button(visible=False, elem_id=f"{tab}_generate")
+            gr.Slider(visible=False, elem_id=f"{tab}_width")
+            gr.Slider(visible=False, elem_id=f"{tab}_height")
+        gr.Checkbox(visible=False, elem_id="txt2img_hr-checkbox")
+        gr.Checkbox(visible=False, elem_id="img2img_inpaint_full_res")
+        gr.Textbox(visible=False, elem_id="img2img_batch_input_dir")
+        gr.Textbox(visible=False, elem_id="img2img_batch_output_dir")
+
+        for runner, is_img2img in ((scripts_txt2img, False), (scripts_img2img, True)):
+            scripts_current = runner
+            runner.initialize_scripts(is_img2img=is_img2img)
+            runner.prepare_ui()
+            sections = []
+            for script in sorted(runner.alwayson_scripts, key=lambda x: x.sorting_priority):
+                if script.section is not None and script.section not in sections:
+                    sections.append(script.section)
+            for section in sections:
+                runner.setup_ui_for_section(section)
+            runner.setup_ui()  # section-less always-on scripts + selectable scripts
+
+    scripts_current = None
