@@ -1,13 +1,14 @@
 // "Text to Image" and "Image to Image" tabs: classic form-style generation pages.
 
 import {
-  $, $$, ADETAILER_DEFAULT, adetailerArgs, api, downloadDataURL, escapeHtml, fillSelect, loadStore, modelOverrides,
-  pollProgress, presetForCheckpoint, progressText, safeJSON, saveStore, toast, withQualityPrefix,
+  $, $$, ADETAILER_DEFAULT, downloadDataURL, escapeHtml, fillSelect, loadStore, presetForCheckpoint, saveStore, toast, withQualityPrefix,
 } from "./common.js";
+import { cancelJob, jobModel, jobProgress, runJob } from "./jobs.js";
 
 const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768]];
 const RESIZE_MODES = ["Just resize", "Crop and resize", "Resize and fill"];
 const FILL_MODES = ["Fill", "Original", "Latent noise", "Latent nothing"];
+const FILL_KEYS = ["fill", "original", "latent_noise", "latent_nothing"];
 const MASK_COLOR = "#ff8a3d";
 
 const DEFAULTS = {
@@ -206,7 +207,7 @@ export class GenForm {
     $$(".sizes button[data-w]", this.root).forEach((b) => (b.onclick = () => this.setSize(Number(b.dataset.w), Number(b.dataset.h))));
     this.q(".f-swap").onclick = () => this.setSize(s.height, s.width);
     this.q(".f-generate").onclick = () => this.generate();
-    this.q(".f-cancel").onclick = () => api("/sdapi/v1/interrupt", {}).catch(() => {});
+    this.q(".f-cancel").onclick = () => this.jobId && cancelJob(this.jobId);
     this.q(".f-lora").onchange = (e) => this.insertLora(e);
     this.root.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); e.stopPropagation(); this.generate(); }
@@ -278,7 +279,7 @@ export class GenForm {
     if (r) fn(r);
   }
 
-  // called whenever /venno/api/info is (re)loaded
+  // called whenever /venno/v1/info is (re)loaded
   setInfo(info) {
     const s = this.s;
     fillSelect(this.q(".f-sampler"), info.samplers.map((x) => ({ value: x, label: x })), s.sampler);
@@ -474,98 +475,94 @@ export class GenForm {
   }
 
   // ---------------- generation ----------------
-  buildPayload() {
+  buildJob() {
     const s = this.s;
     const st = this.ctx.state;
-    const payload = {
+    const job = {
+      mode: this.mode,
+      model: jobModel(st.model),
       prompt: withQualityPrefix(s.prompt, s.qualityPrefix, st.info),
-      negative_prompt: s.negative,
-      steps: s.steps,
-      cfg_scale: s.cfg,
-      distilled_cfg_scale: s.shift,
-      sampler_name: s.sampler,
-      scheduler: s.scheduler,
-      seed: s.seed,
+      negative: s.negative,
       width: s.width,
       height: s.height,
-      batch_size: s.batchSize,
-      n_iter: s.batchCount,
-      send_images: true,
-      save_images: s.saveImages,
-      do_not_save_grid: true,
-      override_settings: modelOverrides(st.model),
-      override_settings_restore_afterwards: false,
-      alwayson_scripts: {},
+      batch: s.batchSize,
+      count: s.batchCount,
+      seed: s.seed,
+      sampler: s.sampler,
+      scheduler: s.scheduler,
+      steps: s.steps,
+      cfg: s.cfg,
+      shift: s.shift,
+      save: s.saveImages,
+      tag: this.mode,
     };
     if (this.mode === "txt2img" && s.hr) {
-      Object.assign(payload, {
-        enable_hr: true,
-        hr_upscaler: s.hrUpscaler,
-        hr_scale: s.hrScale,
-        hr_resize_x: s.hrResizeX,
-        hr_resize_y: s.hrResizeY,
-        hr_second_pass_steps: s.hrSteps,
-        denoising_strength: s.hrDenoise,
-        hr_cfg: s.hrCfg || s.cfg,
-        hr_distilled_cfg: s.hrShift || s.shift,
-      });
+      job.hires = {
+        upscaler: s.hrUpscaler,
+        scale: s.hrScale,
+        resize_x: s.hrResizeX,
+        resize_y: s.hrResizeY,
+        steps: s.hrSteps,
+        denoise: s.hrDenoise,
+        cfg: s.hrCfg || null,
+        shift: s.hrShift || null,
+      };
     }
     if (this.mode === "img2img") {
       if (!this.inputImage) throw new Error("Add an input image first");
-      Object.assign(payload, { init_images: [this.inputDataURL()], denoising_strength: s.denoise, resize_mode: s.resizeMode });
+      Object.assign(job, { init_image: this.inputDataURL(), strength: s.denoise, resize_mode: s.resizeMode });
       if (this.maskHasContent()) {
-        Object.assign(payload, {
+        Object.assign(job, {
           mask: this.maskDataURL(),
           mask_blur: s.maskBlur,
-          inpainting_fill: s.fill,
-          inpaint_full_res: s.onlyMasked,
-          inpaint_full_res_padding: s.onlyMaskedPadding,
-          inpainting_mask_invert: 0,
+          fill: FILL_KEYS[s.fill],
+          only_masked: s.onlyMasked,
+          only_masked_padding: s.onlyMaskedPadding,
+          soft_inpaint: s.softInpaint,
         });
-        if (s.softInpaint) payload.alwayson_scripts["soft inpainting"] = { args: [true, 1, 0.5, 4, 0, 0.5, 2] };
       }
     }
-    const ad = adetailerArgs(s.adetailer);
-    if (ad) payload.alwayson_scripts.adetailer = ad;
-    return payload;
+    job.detailer = !s.adetailer.enabled ? [] : s.adetailer.units
+      .filter((u) => u.model && u.model !== "None")
+      .map((u) => ({ model: u.model, prompt: u.prompt || "", negative: u.negative || "", confidence: u.confidence, denoise: u.denoise, mask_blur: u.maskBlur, dilate: u.dilate, padding: u.padding }));
+    return job;
   }
 
   async generate() {
     if (this.busy) return;
     if (!this.ctx.state.model.checkpoint) return toast("Select or download an Anima checkpoint first (Models tab).");
-    let payload;
-    try { payload = this.buildPayload(); } catch (e) { return toast(e.message); }
+    let job;
+    try { job = this.buildJob(); } catch (e) { return toast(e.message); }
 
     this.busy = true;
+    this.jobId = null;
     this.q(".f-generate").disabled = true;
     this.q(".f-cancel").hidden = false;
     const bar = this.q(".f-progress");
     bar.hidden = false;
-    const poll = pollProgress((p) => {
-      const { pct, text } = progressText(p);
-      $(".bar", bar).style.width = `${pct}%`;
-      $("span", bar).textContent = text;
-      if (p.current_image) this.showPreview(`data:image/jpeg;base64,${p.current_image}`);
-    });
+    $(".bar", bar).style.width = "0%";
+    $("span", bar).textContent = "Starting…";
     try {
-      const res = await api(this.mode === "txt2img" ? "/sdapi/v1/txt2img" : "/sdapi/v1/img2img", payload);
-      const info = safeJSON(res.info) || {};
-      const count = payload.batch_size * payload.n_iter;
-      const images = (res.images || []).slice(0, count);
-      if (!images.length) throw new Error("No image returned (interrupted?)");
-      const fresh = images.map((b64, i) => ({
-        src: b64.startsWith("data:") ? b64 : `data:image/png;base64,${b64}`,
-        seed: info.all_seeds?.[i] ?? payload.seed,
-        info: info.infotexts?.[i] || "",
-      }));
+      const done = await runJob(job, {
+        onSubmit: (j) => (this.jobId = j.id),
+        onUpdate: (j) => {
+          const { pct, text } = jobProgress(j);
+          $(".bar", bar).style.width = `${pct}%`;
+          $("span", bar).textContent = text;
+        },
+        onPreview: (src) => this.showPreview(src),
+      });
+      if (done.status === "cancelled") throw new Error("Cancelled"); // ignore half-denoised images from an interrupted run
+      if (!done.images.length) throw new Error("No image returned");
+      const fresh = done.images.map((src, i) => ({ src, seed: done.seeds[i] ?? job.seed, info: done.infotexts[i] || "" }));
       this.results = [...fresh, ...this.results].slice(0, 60);
       this.select(0);
     } catch (e) {
-      toast(e.message);
+      if (e.message !== "Cancelled") toast(e.message);
       if (this.current >= 0) this.select(this.current);
     } finally {
-      poll.stop();
       this.busy = false;
+      this.jobId = null;
       this.q(".f-generate").disabled = false;
       this.q(".f-cancel").hidden = true;
       bar.hidden = true;

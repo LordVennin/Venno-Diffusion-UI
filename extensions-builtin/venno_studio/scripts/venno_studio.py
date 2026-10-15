@@ -1,21 +1,23 @@
 """
-Venno Studio: serves the canvas front-end and a few helper endpoints.
+Venno Studio server: the Studio front-end and the Venno API (/venno/v1/*).
 
-Generation goes through the standard /sdapi/v1/txt2img and /sdapi/v1/img2img
-endpoints (with the "venno regional prompting" and "controlnet" always-on scripts),
-so queueing, progress and interruption behave exactly like the rest of Forge.
+Generation runs through Venno jobs (lib_venno/jobs.py): one request schema for every mode,
+a single worker queue, and a WebSocket event stream for progress and live previews.
 """
 
+import asyncio
+import base64
+import io
 import os
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from modules import paths, script_callbacks, shared
 from modules.shared_cmd_options import cmd_opts
 
-from lib_venno import downloads
+from lib_venno import downloads, jobs
 
 STUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "studio")
 
@@ -115,13 +117,70 @@ def _refresh():
 
 
 def on_app_started(_demo, app: FastAPI):
-    app.add_api_route("/venno/api/info", _info, methods=["GET"])
+    V = "/venno/v1"
+    app.add_api_route(f"{V}/info", _info, methods=["GET"])
 
     def refresh():
         _refresh()
         return _info()
 
-    app.add_api_route("/venno/api/refresh", refresh, methods=["POST"])
+    app.add_api_route(f"{V}/refresh", refresh, methods=["POST"])
+
+    # ---- generation jobs ----
+    def submit_job(job: jobs.Job):
+        return jobs.submit(job).summary()
+
+    def get_job(job_id: str):
+        rec = jobs.get(job_id)
+        if rec is None:
+            raise HTTPException(status_code=404, detail="Unknown job")
+        jobs.update_progress()
+        return rec.summary()
+
+    def job_image(job_id: str, index: int):
+        rec = jobs.get(job_id)
+        if rec is None or not (0 <= index < len(rec.images)):
+            raise HTTPException(status_code=404, detail="Unknown image")
+        return Response(rec.images[index], media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+    def cancel_job(job_id: str):
+        if not jobs.cancel(job_id):
+            raise HTTPException(status_code=404, detail="Unknown or finished job")
+        return {"ok": True}
+
+    def list_jobs():
+        jobs.update_progress()
+        return [r.summary() for r in reversed(jobs.all_records())]
+
+    app.add_api_route(f"{V}/jobs", submit_job, methods=["POST"])
+    app.add_api_route(f"{V}/jobs", list_jobs, methods=["GET"])
+    app.add_api_route(f"{V}/jobs/{{job_id}}", get_job, methods=["GET"])
+    app.add_api_route(f"{V}/jobs/{{job_id}}/images/{{index}}.png", job_image, methods=["GET"])
+    app.add_api_route(f"{V}/jobs/{{job_id}}/cancel", cancel_job, methods=["POST"])
+
+    @app.websocket(f"{V}/events")
+    async def events(ws: WebSocket):
+        """Pushes {"type": "job", ...summary} on every job change and {"type": "preview", id, image} for live previews."""
+        await ws.accept()
+        sent: dict[str, int] = {}
+        last_preview = -1
+        try:
+            while True:
+                jobs.update_progress()
+                for rec in jobs.all_records():
+                    if sent.get(rec.id) != rec.version:
+                        sent[rec.id] = rec.version
+                        await ws.send_json({"type": "job", **rec.summary()})
+                running = jobs.running_record()
+                st = shared.state
+                if running is not None and st.current_image is not None and st.id_live_preview != last_preview:
+                    last_preview = st.id_live_preview
+                    buf = io.BytesIO()
+                    st.current_image.convert("RGB").save(buf, format="JPEG", quality=80)
+                    await ws.send_json({"type": "preview", "id": running.id, "image": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()})
+                await asyncio.sleep(0.3)
+        except (WebSocketDisconnect, RuntimeError):
+            return
 
     # ---- model downloads ----
     def on_download_done(_job):
@@ -157,10 +216,10 @@ def on_app_started(_demo, app: FastAPI):
         downloads.cancel(str(req.get("id", "")))
         return downloads.jobs()
 
-    app.add_api_route("/venno/api/models/catalog", catalog, methods=["GET"])
-    app.add_api_route("/venno/api/models/download", download, methods=["POST"])
-    app.add_api_route("/venno/api/models/jobs", download_jobs, methods=["GET"])
-    app.add_api_route("/venno/api/models/cancel", download_cancel, methods=["POST"])
+    app.add_api_route(f"{V}/models/catalog", catalog, methods=["GET"])
+    app.add_api_route(f"{V}/models/download", download, methods=["POST"])
+    app.add_api_route(f"{V}/models/jobs", download_jobs, methods=["GET"])
+    app.add_api_route(f"{V}/models/cancel", download_cancel, methods=["POST"])
 
     app.mount("/studio/assets", StaticFiles(directory=STUDIO_DIR), name="venno_studio_assets")
 

@@ -36,7 +36,7 @@ export class ModelsPage {
 
   async load() {
     try {
-      this.data = await api("/venno/api/models/catalog");
+      this.data = await api("/venno/v1/models/catalog");
     } catch (e) {
       toast(`Could not load the model catalog: ${e.message}`);
       return;
@@ -80,12 +80,12 @@ export class ModelsPage {
         ${j.status === "downloading" || j.status === "queued" ? `<button class="j-cancel" data-id="${j.id}">Cancel</button>` : ""}
       </li>`;
     }).join("");
-    this.root.querySelectorAll(".j-cancel").forEach((b) => (b.onclick = () => api("/venno/api/models/cancel", { id: b.dataset.id }).then((js) => this.renderJobs(js))));
+    this.root.querySelectorAll(".j-cancel").forEach((b) => (b.onclick = () => api("/venno/v1/models/cancel", { id: b.dataset.id }).then((js) => this.renderJobs(js))));
   }
 
   async download(body) {
     try {
-      await api("/venno/api/models/download", body);
+      await api("/venno/v1/models/download", body);
       toast("Download started", "info");
       await this.load();
       this.poll();
@@ -104,7 +104,7 @@ export class ModelsPage {
     clearTimeout(this.timer);
     this.timer = setTimeout(async () => {
       let jobs;
-      try { jobs = await api("/venno/api/models/jobs"); } catch { return this.poll(); }
+      try { jobs = await api("/venno/v1/models/jobs"); } catch { return this.poll(); }
       this.renderJobs(jobs);
       const finished = jobs.filter((j) => j.status === "done" && !this.known.has(j.id));
       if (finished.length) {

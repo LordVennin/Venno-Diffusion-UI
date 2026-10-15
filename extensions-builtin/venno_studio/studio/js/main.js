@@ -1,8 +1,9 @@
 import { Doc, LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, ctx2d, loadImage, makeCanvas, strokeRegionMask } from "./doc.js";
-import { Generator, api } from "./generate.js";
+import { Generator } from "./generate.js";
+import { jobProgress } from "./jobs.js";
 import { TOOLS, View } from "./view.js";
 import { GenForm } from "./forms.js";
-import { presetForCheckpoint } from "./common.js";
+import { api, presetForCheckpoint } from "./common.js";
 import { ModelsPage } from "./models.js";
 
 const $ = (s) => document.querySelector(s);
@@ -526,10 +527,8 @@ gen.on((what, data) => {
     $("#progress").classList.add("on");
     setProgress(0, data.live ? "Live…" : "Starting…");
   } else if (what === "progress") {
-    const st = data.state || {};
-    const pct = Math.round((data.progress || 0) * 100);
-    const step = st.sampling_steps ? ` · step ${st.sampling_step}/${st.sampling_steps}` : "";
-    setProgress(pct, `${pct}%${step}${data.eta_relative && pct >= 5 ? ` · ~${Math.round(data.eta_relative)}s left` : ""}`);
+    const { pct, text } = jobProgress(data);
+    setProgress(pct, text);
   } else if (what === "idle") {
     $("#btn-generate").disabled = false;
     $("#btn-cancel").hidden = true;
@@ -588,7 +587,7 @@ function guessModule(mods, words) {
 async function loadInfo(refresh = false) {
   try {
     setStatus(refresh ? "Rescanning models…" : "Connecting…");
-    const info = refresh ? await api("/venno/api/refresh", {}) : await api("/venno/api/info");
+    const info = refresh ? await api("/venno/v1/refresh", {}) : await api("/venno/v1/info");
     state.info = info;
     const ckpts = info.checkpoints.map((c) => ({ value: c.title, label: c.name }));
     const mods = info.modules;

@@ -38,10 +38,12 @@ def _handle_exception(request: Request, e: Exception):
 
 
 def create_api(app):
+    from modules import shared
     from modules.api.api import Api
     from modules.call_queue import queue_lock
 
     api = Api(app, queue_lock)
+    shared.forge_api = api  # Venno job adapter (lib_venno/jobs.py) runs generations through it in-process
     return api
 
 

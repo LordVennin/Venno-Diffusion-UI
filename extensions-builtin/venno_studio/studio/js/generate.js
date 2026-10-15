@@ -1,25 +1,8 @@
-// Turns the canvas state into Forge API requests and manages results / live mode.
+// Turns the canvas state into Venno jobs and manages results / live mode.
 
 import { LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, alphaToMask, ctx2d, hasContentIn, loadImage, makeCanvas, strokeRegionMask } from "./doc.js";
-import { adetailerArgs, ADETAILER_DEFAULT } from "./common.js";
-
-export async function api(path, body = undefined, method = body === undefined ? "GET" : "POST") {
-  const res = await fetch(path, {
-    method,
-    headers: body === undefined ? {} : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const j = await res.json();
-      detail = j.detail || j.message || j.error || JSON.stringify(j);
-      if (typeof detail !== "string") detail = JSON.stringify(detail);
-    } catch {}
-    throw new Error(`${res.status}: ${detail}`);
-  }
-  return res.json();
-}
+import { ADETAILER_DEFAULT, withQualityPrefix } from "./common.js";
+import { cancelJob, jobModel, runJob } from "./jobs.js";
 
 // Choose a model resolution for a canvas area: ~targetPixels, multiples of 64, Anima-friendly bounds.
 export function fitResolution(w, h, targetPixels) {
@@ -79,83 +62,62 @@ export class Generator {
     return { rect, gw, gh, sel, strength, txt2img, live };
   }
 
-  buildPayload(plan) {
+  buildJob(plan) {
     const doc = this.doc;
     const st = this.state;
     const g = st.gen;
     const { rect, gw, gh, sel, txt2img } = plan;
     const scale = gw / rect.w;
 
-    let prompt = g.prompt.trim();
-    if (g.qualityPrefix && st.info?.prompt_defaults?.positive_prefix) {
-      const prefix = st.info.prompt_defaults.positive_prefix;
-      if (!prompt.startsWith(prefix.trim().replace(/,$/, ""))) prompt = prefix + prompt;
-    }
-
     const seed = plan.live ? this.live.seed : g.seedLocked ? g.seed : randomSeed();
     if (!plan.live) g.seed = seed;
 
-    const modules = [st.model.textEncoder, st.model.vae].filter(Boolean);
-    const payload = {
-      prompt,
-      negative_prompt: g.negative,
-      steps: g.steps,
-      cfg_scale: g.cfg,
-      distilled_cfg_scale: g.shift,
-      sampler_name: g.sampler,
-      scheduler: g.scheduler,
-      seed,
+    const job = {
+      mode: txt2img ? "txt2img" : "img2img",
+      model: jobModel(st.model),
+      prompt: withQualityPrefix(g.prompt, g.qualityPrefix, st.info),
+      negative: g.negative,
       width: gw,
       height: gh,
-      batch_size: plan.live ? 1 : g.batch,
-      n_iter: 1,
-      send_images: true,
-      save_images: !plan.live && g.saveImages,
-      do_not_save_grid: true,
-      override_settings: {},
-      override_settings_restore_afterwards: false,
-      alwayson_scripts: {},
+      batch: plan.live ? 1 : g.batch,
+      count: 1,
+      seed,
+      sampler: g.sampler,
+      scheduler: g.scheduler,
+      steps: g.steps,
+      cfg: g.cfg,
+      shift: g.shift,
+      save: !plan.live && g.saveImages,
+      tag: plan.live ? "live" : "canvas",
     };
-    if (st.model.checkpoint) payload.override_settings.sd_model_checkpoint = st.model.checkpoint;
-    if (modules.length) payload.override_settings.forge_additional_modules = modules;
 
     if (!txt2img) {
-      payload.init_images = [doc.composite(rect, gw, gh).toDataURL("image/png")];
-      payload.denoising_strength = Math.min(1, Math.max(0.01, plan.strength));
-      payload.resize_mode = 0;
+      job.init_image = doc.composite(rect, gw, gh).toDataURL("image/png");
+      job.strength = Math.min(1, Math.max(0.01, plan.strength));
       if (sel) {
-        const m = alphaToMask(doc.crop(doc.selection, rect, gw, gh));
-        payload.mask = m.toDataURL("image/png");
-        payload.mask_blur = Math.round(g.feather * scale);
-        payload.inpainting_fill = 1; // original
-        payload.inpaint_full_res = false;
-        payload.inpainting_mask_invert = 0;
-        if (g.softInpaint) {
-          // Forge "soft inpainting": per-step latent blending for seamless edges
-          payload.alwayson_scripts["soft inpainting"] = { args: [true, 1, 0.5, 4, 0, 0.5, 2] };
-        }
+        job.mask = alphaToMask(doc.crop(doc.selection, rect, gw, gh)).toDataURL("image/png");
+        job.mask_blur = Math.round(g.feather * scale);
+        job.fill = "original";
+        job.only_masked = false;
+        job.soft_inpaint = g.softInpaint;
       }
     }
 
     // regional prompts: region layers, plus paint / guide layers that carry a prompt (shaped by their strokes)
-    const regions = [];
+    job.regions = [];
     for (const l of doc.layers) {
       if (!l.visible || !l.prompt.trim()) continue;
       const source = l.type === LAYER_REGION ? l.canvas : strokeRegionMask(l.canvas, l.regionSpread, l.regionFill);
       if (!hasContentIn(source, rect)) continue;
-      const mask = doc.crop(source, rect, gw, gh);
       let rp = l.prompt.trim();
       if (g.regionAppendRoot && g.prompt.trim()) rp = `${rp}, ${g.prompt.trim()}`;
-      regions.push({ prompt: rp, mask: mask.toDataURL("image/png"), strength: l.regionStrength });
+      job.regions.push({ prompt: rp, mask: doc.crop(source, rect, gw, gh).toDataURL("image/png"), strength: l.regionStrength });
     }
-    if (regions.length) {
-      payload.alwayson_scripts["venno regional prompting"] = {
-        args: [true, JSON.stringify({ base_strength: g.regionBase, end_at: g.regionEnd, regions })],
-      };
-    }
+    job.region_base = g.regionBase;
+    job.region_end = g.regionEnd;
 
-    // sketch guides (ControlNet / ControlLLLite units)
-    const units = [];
+    // sketch guides (ControlNet / ControlLLLite)
+    job.guides = [];
     for (const l of doc.layers) {
       if (l.type !== LAYER_CONTROL || !l.visible || !l.controlModel) continue;
       if (!hasContentIn(l.canvas, rect)) continue;
@@ -169,31 +131,19 @@ export class Generator {
         c.fillRect(0, 0, gw, gh);
         c.globalCompositeOperation = "source-over";
       }
-      units.push({
-        enabled: true,
-        module: "None",
-        model: l.controlModel,
-        weight: l.controlWeight,
-        image: img.toDataURL("image/png"),
-        resize_mode: "Just Resize",
-        guidance_start: l.controlStart,
-        guidance_end: l.controlEnd,
-        pixel_perfect: false,
-        control_mode: "Balanced",
-        save_detected_map: false,
-      });
+      job.guides.push({ model: l.controlModel, image: img.toDataURL("image/png"), weight: l.controlWeight, start: l.controlStart, end: l.controlEnd });
     }
-    if (units.length) payload.alwayson_scripts.controlnet = { args: units };
 
-    // ADetailer: re-render detected faces (skipped in live mode to keep it fast)
+    // detailer: re-render detected faces (skipped in live mode to keep it fast)
     const adModels = st.info?.adetailer_models || [];
+    job.detailer = [];
     if (g.adetailer && !plan.live && adModels.length) {
       const face = adModels.includes("face_yolov8n.pt") ? "face_yolov8n.pt" : adModels.find((m) => /face/i.test(m));
-      const ad = face && adetailerArgs({ enabled: true, units: [{ ...ADETAILER_DEFAULT.units[0], model: face }] });
-      if (ad) payload.alwayson_scripts.adetailer = ad;
+      const u = ADETAILER_DEFAULT.units[0];
+      if (face) job.detailer.push({ model: face, confidence: u.confidence, denoise: u.denoise, mask_blur: u.maskBlur, dilate: u.dilate, padding: u.padding });
     }
 
-    return payload;
+    return job;
   }
 
   // Feathered selection mask cropped to rect (alpha canvas) used to blend results back.
@@ -220,31 +170,33 @@ export class Generator {
       return;
     }
     const plan = this.plan({ live });
-    let payload;
+    let job;
     try {
-      payload = this.buildPayload(plan);
+      job = this.buildJob(plan);
     } catch (e) {
       this.emit("error", `Could not prepare request: ${e.message}`);
       return;
     }
     const mask = this.blendMask(plan.rect);
-    const endpoint = plan.txt2img ? "/sdapi/v1/txt2img" : "/sdapi/v1/img2img";
 
     this.busy = true;
+    this.currentJob = null;
     this.view.setGenRect(plan.rect);
     this.emit("busy", { live, plan });
-    const poll = this.pollProgress(plan);
     try {
-      const res = await api(endpoint, payload);
-      const info = safeJSON(res.info);
-      const count = payload.batch_size;
-      const images = [];
-      for (const b64 of (res.images || []).slice(0, count)) {
-        images.push(await loadImage(b64.startsWith("data:") ? b64 : `data:image/png;base64,${b64}`));
-      }
-      if (!images.length) throw new Error("No image returned (interrupted?)");
-      const seeds = info?.all_seeds || [payload.seed];
-      const result = { id: this._resultId++, images, rect: plan.rect, mask, seeds, info, prompt: payload.prompt, txt2img: plan.txt2img };
+      const done = await runJob(job, {
+        onSubmit: (j) => (this.currentJob = j.id),
+        onUpdate: (j) => this.emit("progress", j),
+        onPreview: async (src) => {
+          if (!this.state.showProgressPreview) return;
+          const img = await loadImage(src).catch(() => null);
+          if (img && this.busy) this.view.setOverlay(img, plan.rect);
+        },
+      });
+      if (done.status === "cancelled") throw new Error("Cancelled"); // ignore half-denoised images from an interrupted run
+      const images = await Promise.all(done.images.map((url) => loadImage(url)));
+      if (!images.length) throw new Error("No image returned");
+      const result = { id: this._resultId++, images, rect: plan.rect, mask, seeds: done.seeds, infotexts: done.infotexts, prompt: job.prompt, txt2img: plan.txt2img };
       if (live) {
         this.live.result = result;
         this.emit("live-result", result);
@@ -256,12 +208,12 @@ export class Generator {
         this.preview(result, 0);
       }
     } catch (e) {
-      this.emit("error", e.message);
+      if (e.message !== "Cancelled") this.emit("error", e.message);
       if (!this.selected) this.view.setOverlay(null);
+      else this.preview(this.selected.result, this.selected.index);
     } finally {
       this.busy = false;
-      poll.stop();
-      this.progress = null;
+      this.currentJob = null;
       this.view.setGenRect(null);
       this.emit("idle");
       if (this.live.enabled && this.live.pending) {
@@ -271,29 +223,9 @@ export class Generator {
     }
   }
 
-  pollProgress(plan) {
-    let stopped = false;
-    const tick = async () => {
-      if (stopped) return;
-      try {
-        const p = await api("/sdapi/v1/progress?skip_current_image=false");
-        if (stopped) return;
-        this.progress = p;
-        this.emit("progress", p);
-        if (p.current_image && this.state.showProgressPreview) {
-          const img = await loadImage(`data:image/jpeg;base64,${p.current_image}`).catch(() => null);
-          if (img && !stopped) this.view.setOverlay(img, plan.rect);
-        }
-      } catch {}
-      if (!stopped) setTimeout(tick, 600);
-    };
-    setTimeout(tick, 400);
-    return { stop: () => (stopped = true) };
-  }
-
   async interrupt() {
     this.live.pending = false;
-    try { await api("/sdapi/v1/interrupt", {}); } catch {}
+    if (this.currentJob) await cancelJob(this.currentJob);
   }
 
   // ---------- results ----------
@@ -367,8 +299,4 @@ function hasAnyNonWhite(doc, rect) {
   const d = ctx2d(t).getImageData(0, 0, 64, 64).data;
   for (let i = 0; i < d.length; i += 4) if (d[i] < 250 || d[i + 1] < 250 || d[i + 2] < 250) return true;
   return false;
-}
-
-function safeJSON(s) {
-  try { return typeof s === "string" ? JSON.parse(s) : s; } catch { return null; }
 }

@@ -107,21 +107,30 @@ These are Forge-style form pages: prompt, negative, LoRA picker, preset/sampler/
 
 ## API
 
-Studio uses the standard Forge endpoints (`/sdapi/v1/txt2img`, `/sdapi/v1/img2img`, `/sdapi/v1/progress`, …), so scripts can use them directly. Regional prompting is an always-on script:
+Studio talks to the server only through the Venno API under `/venno/v1`. Every generation mode uses one job format; see `Job` in [`lib_venno/jobs.py`](extensions-builtin/venno_studio/lib_venno/jobs.py).
 
-```json
-"alwayson_scripts": {
-  "venno regional prompting": {
-    "args": [true, "{\"base_strength\": 0.25, \"end_at\": 1.0, \"regions\": [{\"prompt\": \"1girl, red kimono\", \"mask\": \"<base64 png>\", \"strength\": 1.0}]}"]
-  }
+```jsonc
+POST /venno/v1/jobs
+{
+  "mode": "txt2img",                     // or "img2img" (+ init_image, strength, mask, …)
+  "model": { "checkpoint": "anima-turbo-v1.1.safetensors", "text_encoder": "qwen_3_06b_base.safetensors", "vae": "qwen_image_vae.safetensors" },
+  "prompt": "masterpiece, best quality, safe, 1girl, …", "negative": "…",
+  "width": 1024, "height": 1024, "batch": 2, "seed": -1,
+  "sampler": "Euler", "scheduler": "Simple", "steps": 10, "cfg": 1.0, "shift": 3.0,
+  "regions":  [{ "prompt": "…", "mask": "<png>" }],
+  "guides":   [{ "model": "anima-lllite-any-test-like-v2", "image": "<png>", "weight": 0.8 }],
+  "hires":    { "upscaler": "Latent", "scale": 1.5, "denoise": 0.5 },
+  "detailer": [{ "model": "face_yolov8n.pt", "denoise": 0.4 }]
 }
 ```
 
-Masks are white (or opaque) where the region applies, relative to the full generation size. ADetailer uses the `adetailer` always-on script: `"args": [true, false, {"ad_model": "face_yolov8n.pt", …}]`.
+- `GET /venno/v1/jobs/{id}`: status, progress, seeds, infotexts and image URLs (`/venno/v1/jobs/{id}/images/{n}.png`)
+- `POST /venno/v1/jobs/{id}/cancel`: cancel a queued or running job
+- `WS /venno/v1/events`: pushes every job update plus live preview frames
+- `GET /venno/v1/info`: models, modules, LoRAs, samplers, schedulers, upscalers, detectors, presets
+- `/venno/v1/models/catalog`, `/download`, `/jobs`, `/cancel`: model downloads
 
-Venno endpoints:
-- `GET /venno/api/info`: models, modules, LoRAs, samplers, schedulers, upscalers, ADetailer detectors and presets.
-- `GET /venno/api/models/catalog`, `POST /venno/api/models/download` (`{"id": …}` or `{"url": …, "kind": …}`) and `GET /venno/api/models/jobs`: model downloads.
+The old A1111/Forge `/sdapi` endpoints are no longer supported and will be removed (see [`docs/PLAN_VENNO_SERVER.md`](docs/PLAN_VENNO_SERVER.md)).
 
 ## Project layout
 
@@ -129,6 +138,7 @@ Venno endpoints:
 |---|---|
 | `extensions-builtin/venno_studio/studio/` | Studio front end (plain ES modules, no build step) |
 | `extensions-builtin/venno_studio/scripts/venno_studio.py` | Serves Studio, `/venno/api/*` |
+| `extensions-builtin/venno_studio/lib_venno/jobs.py` | Venno job API: schema, queue, engine adapter |
 | `extensions-builtin/venno_studio/lib_venno/downloads.py` | Model catalog and downloader |
 | `extensions-builtin/adetailer-neo/` | ADetailer-Neo (Haoming02, AGPL-3.0) |
 | `extensions-builtin/venno_studio/scripts/venno_regional.py` | Regional prompting (masked per-region conditioning) |

@@ -32,9 +32,6 @@ export function fillSelect(sel, items, value, { empty = null } = {}) {
 
 export const randomSeed = () => Math.floor(Math.random() * 2 ** 31);
 
-export function safeJSON(s) {
-  try { return typeof s === "string" ? JSON.parse(s) : s; } catch { return null; }
-}
 
 export function formatBytes(n) {
   if (!n) return "";
@@ -44,69 +41,11 @@ export function formatBytes(n) {
   return `${n.toFixed(i > 1 ? 1 : 0)} ${u[i]}`;
 }
 
-// Poll Forge's progress endpoint while a job runs.
-export function pollProgress(onUpdate, { previews = true } = {}) {
-  let stopped = false;
-  const tick = async () => {
-    if (stopped) return;
-    try {
-      const p = await api(`/sdapi/v1/progress?skip_current_image=${previews ? "false" : "true"}`);
-      if (!stopped) onUpdate(p);
-    } catch {}
-    if (!stopped) setTimeout(tick, 600);
-  };
-  setTimeout(tick, 400);
-  return { stop: () => (stopped = true) };
-}
-
-export function progressText(p) {
-  const st = p.state || {};
-  const pct = Math.round((p.progress || 0) * 100);
-  const job = st.job_count > 1 ? ` · job ${st.job_no + 1}/${st.job_count}` : "";
-  const step = st.sampling_steps ? ` · step ${st.sampling_step}/${st.sampling_steps}` : "";
-  const eta = p.eta_relative && pct >= 5 ? ` · ~${Math.round(p.eta_relative)}s left` : "";
-  return { pct, text: `${pct}%${job}${step}${eta}` };
-}
-
-// Shared settings → common request fields
-export function modelOverrides(model) {
-  const o = {};
-  const modules = [model.textEncoder, model.vae].filter(Boolean);
-  if (model.checkpoint) o.sd_model_checkpoint = model.checkpoint;
-  if (modules.length) o.forge_additional_modules = modules;
-  return o;
-}
-
 export function withQualityPrefix(prompt, enabled, info) {
   prompt = prompt.trim();
   const prefix = info?.prompt_defaults?.positive_prefix;
   if (!enabled || !prefix) return prompt;
   return prompt.startsWith(prefix.trim().replace(/,$/, "")) ? prompt : prefix + prompt;
-}
-
-// ADetailer-Neo always-on script arguments: [enabled, skip_img2img, unit, unit, ...]
-export function adetailerArgs(ad) {
-  if (!ad || !ad.enabled) return null;
-  const units = (ad.units || []).filter((u) => u.model && u.model !== "None");
-  if (!units.length) return null;
-  return {
-    args: [
-      true,
-      false,
-      ...units.map((u) => ({
-        ad_model: u.model,
-        ad_prompt: u.prompt || "",
-        ad_negative_prompt: u.negative || "",
-        ad_confidence: u.confidence,
-        ad_denoising_strength: u.denoise,
-        ad_mask_blur: u.maskBlur,
-        ad_dilate_erode: u.dilate,
-        ad_inpaint_only_masked: true,
-        ad_inpaint_only_masked_padding: u.padding,
-        ad_use_inpaint_width_height: false,
-      })),
-    ],
-  };
 }
 
 export const ADETAILER_DEFAULT = {

@@ -1,6 +1,6 @@
 # Plan: replace the A1111 layer with a lean Venno server ("option 2")
 
-Status: proposal · written after the Forge trim (commit `36ac0b4`)
+Status: in progress · Phase 0 done (job API at `/venno/v1`, Studio moved onto it)
 
 ## Goal
 
@@ -104,10 +104,13 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 
 ## Phases (each one ships a working app)
 
-**Phase 0: decouple the front end** (1–2 days, low risk)
-- Add `POST /venno/v1/jobs` with the schema above, implemented *on top of the current Forge pipeline* (an adapter that builds the `/sdapi` payload server-side).
-- Studio, Text to Image and Image to Image switch to it; progress moves to a WebSocket.
-- Result: the front end no longer knows Forge exists, and every later phase is invisible to it.
+**Phase 0: decouple the front end** ✅ done
+- `lib_venno/jobs.py`: job schema, single worker queue, Forge adapter (`_run_forge`, the only piece Phase 1 replaces).
+- Endpoints:
+  - `POST/GET /venno/v1/jobs`, `GET /venno/v1/jobs/{id}`, `GET …/images/{n}.png`, `POST …/cancel`
+  - `WS /venno/v1/events` (job updates + live previews)
+  - `/venno/v1/info|refresh|models/*`
+- Canvas, Text to Image, Image to Image and Models use only `/venno/v1`. The browser makes no `/sdapi` calls; the routes remain server-side until Phase 4.
 
 **Phase 1: Venno engine, text to image** (3–5 days)
 - `engine/` (ModelManager, conditioning, sampling, schedulers, rng, VAE, preview) and `pipeline/txt2img`, behind `--engine venno` (Forge path stays default).
@@ -149,7 +152,7 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 | 2 | Prompt scheduling (`[a:b:when]`, `[a\|b]`, `AND`) | **Keep.** Port `prompt_parser.py` as-is and surface the syntax in Studio (see below) |
 | 3 | Seed compatibility with the Forge-based builds | **Not needed.** Use a simple seeded noise generator. |
 | 4 | Anima variants | **All versions.** Must-have: Base / Aesthetic / Turbo (2B) and **2.9B**. Also planned: 3.8B (see below) |
-| 5 | Upstream sync of `backend/` | *Open*: recommended to keep it close to Forge Neo |
+| 5 | Engine (`backend/`) | **Forked.** We own it, clean it up freely, and copy upstream Forge Neo fixes selectively (Anima / memory / attention). Forked from Neo `46af880` (2026-10-14). |
 | 6 | Extensions | **No Forge/A1111 extension compatibility.** Venno gets its own plugin system after the rewrite (Phase 6). |
 
 ### Prompt scheduling (decision 2)
@@ -178,7 +181,7 @@ Studio gets a prompt-syntax hint and, later, highlighting that shows where switc
 |---|---|---|---|
 | Anima 2B Base / Aesthetic / Turbo | 28 blocks | Qwen3 0.6B | works today |
 | Anima 2.9B (Gazingstars123) | 40 blocks, layer-expanded 2B | Qwen3 0.6B | engine detects the 40 blocks and remaps 2B LoRAs / ControlLLLite; generation verified (incl. region + remapped guide); preset + Models-tab download added |
-| Anima 3.8B (lylogummy) | 52 blocks + bundled "Semantic Connector v2" | Qwen3 0.6B **+ Qwen3.5 4B** | needs work: Forge Neo only loads the extra Qwen3.5 encoder through a third-party extension (`GumGum10/forge-anima-3.8B`); Venno must implement the dual-encoder conditioning itself (Phase 2b) |
+| Anima 3.8B (lylogummy) | 52 blocks + bundled "Semantic Connector v2" | Qwen3 0.6B **+ Qwen3.5 4B** | needs work: Forge Neo only loads the extra Qwen3.5 encoder through a third-party extension (`GumGum10/forge-anima-3.8B`); Venno must implement the dual-encoder conditioning itself (Phase 2b). Testing happens on the owner's local GPU (model too large for the CPU sandbox) |
 
 Requirements that follow:
 - Presets come from the detected variant, not the file name. 2.9B recommends ~28–50 steps, CFG 3.5–5, Euler + SGM Uniform or Res Multistep + Linear Quadratic.
