@@ -4,6 +4,7 @@ from collections import OrderedDict
 from functools import lru_cache
 
 from modules import shared
+import modules_forge.supported_preprocessor  # noqa: F401 -- registers the built-in "None" / "canny" preprocessors
 from modules_forge.shared import controlnet_dir, supported_preprocessors
 
 CNET_MODEL_EXTS = {".pt", ".pth", ".ckpt", ".safetensors", ".bin"}

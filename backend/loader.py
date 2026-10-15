@@ -75,69 +75,6 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
 
         # region VAE
 
-        if cls_name == "PiDAutoVAE":
-            assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have VAE state dict!"
-            _dim: int = state_dict.pop("_dim")
-
-            if _dim == 4:
-                cls_name = "AutoencoderKL"
-                config_path = os.path.join(HF, "stabilityai", "stable-diffusion-xl-base-1.0", "vae_1_0")
-            elif _dim == 128:
-                cls_name = "AutoencoderKLFlux2"
-                config_path = os.path.join(HF, "black-forest-labs", "FLUX.2-klein-9B", "vae")
-            elif _dim == 16:
-                if "decoder.middle.0.residual.0.gamma" in state_dict:
-                    cls_name = "AutoencoderKLQwenImage"
-                    config_path = os.path.join(HF, "Qwen", "Qwen-Image", "vae")
-                else:
-                    cls_name = "AutoencoderKL"
-                    config_path = os.path.join(HF, "black-forest-labs", "FLUX.1-dev", "vae")
-            else:
-                raise NotImplementedError
-
-        if cls_name == "AutoencoderKL":
-            assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have VAE state dict!"
-            from backend.nn.vae import IntegratedAutoencoderKL
-
-            config = IntegratedAutoencoderKL.load_config(config_path)
-
-            with no_init_weights():
-                with using_forge_operations(device=memory_management.cpu, dtype=memory_management.vae_dtype(), extra_dtype="vae"):
-                    model = IntegratedAutoencoderKL.from_config(config)
-
-            load_state_dict(model, state_dict, ignore_start="loss.")
-            return model
-        if cls_name == "AutoencoderKLFlux2":
-            assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have VAE state dict!"
-            from backend.nn.vae import AutoencoderKLFlux2
-
-            config = AutoencoderKLFlux2.load_config(config_path)
-
-            if int(state_dict["decoder.conv_in.weight"].shape[0]) == 384:  # Small Decoder
-                config["dch"] = 96
-
-            with no_init_weights():
-                with using_forge_operations(device=memory_management.cpu, dtype=memory_management.vae_dtype(), extra_dtype="vae"):
-                    model = AutoencoderKLFlux2.from_config(config)
-
-            load_state_dict(model, state_dict, ignore_start="loss.")
-            return model
-        if cls_name == "AutoencoderKLQwenImage21":
-            assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have VAE state dict!"
-            from backend.nn.qwen21_vae import Wan22VAE
-
-            config = Wan22VAE.load_config(config_path)
-
-            config.update({"dim": int(state_dict["encoder.conv1.weight"].shape[0]), "dec_dim": int(state_dict["decoder.head.0.gamma"].shape[0]), "z_dim": 64, "dim_mult": [1, 2, 4, 8, 8], "num_res_blocks": 2, "attn_scales": [], "temporal_downsample": [False, True, True, True], "dropout": 0.0, "image_channels": int(state_dict["decoder.head.2.weight"].shape[0]), "patch_size": 1, "temporal_kernel": 1})
-
-            dtype = memory_management.vae_dtype(allowed_dtypes=[torch.bfloat16, torch.float16, torch.float32])
-
-            with no_init_weights():
-                with using_forge_operations(device=memory_management.cpu, dtype=dtype, extra_dtype="vae"):
-                    model = Wan22VAE.from_config(config)
-
-            load_state_dict(model, state_dict, ignore_start="loss.")
-            return model
         if cls_name in ["AutoencoderKLWan", "AutoencoderKLQwenImage"]:
             assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have VAE state dict!"
 
@@ -162,84 +99,6 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
 
         # region Text Encoder
 
-        if component_name.startswith("text_encoder") and cls_name in ["CLIPTextModel", "CLIPTextModelWithProjection"]:
-            assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have CLIP state dict!"
-
-            from transformers import CLIPTextConfig, CLIPTextModel
-
-            from backend.nn.clip import IntegratedCLIP
-
-            config = CLIPTextConfig.from_pretrained(config_path)
-
-            with no_init_weights():
-                with using_forge_operations(device=memory_management.cpu, dtype=memory_management.text_encoder_dtype(), manual_cast_enabled=True, sd_dtype=state_dict_dtype):
-                    model = IntegratedCLIP(CLIPTextModel, config, add_text_projection=True)
-
-            load_state_dict(model, state_dict, ignore_errors=["transformer.text_projection.weight", "transformer.text_model.embeddings.position_ids", "logit_scale"], log_name=cls_name)
-            return model
-        if cls_name == "Qwen2_5_VLForConditionalGeneration":
-            assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have Qwen 2.5 state dict!"
-
-            from backend.nn.llm.llama import Qwen25_7BVLI
-
-            config = read_arbitrary_config(config_path)
-
-            quant_config = detect_quantization(state_dict)
-            storage_dtype = _detect_dtype("Qwen2.5", memory_management.text_encoder_dtype(), quant_config)
-
-            if storage_dtype == "gguf":
-                with no_init_weights():
-                    with using_forge_operations(device=memory_management.cpu, dtype=memory_management.text_encoder_dtype(), manual_cast_enabled=True, extra_dtype=storage_dtype):
-                        model = Qwen25_7BVLI(config)
-            else:
-                with no_init_weights():
-                    with using_forge_operations(device=memory_management.cpu, dtype=storage_dtype, manual_cast_enabled=True, sd_dtype=state_dict_dtype, extra_dtype=quant_config):
-                        model = Qwen25_7BVLI(config)
-
-            load_state_dict(model, state_dict, log_name=cls_name, ignore_start="lm_head.")
-            return model
-        if cls_name == "Gemma2Model":
-            assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have Gemma2 state dict!"
-
-            from backend.nn.llm.llama import Gemma2_2B
-
-            config = read_arbitrary_config(config_path)
-
-            quant_config = detect_quantization(state_dict)
-            storage_dtype = _detect_dtype("Gemma2", memory_management.text_encoder_dtype(), quant_config)
-
-            if storage_dtype == "gguf":
-                with no_init_weights():
-                    with using_forge_operations(device=memory_management.cpu, dtype=memory_management.text_encoder_dtype(), manual_cast_enabled=False, extra_dtype=storage_dtype):
-                        model = Gemma2_2B(config)
-            else:
-                with no_init_weights():
-                    with using_forge_operations(device=memory_management.cpu, dtype=storage_dtype, manual_cast_enabled=True, sd_dtype=state_dict_dtype, extra_dtype=quant_config):
-                        model = Gemma2_2B(config)
-
-            load_state_dict(model, state_dict, log_name=cls_name, ignore_start="lm_head.")
-            return model
-        if cls_name == "Mistral3Model":
-            assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have Mistral3 state dict!"
-
-            from backend.nn.llm.llama import Ministral3_3B
-
-            config = read_arbitrary_config(config_path)
-
-            quant_config = detect_quantization(state_dict)
-            storage_dtype = _detect_dtype("Mistral3", memory_management.text_encoder_dtype(), quant_config)
-
-            if storage_dtype == "gguf":
-                with no_init_weights():
-                    with using_forge_operations(device=memory_management.cpu, dtype=memory_management.text_encoder_dtype(), manual_cast_enabled=False, extra_dtype=storage_dtype):
-                        model = Ministral3_3B(config)
-            else:
-                with no_init_weights():
-                    with using_forge_operations(device=memory_management.cpu, dtype=storage_dtype, manual_cast_enabled=True, sd_dtype=state_dict_dtype, extra_dtype=quant_config):
-                        model = Ministral3_3B(config)
-
-            load_state_dict(model, state_dict, log_name=cls_name)
-            return model
         if cls_name in ["Qwen3Model", "Qwen3ForCausalLM", "Qwen3VLModel", "Qwen3VLForConditionalGeneration"]:
             assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have Qwen3 state dict!"
 
@@ -284,110 +143,13 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
 
             load_state_dict(model, state_dict, log_name=cls_name, ignore_start="lm_head.")
             return model
-        if cls_name in ["T5EncoderModel", "UMT5EncoderModel"]:
-            assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have T5 state dict!"
-
-            if filename := state_dict.get("transformer.filename", None):
-                if memory_management.is_device_cpu(memory_management.text_encoder_device()):
-                    raise SystemError("Nunchaku T5XXL does not support CPU!")
-
-                from backend.nn.svdq import SVDQT5
-
-                logger.info("Using Nunchaku T5XXL")
-                model = SVDQT5(filename)
-                return model
-
-            from backend.nn.t5 import IntegratedT5
-
-            config = read_arbitrary_config(config_path)
-
-            quant_config = detect_quantization(state_dict)
-            storage_dtype = _detect_dtype("T5XXL", memory_management.text_encoder_dtype(), quant_config)
-
-            if storage_dtype == "gguf":
-                with no_init_weights():
-                    with using_forge_operations(device=memory_management.cpu, dtype=memory_management.text_encoder_dtype(), manual_cast_enabled=False, extra_dtype=storage_dtype):
-                        model = IntegratedT5(config)
-            else:
-                with no_init_weights():
-                    with using_forge_operations(device=memory_management.cpu, dtype=storage_dtype, manual_cast_enabled=True, sd_dtype=state_dict_dtype, extra_dtype=quant_config):
-                        model = IntegratedT5(config)
-
-            load_state_dict(model, state_dict, log_name=cls_name, ignore_errors=["transformer.encoder.embed_tokens.weight", "logit_scale"])
-            return model
-
         # region UNet / DiT
 
-        if cls_name in ["UNet2DConditionModel", "FluxTransformer2DModel", "Flux2Transformer2DModel", "ChromaTransformer2DModel", "WanTransformer3DModel", "QwenImageTransformer2DModel", "QwenImage21Transformer2DModel", "Lumina2Transformer2DModel", "ZImageTransformer2DModel", "CosmosTransformer3DModel", "ErnieImageTransformer2DModel", "PiDTransformer2DModel", "Krea2Transformer2DModel"]:
+        if cls_name == "CosmosTransformer3DModel":
             assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have model state dict!"
-            pre_func: Callable[[torch.nn.Module], torch.nn.Module] = lambda mdl: mdl
-            model_loader = None
-            # post_func: Callable[[torch.nn.Module], torch.nn.Module] = lambda mdl: mdl
+            from backend.nn.anima import Anima
 
-            if cls_name == "UNet2DConditionModel":
-                from backend.nn.unet import IntegratedUNet2DConditionModel
-
-                model_loader = lambda c: IntegratedUNet2DConditionModel(**c)
-            elif cls_name in ["FluxTransformer2DModel", "Flux2Transformer2DModel"]:
-                if guess.nunchaku:
-                    from backend.nn.svdq import SVDQFluxTransformer2DModel
-
-                    model_loader = lambda c: SVDQFluxTransformer2DModel(c)
-                else:
-                    from backend.nn.flux import IntegratedFluxTransformer2DModel
-
-                    model_loader = lambda c: IntegratedFluxTransformer2DModel(**c)
-            elif cls_name == "ChromaTransformer2DModel":
-                from backend.nn.chroma import IntegratedChromaTransformer2DModel
-
-                model_loader = lambda c: IntegratedChromaTransformer2DModel(**c)
-            elif cls_name == "WanTransformer3DModel":
-                from backend.nn.wan import WanModel
-
-                model_loader = lambda c: WanModel(**c)
-            elif cls_name == "QwenImageTransformer2DModel":
-                if guess.nunchaku:
-                    guess.unet_config.pop("filename")
-                    from backend.nn.svdq import NunchakuQwenImageTransformer2DModel
-
-                    model_loader = lambda c: NunchakuQwenImageTransformer2DModel(**c)
-                else:
-                    from backend.nn.qwen import QwenImageTransformer2DModel
-
-                    model_loader = lambda c: QwenImageTransformer2DModel(**c)
-            elif cls_name == "QwenImage21Transformer2DModel":
-                from backend.nn.qwen21 import QwenImage21Transformer2DModel
-
-                model_loader = lambda c: QwenImage21Transformer2DModel(**c)
-            elif cls_name in ("Lumina2Transformer2DModel", "ZImageTransformer2DModel"):
-                if guess.nunchaku:
-                    guess.unet_config.pop("filename")
-                    precision = guess.unet_config.pop("precision")
-                    rank = guess.unet_config.pop("rank")
-
-                    from backend.nn.svdq import patch_nunchaku_zimage
-
-                    pre_func = partial(patch_nunchaku_zimage, precision=precision, rank=rank)
-
-                from backend.nn.lumina import NextDiT
-
-                model_loader = lambda c: NextDiT(**c)
-            elif cls_name == "CosmosTransformer3DModel":
-                from backend.nn.anima import Anima
-
-                model_loader = lambda c: Anima(**c)
-            elif cls_name == "ErnieImageTransformer2DModel":
-                from backend.nn.ernie import ErnieImageModel
-
-                model_loader = lambda c: ErnieImageModel(**c)
-            elif cls_name == "PiDTransformer2DModel":
-                from backend.nn.pixeldit.pid import PidNet
-
-                model_loader = lambda c: PidNet(**c)
-            elif cls_name == "Krea2Transformer2DModel":
-                from backend.nn.krea import SingleStreamDiT
-
-                model_loader = lambda c: SingleStreamDiT(**c)
+            model_loader = lambda c: Anima(**c)
 
             load_device = memory_management.get_torch_device()
             offload_device = memory_management.unet_offload_device()
@@ -398,10 +160,7 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
 
             override_dtype = backend.args.dynamic_args.forge_unet_storage_dtype
 
-            if guess.nunchaku:
-                storage_dtype = torch.bfloat16
-                logger.info(f"Using Nunchaku Model Data Type: {storage_dtype}")
-            elif quant_config is not None:
+            if quant_config is not None:
                 storage_dtype = torch.bfloat16
                 logger.info("Using MixedPrecision for Model")
             elif state_dict_dtype in (torch.float8_e4m3fn, torch.float8_e5m2, "gguf"):
@@ -420,10 +179,7 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
                 else:
                     logger.info(f"Using Override Model Data Type: {storage_dtype}")
 
-            if guess.nunchaku:
-                computation_dtype = storage_dtype
-            else:
-                computation_dtype = memory_management.inference_cast(weight_dtype=storage_dtype, inference_device=load_device, supported_dtypes=guess.supported_inference_dtypes)
+            computation_dtype = memory_management.inference_cast(weight_dtype=storage_dtype, inference_device=load_device, supported_dtypes=guess.supported_inference_dtypes)
 
             backend.args.dynamic_args.ops = None
 
@@ -444,9 +200,7 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
                     with using_forge_operations(**to_args, manual_cast_enabled=need_manual_cast, sd_dtype=state_dict_dtype, extra_dtype=quant_config):
                         model = model_loader(unet_config)
 
-            model = pre_func(model)
             load_state_dict(model, state_dict)
-            # model = post_func(model)
 
             model.config = unet_config
             model.storage_dtype = storage_dtype
@@ -456,6 +210,9 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
             model.offload_device = offload_device
 
             return model
+
+        if component_name in ("transformer", "unet", "vae") or component_name.startswith("text_encoder"):
+            raise ModuleNotFoundError(f'Unsupported {component_name} "{cls_name}": Venno Diffusion UI only supports Anima (Qwen3 text encoder, Qwen-Image VAE)')
 
     logger.warning(f'Skipping "{component_name}" ({lib_name}.{cls_name})')
     return None
@@ -727,32 +484,6 @@ def process_anima(dit: dict[str, torch.Tensor], enc: dict[str, torch.Tensor]):
             enc[k] = dit.pop(k)
 
 
-def process_pid(state_dict: dict[str, torch.Tensor]):
-    pixel_dim = next(v for k, v in state_dict.items() if k.endswith("pixel_embedder.proj.weight")).shape[0]
-    marker = ".adaLN_modulation.0."
-
-    out = {}
-    for k, v in state_dict.items():
-        if k.startswith("_repa_projector") or k.startswith("net_ema."):
-            continue
-        if k.startswith("core."):
-            k = k[len("core.") :]
-        elif k.startswith("net."):
-            k = k[len("net.") :]
-        if "pixel_blocks." in k and marker in k:
-            p2 = v.shape[0] // (6 * pixel_dim)
-            trail = v.shape[1:]
-            vv = v.view(p2, 6, pixel_dim, *trail)
-            base, suffix = k.split(marker)
-            out[f"{base}.adaLN_modulation_msa.{suffix}"] = vv[:, 0:3].reshape(3 * p2 * pixel_dim, *trail).contiguous()
-            out[f"{base}.adaLN_modulation_mlp.{suffix}"] = vv[:, 3:6].reshape(3 * p2 * pixel_dim, *trail).contiguous()
-        else:
-            out[k] = v
-
-    state_dict.clear()
-    state_dict.update(out)
-
-
 def _load_unet(path: os.PathLike):
     import huggingface_guess
 
@@ -785,19 +516,6 @@ def split_state_dict(path: os.PathLike, additional_state_dicts: list[os.PathLike
     finally:
         memory_management.soft_empty_cache()
 
-    if getattr(guess, "nunchaku", False) and ("Z-Image" in guess.huggingface_repo or "Qwen" in guess.huggingface_repo):
-        import json
-
-        from nunchaku.utils import get_precision_from_quantization_config
-
-        quantization_config = json.loads(metadata["quantization_config"])
-        guess.unet_config.update(
-            {
-                "precision": get_precision_from_quantization_config(quantization_config),
-                "rank": quantization_config.get("rank", 32),
-            }
-        )
-
     if isinstance(additional_state_dicts, list):
         for asd in additional_state_dicts:
             _asd, _meta = load_torch_file(asd, return_metadata=True)
@@ -822,9 +540,6 @@ def split_state_dict(path: os.PathLike, additional_state_dicts: list[os.PathLike
 
     if "Anima" in guess.huggingface_repo:
         process_anima(state_dict["transformer"], state_dict["text_encoder"])
-    if "PiD" in guess.huggingface_repo:
-        process_pid(state_dict["transformer"])
-        state_dict["vae"]["_dim"] = guess.unet_config["lq_latent_channels"]
 
     print_dict = {k: len(v) for k, v in state_dict.items()}
     logger.debug(f"StateDict Keys: {print_dict}")
@@ -843,21 +558,7 @@ def forge_loader(sd: os.PathLike, additional_state_dicts: list[os.PathLike] = No
         raise ModuleNotFoundError(f"Venno Diffusion UI only supports Anima models (detected: {repo_name})")
 
     backend.args.dynamic_args.reset()
-    backend.args.dynamic_args.kontext = "kontext" in str(sd).lower()
-    backend.args.dynamic_args.edit = "qwen" in str(sd).lower() and "edit" in str(sd).lower()
-    backend.args.dynamic_args.qwen21 = "Qwen-Image-2.1" in repo_name
-    backend.args.dynamic_args.nunchaku = getattr(estimated_config, "nunchaku", False)
-    backend.args.dynamic_args.klein = "klein" in repo_name
-    backend.args.dynamic_args.wan = "Wan" in repo_name
-    backend.args.dynamic_args.pid = "PiD" in repo_name
-    backend.args.dynamic_args.anima = "Anima" in repo_name
-    backend.args.dynamic_args.krea2 = "Krea-2" in repo_name
-
-    if "xl" in repo_name and "rectified" in str(sd).lower():
-        estimated_config.sampling_settings["RF"] = True
-
-    if getattr(estimated_config, "nunchaku", False):
-        estimated_config.unet_config["filename"] = str(sd)
+    backend.args.dynamic_args.anima = True  # other architecture flags (wan, pid, klein, ...) stay at their reset defaults
 
     from diffusers import DiffusionPipeline
 

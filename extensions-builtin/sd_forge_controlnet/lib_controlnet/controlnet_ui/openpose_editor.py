@@ -2,8 +2,12 @@ import base64
 import json
 
 import gradio as gr
-from annotator.openpose import decode_json_as_poses, draw_poses
-from annotator.openpose.animalpose import draw_animalposes
+
+try:  # Venno: the legacy preprocessor package (which provides `annotator`) is not shipped
+    from annotator.openpose import decode_json_as_poses, draw_poses
+    from annotator.openpose.animalpose import draw_animalposes
+except ImportError:
+    decode_json_as_poses = draw_poses = draw_animalposes = None
 from lib_controlnet.logging import logger
 
 
