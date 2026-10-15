@@ -1,6 +1,8 @@
-import { Doc, LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, ctx2d, loadImage, makeCanvas } from "./doc.js";
+import { Doc, LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, ctx2d, loadImage, makeCanvas, strokeRegionMask } from "./doc.js";
 import { Generator, api } from "./generate.js";
 import { TOOLS, View } from "./view.js";
+import { GenForm } from "./forms.js";
+import { ModelsPage } from "./models.js";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -15,7 +17,7 @@ const state = {
   gen: {
     prompt: "", negative: "", strength: 1, batch: 2, steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple",
     seed: 0, seedLocked: false, resolution: 1024, context: 0.5, feather: 12, qualityPrefix: true, saveImages: true, softInpaint: true,
-    regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, preset: "",
+    regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, preset: "", adetailer: true,
     ...(saved.gen || {}),
   },
   showProgressPreview: saved.showProgressPreview ?? true,
@@ -37,6 +39,27 @@ function persist() {
 const doc = new Doc(1024, 1024);
 const view = new View(doc, $("#viewport"), brush);
 const gen = new Generator(doc, view, state);
+
+// ---------------- tabs ----------------
+let activeTab = "canvas";
+function showTab(name) {
+  activeTab = name;
+  $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  $$(".page").forEach((p) => (p.hidden = p.id !== `page-${name}`));
+  $$(".canvas-only").forEach((el) => (el.style.visibility = name === "canvas" ? "" : "hidden"));
+  if (name === "canvas") view.resize();
+  if (name === "models") modelsPage.load();
+}
+$$("#tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+
+const formCtx = {
+  state,
+  onSendToCanvas: async (src) => { showTab("canvas"); await addImageAsLayer(src, "From gallery"); },
+  onSendToImg2Img: (src) => { showTab("img2img"); img2imgForm.setInputImage(src); },
+};
+const txt2imgForm = new GenForm($("#page-txt2img"), "txt2img", formCtx);
+const img2imgForm = new GenForm($("#page-img2img"), "img2img", formCtx);
+const modelsPage = new ModelsPage($("#page-models"), { onInstalled: () => loadInfo(true) });
 
 // ---------------- toast / status ----------------
 let toastTimer = 0;
@@ -222,8 +245,8 @@ function renderLayers() {
     const name = document.createElement("div");
     name.className = "name";
     name.innerHTML = `<div></div><div class="kind"></div>`;
-    name.firstChild.textContent = l.type === LAYER_REGION && l.prompt ? l.prompt : l.name;
-    name.lastChild.textContent = KIND[l.type];
+    name.firstChild.textContent = l.prompt ? l.prompt : l.name;
+    name.lastChild.textContent = KIND[l.type] + (l.type !== LAYER_REGION && l.prompt.trim() ? " · region" : "");
     li.appendChild(name);
     const eye = document.createElement("button");
     eye.className = `eye ${l.visible ? "" : "off"}`;
@@ -248,6 +271,7 @@ function renderLayerProps() {
   const opacity = rangeField("Opacity", Math.round(l.opacity * 100), 0, 100, (v) => { l.opacity = v / 100; view.render(); }, "%");
   if (l.type === LAYER_PAINT) {
     box.appendChild(opacity);
+    layerPromptBlock(box, l);
   } else if (l.type === LAYER_REGION) {
     const lab = document.createElement("label");
     lab.textContent = "Region prompt";
@@ -294,15 +318,71 @@ function renderLayerProps() {
     box.appendChild(rangeField("Guide from", Math.round(l.controlStart * 100), 0, 100, (v) => (l.controlStart = v / 100), "%"));
     box.appendChild(rangeField("Guide until", Math.round(l.controlEnd * 100), 0, 100, (v) => (l.controlEnd = v / 100), "%"));
     box.appendChild(opacity);
+    layerPromptBlock(box, l);
     hint(box, models.length
       ? "Draw line art (dark lines on transparent/white). It steers composition without being painted into the image."
       : "No ControlNet / ControlLLLite models found. Put Anima ControlLLLite (lineart / scribble) models in models/ControlNet and press ⟳.");
   }
 }
 
+// Paint / guide layers can carry their own prompt: their strokes (grown, closed shapes filled) become a region.
+let regionPreviewLayer = null;
+function layerPromptBlock(box, l) {
+  const lab = document.createElement("label");
+  lab.textContent = "Layer prompt (turns this sketch into a region)";
+  const ta = document.createElement("textarea");
+  ta.rows = 2;
+  ta.value = l.prompt;
+  ta.placeholder = "e.g. 1girl, red dress — applies where this layer is drawn";
+  lab.appendChild(ta);
+  box.appendChild(lab);
+  const extra = document.createElement("div");
+  extra.className = "layer-props";
+  box.appendChild(extra);
+  const renderExtra = () => {
+    extra.innerHTML = "";
+    if (!l.prompt.trim()) { if (regionPreviewLayer === l) setRegionPreview(null); return; }
+    extra.appendChild(rangeField("Region spread", l.regionSpread, 8, 256, (v) => { l.regionSpread = v; refreshRegionPreview(); }, "px"));
+    const fill = document.createElement("label");
+    fill.className = "check";
+    fill.innerHTML = `<input type="checkbox" ${l.regionFill ? "checked" : ""}> Fill enclosed shapes`;
+    fill.firstChild.onchange = (e) => { l.regionFill = e.target.checked; refreshRegionPreview(); gen.scheduleLive(); };
+    extra.appendChild(fill);
+    const show = document.createElement("label");
+    show.className = "check";
+    show.innerHTML = `<input type="checkbox" ${regionPreviewLayer === l ? "checked" : ""}> Show region`;
+    show.firstChild.onchange = (e) => setRegionPreview(e.target.checked ? l : null);
+    extra.appendChild(show);
+  };
+  ta.oninput = () => {
+    const had = !!l.prompt.trim();
+    l.prompt = ta.value;
+    doc.emit("region-prompt");
+    updateLayerThumbLabel();
+    if (had !== !!l.prompt.trim()) renderExtra();
+  };
+  renderExtra();
+}
+
+function setRegionPreview(layer) {
+  regionPreviewLayer = layer;
+  refreshRegionPreview();
+}
+
+function refreshRegionPreview() {
+  const l = regionPreviewLayer;
+  if (!l || !doc.layers.includes(l) || !l.prompt.trim()) { view.setRegionPreview(null); return; }
+  const m = strokeRegionMask(l.canvas, l.regionSpread, l.regionFill);
+  const c = ctx2d(m);
+  c.globalCompositeOperation = "source-in";
+  c.fillStyle = "#ff8a3d";
+  c.fillRect(0, 0, m.width, m.height);
+  view.setRegionPreview(m);
+}
+
 function updateLayerThumbLabel() {
   const li = $("#layer-list li.on .name div");
-  if (li && doc.active.type === LAYER_REGION) li.textContent = doc.active.prompt || doc.active.name;
+  if (li) li.textContent = doc.active.prompt || doc.active.name;
 }
 
 function rangeField(label, value, min, max, onInput, unit = "") {
@@ -333,7 +413,8 @@ function escapeHtml(s) {
 let layersTimer = 0;
 doc.on((what) => {
   if (["layers", "reset", "active", "layer-props"].includes(what)) renderLayers();
-  else if (what === "pixels") { clearTimeout(layersTimer); layersTimer = setTimeout(renderLayers, 150); }
+  else if (what === "pixels") { clearTimeout(layersTimer); layersTimer = setTimeout(() => { renderLayers(); if (regionPreviewLayer) refreshRegionPreview(); }, 150); }
+  if (what === "reset" && regionPreviewLayer) setRegionPreview(null);
   if (["selection", "reset"].includes(what)) { updateModeLabel(); updateSelectionOpts(); }
   if (["pixels", "selection", "layers", "layer-props", "region-prompt"].includes(what)) gen.scheduleLive(what === "region-prompt" ? 1200 : 700);
   updateUndoButtons();
@@ -406,7 +487,7 @@ bindRange("context", () => Math.round(g.context * 100), (v) => (g.context = v / 
 bindRange("feather", () => g.feather, (v) => (g.feather = v));
 bindRange("region-base", () => Math.round(g.regionBase * 100), (v) => (g.regionBase = v / 100), (v) => `${v}%`);
 bindRange("region-end", () => Math.round(g.regionEnd * 100), (v) => (g.regionEnd = v / 100), (v) => `${v}%`);
-for (const [id, key] of [["quality-prefix", "qualityPrefix"], ["save-images", "saveImages"], ["soft-inpaint", "softInpaint"], ["region-append", "regionAppendRoot"]]) {
+for (const [id, key] of [["quality-prefix", "qualityPrefix"], ["save-images", "saveImages"], ["soft-inpaint", "softInpaint"], ["region-append", "regionAppendRoot"], ["canvas-adetailer", "adetailer"]]) {
   $(`#${id}`).checked = g[key];
   $(`#${id}`).onchange = (e) => { g[key] = e.target.checked; persist(); };
 }
@@ -530,7 +611,10 @@ async function loadInfo(refresh = false) {
     if (!g.preset) applyPreset(/turbo/i.test(state.model.checkpoint) ? "turbo" : "standard");
     persist();
     renderLayerProps();
-    setStatus(ckpts.length ? `${ckpts.length} model(s) · ${info.loras.length} LoRA(s) · ${info.controlnets.length} guide model(s)` : "No Anima checkpoint found — put it in models/Stable-diffusion");
+    txt2imgForm.setInfo(info);
+    img2imgForm.setInfo(info);
+    if (!ckpts.length && !refresh) showTab("models");
+    setStatus(ckpts.length ? `${ckpts.length} model(s) · ${info.loras.length} LoRA(s) · ${info.controlnets.length} guide model(s)` : "No Anima checkpoint yet — download one in the Models tab");
   } catch (e) {
     setStatus("Backend unreachable");
     toast(`Could not reach the backend: ${e.message}`);
@@ -585,7 +669,11 @@ vp.addEventListener("drop", (e) => {
 document.addEventListener("paste", (e) => {
   if (e.target.closest("textarea, input")) return;
   const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith("image/"));
-  if (item) { e.preventDefault(); addImageAsLayer(URL.createObjectURL(item.getAsFile()), "Pasted"); }
+  if (!item) return;
+  e.preventDefault();
+  const src = URL.createObjectURL(item.getAsFile());
+  if (activeTab === "img2img") img2imgForm.setInputImage(src);
+  else if (activeTab === "canvas") addImageAsLayer(src, "Pasted");
 });
 
 function exportPNG() {
@@ -625,6 +713,7 @@ $("#dlg-new").addEventListener("close", () => {
 
 // ---------------- keyboard ----------------
 document.addEventListener("keydown", (e) => {
+  if (activeTab !== "canvas") return;
   const typing = e.target.closest("textarea, input:not([type=range]):not([type=checkbox]), select");
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key === "Enter") { e.preventDefault(); gen.run(); return; }

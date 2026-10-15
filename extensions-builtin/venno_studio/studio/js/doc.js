@@ -37,6 +37,9 @@ export class Layer {
     this.controlStart = 0;
     this.controlEnd = 0.8;
     this.controlInvert = "auto"; // "auto" | "yes" | "no"
+    // paint / guide layers with a prompt act as a region shaped by their strokes
+    this.regionSpread = 48;
+    this.regionFill = true;
   }
 }
 
@@ -155,7 +158,7 @@ export class Doc {
     const c = makeCanvas(this.width, this.height);
     ctx2d(c).drawImage(layer.canvas, 0, 0);
     const copy = this.addLayer(layer.type, { name: `${layer.name} copy`, canvas: c, above: layer });
-    Object.assign(copy, { prompt: layer.prompt, opacity: layer.opacity, controlModel: layer.controlModel, controlWeight: layer.controlWeight, controlStart: layer.controlStart, controlEnd: layer.controlEnd, controlInvert: layer.controlInvert, regionStrength: layer.regionStrength });
+    Object.assign(copy, { prompt: layer.prompt, opacity: layer.opacity, controlModel: layer.controlModel, controlWeight: layer.controlWeight, controlStart: layer.controlStart, controlEnd: layer.controlEnd, controlInvert: layer.controlInvert, regionSpread: layer.regionSpread, regionFill: layer.regionFill, regionStrength: layer.regionStrength });
     return copy;
   }
 
@@ -383,4 +386,59 @@ export function loadImage(src) {
     img.onerror = reject;
     img.src = src;
   });
+}
+
+// Region mask (alpha canvas, doc size) derived from a sketch layer's strokes:
+// strokes are grown by `spread` px, closed outlines are optionally filled, edges are softened.
+export function strokeRegionMask(canvas, spread = 48, fillEnclosed = true) {
+  const W = canvas.width, H = canvas.height;
+  const cell = Math.max(2, Math.round(spread / 2));
+  const gw = Math.ceil(W / cell), gh = Math.ceil(H / cell);
+  const src = ctx2d(canvas).getImageData(0, 0, W, H).data;
+  let grid = new Uint8Array(gw * gh);
+  for (let y = 0; y < H; y++) {
+    const row = y * W * 4, gy = ((y / cell) | 0) * gw;
+    for (let x = 0; x < W; x++) if (src[row + x * 4 + 3] > 8) grid[gy + ((x / cell) | 0)] = 1;
+  }
+  // grow by two cells (~spread px)
+  for (let pass = 0; pass < 2; pass++) {
+    const g2 = grid.slice();
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        if (grid[y * gw + x]) continue;
+        if ((x > 0 && grid[y * gw + x - 1]) || (x < gw - 1 && grid[y * gw + x + 1]) || (y > 0 && grid[(y - 1) * gw + x]) || (y < gh - 1 && grid[(y + 1) * gw + x])) g2[y * gw + x] = 1;
+      }
+    }
+    grid = g2;
+  }
+  if (fillEnclosed) {
+    // flood the outside from the border; whatever stays unreached is enclosed
+    const outside = new Uint8Array(gw * gh);
+    const stack = [];
+    for (let x = 0; x < gw; x++) stack.push(x, (gh - 1) * gw + x);
+    for (let y = 0; y < gh; y++) stack.push(y * gw, y * gw + gw - 1);
+    while (stack.length) {
+      const i = stack.pop();
+      if (outside[i] || grid[i]) continue;
+      outside[i] = 1;
+      const x = i % gw, y = (i / gw) | 0;
+      if (x > 0) stack.push(i - 1);
+      if (x < gw - 1) stack.push(i + 1);
+      if (y > 0) stack.push(i - gw);
+      if (y < gh - 1) stack.push(i + gw);
+    }
+    for (let i = 0; i < grid.length; i++) if (!outside[i]) grid[i] = 1;
+  }
+  const small = makeCanvas(gw, gh);
+  const sc = ctx2d(small);
+  const img = sc.createImageData(gw, gh);
+  for (let i = 0; i < grid.length; i++) if (grid[i]) { img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = img.data[i * 4 + 3] = 255; }
+  sc.putImageData(img, 0, 0);
+  const out = makeCanvas(W, H);
+  const oc = ctx2d(out);
+  oc.imageSmoothingEnabled = true;
+  oc.filter = `blur(${Math.max(1, cell / 2)}px)`;
+  oc.drawImage(small, 0, 0, W, H);
+  oc.filter = "none";
+  return out;
 }

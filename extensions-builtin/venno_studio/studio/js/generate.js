@@ -1,6 +1,7 @@
 // Turns the canvas state into Forge API requests and manages results / live mode.
 
-import { LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, alphaToMask, ctx2d, hasContentIn, loadImage, makeCanvas } from "./doc.js";
+import { LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, alphaToMask, ctx2d, hasContentIn, loadImage, makeCanvas, strokeRegionMask } from "./doc.js";
+import { adetailerArgs, ADETAILER_DEFAULT } from "./common.js";
 
 export async function api(path, body = undefined, method = body === undefined ? "GET" : "POST") {
   const res = await fetch(path, {
@@ -136,12 +137,13 @@ export class Generator {
       }
     }
 
-    // regional prompts
+    // regional prompts: region layers, plus paint / guide layers that carry a prompt (shaped by their strokes)
     const regions = [];
     for (const l of doc.layers) {
-      if (l.type !== LAYER_REGION || !l.visible || !l.prompt.trim()) continue;
-      if (!hasContentIn(l.canvas, rect)) continue;
-      const mask = doc.crop(l.canvas, rect, gw, gh);
+      if (!l.visible || !l.prompt.trim()) continue;
+      const source = l.type === LAYER_REGION ? l.canvas : strokeRegionMask(l.canvas, l.regionSpread, l.regionFill);
+      if (!hasContentIn(source, rect)) continue;
+      const mask = doc.crop(source, rect, gw, gh);
       let rp = l.prompt.trim();
       if (g.regionAppendRoot && g.prompt.trim()) rp = `${rp}, ${g.prompt.trim()}`;
       regions.push({ prompt: rp, mask: mask.toDataURL("image/png"), strength: l.regionStrength });
@@ -182,6 +184,14 @@ export class Generator {
       });
     }
     if (units.length) payload.alwayson_scripts.controlnet = { args: units };
+
+    // ADetailer: re-render detected faces (skipped in live mode to keep it fast)
+    const adModels = st.info?.adetailer_models || [];
+    if (g.adetailer && !plan.live && adModels.length) {
+      const face = adModels.includes("face_yolov8n.pt") ? "face_yolov8n.pt" : adModels.find((m) => /face/i.test(m));
+      const ad = face && adetailerArgs({ enabled: true, units: [{ ...ADETAILER_DEFAULT.units[0], model: face }] });
+      if (ad) payload.alwayson_scripts.adetailer = ad;
+    }
 
     return payload;
   }

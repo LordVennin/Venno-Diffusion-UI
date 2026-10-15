@@ -2,7 +2,11 @@
 
 A painting-first UI for the **[Anima](https://huggingface.co/circlestone-labs/Anima)** image model, in the spirit of Krita AI Diffusion. You sketch, select and paint on a layered canvas. The model then generates, refines or inpaints exactly the part you point it at.
 
-The generation engine is **[Stable Diffusion WebUI Forge – Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)** by Haoming02, cut down to Anima only. Its memory management, samplers, LoRA support and API are unchanged. Venno adds a new front end (**Venno Studio**) and a regional prompting module on top.
+The generation engine is **[Stable Diffusion WebUI Forge – Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)** by Haoming02, cut down to Anima only. Its memory management, samplers, LoRA support and API are kept. Forge's Gradio interface is removed. Venno Studio is the only front end, with four tabs:
+
+- **Canvas**: the layered painting workspace.
+- **Text to Image** and **Image to Image**: classic form-style generation, with hires fix, ADetailer, inpaint masks and a results gallery.
+- **Models**: one-click downloads of Anima, guide (ControlLLLite) models, upscalers and detectors.
 
 ![Venno Studio](docs/studio.png)
 
@@ -15,6 +19,9 @@ The generation engine is **[Stable Diffusion WebUI Forge – Neo](https://github
 | **Inpainting** | Select an area with the rectangle, lasso or selection brush and press **Generate**. Only the selection changes. Venno adds surrounding context automatically, feathers the edges, and uses Forge's soft inpainting for seamless blends. |
 | **Image to image** | Open, paste or drag in an image and refine the whole canvas or just a selection at any strength. |
 | **Regional prompting** | *Region* layers are painted masks, each with its own prompt (e.g. one character per region). Regions apply at every denoising step, alongside the main prompt, with any sampler or LoRA. Inpainting works with regions too. |
+| **Prompted sketch layers** | Give any paint or guide layer its own prompt and its strokes become a region. Venno grows the strokes and fills closed outlines, so sketching a figure on its own layer is enough to prompt it separately. |
+| **ADetailer** | [ADetailer-Neo](https://github.com/Haoming02/ADetailer-Neo) is built in and on by default. It re-renders detected faces (and optionally hands) at higher detail on every tab except live mode. |
+| **Hires. fix** | Text to Image has Forge's hires fix: latent or model upscalers, upscale factor or target size, separate steps, denoising, CFG and shift. |
 | **Live mode** | Re-generates automatically after each stroke (fixed seed, so changes stay comparable). Works best with **Anima Turbo** and the 512²/768² resolutions. |
 | **Layers & history** | Paint / region / guide layers, opacity, visibility, reorder, duplicate, merge down, undo/redo for everything, export to PNG. |
 | **Results tray** | Every generation lands in a tray. Preview a result on the canvas, then **Apply** it as a new layer (it is never baked in automatically). |
@@ -28,25 +35,23 @@ The generation engine is **[Stable Diffusion WebUI Forge – Neo](https://github
    cd Venno-Diffusion-UI
    uv venv venv --python 3.13 --seed
    ```
-3. Download the Anima files ([model card](https://huggingface.co/circlestone-labs/Anima)):
+3. Run `webui-user.bat` (Windows) or `./webui-user.sh` (Linux/macOS). The first start installs dependencies, then Studio opens at **http://127.0.0.1:7860/**.
+4. With no Anima checkpoint installed, Studio opens on the **Models** tab. Download *Anima Turbo* (or Aesthetic/Base), the *Qwen3 text encoder* and the *Qwen-Image VAE*, plus any guides and upscalers you want. *Download from URL* takes any Hugging Face / Civitai / direct link (LoRAs too). You can also place files manually:
 
-   | File | Put it in |
+   | File | Folder |
    |---|---|
    | `anima-turbo-v1.1.safetensors` (or `anima-aesthetic-…`, `anima-base-…`) | `models/Stable-diffusion/` |
    | `qwen_3_06b_base.safetensors` | `models/text_encoder/` |
    | `qwen_image_vae.safetensors` | `models/VAE/` |
    | *(optional)* LoRAs | `models/Lora/` |
    | *(optional)* Anima ControlLLLite guide models, e.g. [`anima-lllite-any-test-like-v2`](https://huggingface.co/kohya-ss/Anima-LLLite) (line art / scribble / grayscale) | `models/ControlNet/` |
-
-4. Run `webui-user.bat` (Windows) or `./webui-user.sh` (Linux/macOS). The first start installs dependencies. Studio then opens at **http://127.0.0.1:7860/**.
+   | *(optional)* upscalers (`.pth` / `.safetensors`) | `models/ESRGAN/` |
 
 The text encoder and VAE are picked automatically in the top bar. Choosing a checkpoint with `turbo` in its name switches to the Turbo preset (Euler · Simple · 10 steps · CFG 1). Other checkpoints get the model card's settings (ER SDE · Beta · 32 steps · CFG 4). Both use shift 3.
 
 Only Anima checkpoints are accepted. Loading any other architecture fails with a clear error.
 
-### Classic UI
-
-Add `--classic-ui` to `COMMANDLINE_ARGS` to start the original Forge (Gradio) interface instead. Studio is then still available at `/studio/`. All of Forge's [command-line flags](docs/FORGE_NEO_README.md#commandline) still work, e.g. `--uv`, `--sage`, `--listen`, `--port`, `--ckpt-dirs`.
+Forge's [command-line flags](docs/FORGE_NEO_README.md#commandline) still apply, e.g. `--uv`, `--sage`, `--listen`, `--port`, `--ckpt-dirs`. With `--listen`, downloading from custom URLs is disabled unless you add `--enable-insecure-extension-access`. Catalog downloads keep working.
 
 ## Using the Studio
 
@@ -60,6 +65,10 @@ Add `--classic-ui` to `COMMANDLINE_ARGS` to start the original Forge (Gradio) in
 | yes | < 100 % | **Refine the selection** (partial inpaint) |
 
 Results are rendered at about the chosen *Resolution* (default 1024², Anima's native size), whatever the size of the area you work on. A small selection is upscaled for detail and the result scaled back in.
+
+### Prompting sketch layers
+
+Write a prompt in a paint or guide layer's *Layer prompt* field. That layer's strokes then act as a region, which is handy for "sketch each character on its own layer". *Region spread* sets how far around the strokes the prompt reaches. *Fill enclosed shapes* makes a closed outline count as its whole interior. Tick *Show region* to see the area that will be used. Paint layers stay part of the image. Guide layers with a prompt both steer the lines and prompt the area.
 
 ### Sketch guides
 
@@ -87,6 +96,15 @@ Add a **Guide** layer, pick a model (Venno prefers `any-test-like` / `lineart` m
 - Prompt weights need to be stronger than on SDXL, e.g. `(chibi:2)`.
 - Regions: describe each character fully in its region prompt. The main prompt is appended to each region by default; *Main prompt inside regions* controls how much the main prompt still shapes the regions.
 
+## Text to Image / Image to Image
+
+These are Forge-style form pages: prompt, negative, LoRA picker, preset/sampler/scheduler/steps/CFG/shift, size presets, batch size and count, and seed reuse.
+
+- **Hires. fix (Text to Image):** generate small, upscale with a latent mode or an upscaler model, then refine. Set the upscale factor or a target width/height, plus separate hires steps, denoising, CFG and shift (0 = same as the first pass).
+- **Image to Image:** drop, paste or send in an image. Painting on it creates an inpaint mask; with no mask, the whole image is refined. Settings include masked content, whole picture vs only masked (with padding), mask blur and seamless inpainting.
+- **ADetailer:** up to two detectors (e.g. `face_yolov8n.pt` + `hand_yolov8n.pt`), each with its own denoising, confidence, mask blur, dilation, padding and optional detail prompt.
+- **Results:** *Open in Canvas* adds the image as a layer, *Send to Image to Image* passes it along, *Download* saves it. Results are also saved to `outputs/` unless you turn that off.
+
 ## API
 
 Studio uses the standard Forge endpoints (`/sdapi/v1/txt2img`, `/sdapi/v1/img2img`, `/sdapi/v1/progress`, …), so scripts can use them directly. Regional prompting is an always-on script:
@@ -99,7 +117,11 @@ Studio uses the standard Forge endpoints (`/sdapi/v1/txt2img`, `/sdapi/v1/img2im
 }
 ```
 
-Masks are white (or opaque) where the region applies, relative to the full generation size. `GET /venno/api/info` lists models, modules, LoRAs, samplers, schedulers and presets.
+Masks are white (or opaque) where the region applies, relative to the full generation size. ADetailer uses the `adetailer` always-on script: `"args": [true, false, {"ad_model": "face_yolov8n.pt", …}]`.
+
+Venno endpoints:
+- `GET /venno/api/info`: models, modules, LoRAs, samplers, schedulers, upscalers, ADetailer detectors and presets.
+- `GET /venno/api/models/catalog`, `POST /venno/api/models/download` (`{"id": …}` or `{"url": …, "kind": …}`) and `GET /venno/api/models/jobs`: model downloads.
 
 ## Project layout
 
@@ -107,6 +129,8 @@ Masks are white (or opaque) where the region applies, relative to the full gener
 |---|---|
 | `extensions-builtin/venno_studio/studio/` | Studio front end (plain ES modules, no build step) |
 | `extensions-builtin/venno_studio/scripts/venno_studio.py` | Serves Studio, `/venno/api/*` |
+| `extensions-builtin/venno_studio/lib_venno/downloads.py` | Model catalog and downloader |
+| `extensions-builtin/adetailer-neo/` | ADetailer-Neo (Haoming02, AGPL-3.0) |
 | `extensions-builtin/venno_studio/scripts/venno_regional.py` | Regional prompting (masked per-region conditioning) |
 | `backend/`, `modules/`, `modules_forge/` | Forge Neo engine (Anima only) |
 

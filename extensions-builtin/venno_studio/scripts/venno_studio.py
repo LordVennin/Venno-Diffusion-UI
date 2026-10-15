@@ -8,12 +8,14 @@ so queueing, progress and interruption behave exactly like the rest of Forge.
 
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from modules import script_callbacks, shared
+from modules import paths, script_callbacks, shared
 from modules.shared_cmd_options import cmd_opts
+
+from lib_venno import downloads
 
 STUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "studio")
 
@@ -52,6 +54,14 @@ def _controlnets() -> list[str]:
         return []
 
 
+def _adetailer_models() -> list[str]:
+    folder = os.path.join(paths.models_path, "adetailer")
+    try:
+        return sorted(f for f in os.listdir(folder) if f.lower().endswith((".pt", ".tflite", ".task")) and f != "face_landmarker.task")
+    except OSError:
+        return []
+
+
 def _info() -> dict:
     from modules import sd_models, sd_samplers, sd_schedulers
     from modules_forge.main_entry import module_list
@@ -65,6 +75,8 @@ def _info() -> dict:
         "schedulers": [s.label for s in sd_schedulers.schedulers],
         "loras": _loras(),
         "controlnets": _controlnets(),
+        "upscalers": [*shared.latent_upscale_modes.keys(), *(u.name for u in shared.sd_upscalers if u.name != "None")],
+        "adetailer_models": _adetailer_models(),
         "presets": PRESETS,
         "prompt_defaults": PROMPT_DEFAULTS,
     }
@@ -78,6 +90,12 @@ def _refresh():
     shared_items.refresh_vae_list()
     try:
         main_entry.refresh_models()
+    except Exception:
+        pass
+    try:
+        from modules import modelloader
+
+        modelloader.load_upscalers()
     except Exception:
         pass
     try:
@@ -102,6 +120,45 @@ def on_app_started(_demo, app: FastAPI):
         return _info()
 
     app.add_api_route("/venno/api/refresh", refresh, methods=["POST"])
+
+    # ---- model downloads ----
+    def on_download_done(_job):
+        try:
+            _refresh()
+        except Exception as e:
+            print(f"[Venno] refresh after download failed: {e}")
+
+    def catalog():
+        return {"catalog": downloads.catalog(), "kinds": downloads.KINDS, "jobs": downloads.jobs(), "custom_urls": not cmd_opts.disable_extension_access}
+
+    def download(req: dict):
+        try:
+            if req.get("id"):
+                entry = next((c for c in downloads.CATALOG if c[0] == req["id"]), None)
+                if entry is None:
+                    raise ValueError("Unknown catalog entry")
+                cid, kind, name, _desc, url, _size = entry
+                job = downloads.start(url, kind, name=name, on_done=on_download_done)
+            else:
+                # arbitrary URLs write files to disk: same rule as installing extensions when listening on the network
+                if cmd_opts.disable_extension_access:
+                    raise ValueError("Downloading from custom URLs is disabled when the server is shared on the network (use --enable-insecure-extension-access)")
+                job = downloads.start(str(req.get("url", "")).strip(), str(req.get("kind", "")), filename=req.get("filename") or None, on_done=on_download_done)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return job.to_dict()
+
+    def download_jobs():
+        return downloads.jobs()
+
+    def download_cancel(req: dict):
+        downloads.cancel(str(req.get("id", "")))
+        return downloads.jobs()
+
+    app.add_api_route("/venno/api/models/catalog", catalog, methods=["GET"])
+    app.add_api_route("/venno/api/models/download", download, methods=["POST"])
+    app.add_api_route("/venno/api/models/jobs", download_jobs, methods=["GET"])
+    app.add_api_route("/venno/api/models/cancel", download_cancel, methods=["POST"])
 
     app.mount("/studio/assets", StaticFiles(directory=STUDIO_DIR), name="venno_studio_assets")
 

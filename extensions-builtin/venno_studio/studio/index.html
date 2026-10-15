@@ -9,7 +9,13 @@
 <body>
 <header class="topbar">
   <div class="brand">Venno<span>Studio</span></div>
-  <div class="menu">
+  <nav class="tabs" id="tabs">
+    <button data-tab="canvas" class="on">Canvas</button>
+    <button data-tab="txt2img">Text to Image</button>
+    <button data-tab="img2img">Image to Image</button>
+    <button data-tab="models">Models</button>
+  </nav>
+  <div class="menu canvas-only">
     <button data-action="new" title="New canvas">New</button>
     <button data-action="open" title="Open image as layer (also: drag &amp; drop, Ctrl+V)">Open</button>
     <button data-action="export" title="Export visible image as PNG">Export</button>
@@ -18,14 +24,15 @@
     <button data-action="redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
   </div>
   <div class="models">
-    <label>Model <select id="sel-checkpoint"></select></label>
-    <label>Text encoder <select id="sel-te"></select></label>
-    <label>VAE <select id="sel-vae"></select></label>
+    <label title="Anima checkpoint">Model <select id="sel-checkpoint" title="Anima checkpoint"></select></label>
+    <label title="Text encoder">Text encoder <select id="sel-te" title="Text encoder"></select></label>
+    <label title="VAE">VAE <select id="sel-vae" title="VAE"></select></label>
     <button id="btn-refresh" title="Rescan model folders">⟳</button>
   </div>
   <div class="status" id="status"></div>
 </header>
 
+<div class="page" id="page-canvas">
 <div class="toolopts" id="toolopts">
   <div class="group" data-for="paint">
     <label>Size <input type="range" id="opt-size" min="1" max="400" value="12"><output id="out-size">12</output></label>
@@ -131,6 +138,7 @@
         </div>
         <label class="check"><input type="checkbox" id="quality-prefix" checked> Add Anima quality tags</label>
         <label class="check" title="Blend inpainted areas step-by-step for invisible seams (Forge soft inpainting)"><input type="checkbox" id="soft-inpaint" checked> Seamless inpainting</label>
+        <label class="check" title="Detect faces in the result and re-render them at higher detail (not used in live mode)"><input type="checkbox" id="canvas-adetailer" checked> ADetailer (faces)</label>
         <label class="check"><input type="checkbox" id="save-images" checked> Save results to outputs folder</label>
         <label class="check"><input type="checkbox" id="progress-preview" checked> Show progress preview</label>
         <h4>Regional prompts</h4>
@@ -162,6 +170,11 @@
     </section>
   </aside>
 </main>
+</div>
+
+<div class="page form-page" id="page-txt2img" hidden></div>
+<div class="page form-page" id="page-img2img" hidden></div>
+<div class="page" id="page-models" hidden></div>
 
 <div class="toast" id="toast"></div>
 

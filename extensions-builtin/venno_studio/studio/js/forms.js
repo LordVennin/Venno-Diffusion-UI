@@ -1,0 +1,599 @@
+// "Text to Image" and "Image to Image" tabs: classic form-style generation pages.
+
+import {
+  $, $$, ADETAILER_DEFAULT, adetailerArgs, api, downloadDataURL, escapeHtml, fillSelect, loadStore, modelOverrides,
+  pollProgress, progressText, safeJSON, saveStore, toast, withQualityPrefix,
+} from "./common.js";
+
+const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768]];
+const RESIZE_MODES = ["Just resize", "Crop and resize", "Resize and fill"];
+const FILL_MODES = ["Fill", "Original", "Latent noise", "Latent nothing"];
+const MASK_COLOR = "#ff8a3d";
+
+const DEFAULTS = {
+  prompt: "", negative: "", qualityPrefix: true, width: 1024, height: 1024, batchSize: 1, batchCount: 1,
+  steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple", seed: -1, preset: "",
+  // hires fix (txt2img)
+  hr: false, hrUpscaler: "Latent", hrScale: 1.5, hrResizeX: 0, hrResizeY: 0, hrSteps: 0, hrDenoise: 0.5, hrCfg: 0, hrShift: 0,
+  // img2img
+  denoise: 0.6, resizeMode: 0, scaleBy: 1, maskBlur: 8, fill: 1, onlyMasked: false, onlyMaskedPadding: 64, softInpaint: true,
+  saveImages: true,
+  adetailer: ADETAILER_DEFAULT,
+};
+
+export class GenForm {
+  constructor(root, mode, ctx) {
+    this.root = root;
+    this.mode = mode; // "txt2img" | "img2img"
+    this.ctx = ctx; // { state, onSendToCanvas, onSendToImg2Img }
+    this.key = `venno-form-${mode}`;
+    this.s = loadStore(this.key, structuredClone(DEFAULTS));
+    this.s.adetailer = { ...structuredClone(ADETAILER_DEFAULT), ...(this.s.adetailer || {}) };
+    this.results = []; // [{src, seed, info}]
+    this.current = -1;
+    this.busy = false;
+    this.inputImage = null; // img2img source (HTMLImageElement)
+    this.mask = null; // img2img mask canvas (image resolution, white = inpaint)
+    this.build();
+  }
+
+  persist() { saveStore(this.key, this.s); }
+
+  // ---------------- DOM ----------------
+  build() {
+    const i2i = this.mode === "img2img";
+    this.root.innerHTML = `
+      <div class="form-col">
+        <section class="card">
+          <textarea class="f-prompt" rows="4" placeholder="Prompt (Ctrl+Enter to generate)"></textarea>
+          <textarea class="f-negative" rows="2" placeholder="Negative prompt"></textarea>
+          <div class="row">
+            <select class="f-lora"></select>
+            <label class="check"><input type="checkbox" class="f-quality"> Anima quality tags</label>
+          </div>
+          <div class="row buttons">
+            <button class="primary big f-generate">Generate</button>
+            <button class="big f-cancel" hidden>Cancel</button>
+          </div>
+          <div class="f-progress progress-inline" hidden><div class="bar"></div><span></span></div>
+        </section>
+
+        ${i2i ? `
+        <section class="card">
+          <h3>Input image</h3>
+          <div class="i2i-drop">
+            <div class="i2i-empty">Drop, paste or <button class="f-open">open</button> an image<br><small>or use “Send to Image to Image” from another tab</small></div>
+            <div class="i2i-stage" hidden><img class="i2i-img" alt=""><canvas class="i2i-mask"></canvas></div>
+          </div>
+          <div class="row mask-tools" hidden>
+            <span class="lbl">Inpaint mask</span>
+            <div class="seg"><button class="f-mask-draw on">Paint</button><button class="f-mask-erase">Erase</button></div>
+            <label>Brush <input type="range" class="f-mask-size" min="4" max="300" value="48"></label>
+            <button class="f-mask-invert">Invert</button>
+            <button class="f-mask-clear">Clear</button>
+            <button class="f-image-clear" title="Remove image">✕</button>
+          </div>
+          <div class="hint">Paint over the image to inpaint only that area. No mask = whole image (image to image).</div>
+        </section>` : ""}
+
+        <section class="card">
+          <div class="grid2">
+            <label>Preset <select class="f-preset"></select></label>
+            <label>Sampler <select class="f-sampler"></select></label>
+            <label>Scheduler <select class="f-scheduler"></select></label>
+            <label>Steps <input type="number" class="f-steps" min="1" max="150"></label>
+            <label>CFG <input type="number" class="f-cfg" min="1" max="30" step="0.1"></label>
+            <label>Shift <input type="number" class="f-shift" min="0" max="20" step="0.1"></label>
+          </div>
+          <div class="grid2">
+            <label>Width <input type="number" class="f-width" min="256" max="2048" step="64"></label>
+            <label>Height <input type="number" class="f-height" min="256" max="2048" step="64"></label>
+          </div>
+          <div class="sizes">${SIZES.map(([w, h]) => `<button data-w="${w}" data-h="${h}">${w}×${h}</button>`).join("")}<button class="f-swap" title="Swap width/height">⇅</button></div>
+          ${i2i ? `
+          <div class="grid2">
+            <label>Resize mode <select class="f-resize-mode">${RESIZE_MODES.map((m, i) => `<option value="${i}">${m}</option>`).join("")}</select></label>
+            <label>Size from image <span class="row"><button class="f-size-from-image">Match input</button></span></label>
+          </div>
+          <label class="slider">Denoising strength <input type="range" class="f-denoise" min="0" max="100"><output></output></label>` : ""}
+          <div class="grid2">
+            <label>Batch size <input type="number" class="f-batch-size" min="1" max="8"></label>
+            <label>Batch count <input type="number" class="f-batch-count" min="1" max="100"></label>
+          </div>
+          <label>Seed <span class="row seed"><input type="number" class="f-seed"><button class="f-seed-random" title="Random (-1)">🎲</button><button class="f-seed-reuse" title="Reuse seed of the shown image">♻️</button></span></label>
+        </section>
+
+        ${i2i ? `
+        <details class="card" open>
+          <summary>Inpainting</summary>
+          <div class="grid2">
+            <label>Masked content <select class="f-fill">${FILL_MODES.map((m, i) => `<option value="${i}">${m}</option>`).join("")}</select></label>
+            <label>Inpaint area <select class="f-only-masked"><option value="0">Whole picture</option><option value="1">Only masked</option></select></label>
+            <label>Mask blur <input type="number" class="f-mask-blur" min="0" max="64"></label>
+            <label>Only-masked padding <input type="number" class="f-padding" min="0" max="256"></label>
+          </div>
+          <label class="check"><input type="checkbox" class="f-soft"> Seamless (soft) inpainting</label>
+        </details>` : `
+        <details class="card f-hr-card">
+          <summary><label class="check"><input type="checkbox" class="f-hr"> Hires. fix</label></summary>
+          <div class="grid2">
+            <label>Upscaler <select class="f-hr-upscaler"></select></label>
+            <label>Hires steps <input type="number" class="f-hr-steps" min="0" max="150" title="0 = same as first pass"></label>
+            <label>Upscale by <input type="number" class="f-hr-scale" min="1" max="4" step="0.05"></label>
+            <label>Denoising <input type="number" class="f-hr-denoise" min="0" max="1" step="0.05"></label>
+            <label>Resize width to <input type="number" class="f-hr-x" min="0" max="4096" step="64" title="0 = use Upscale by"></label>
+            <label>Resize height to <input type="number" class="f-hr-y" min="0" max="4096" step="64" title="0 = use Upscale by"></label>
+            <label>Hires CFG <input type="number" class="f-hr-cfg" min="0" max="30" step="0.1" title="0 = same as first pass"></label>
+            <label>Hires shift <input type="number" class="f-hr-shift" min="0" max="20" step="0.1" title="0 = same as first pass"></label>
+          </div>
+          <div class="hint f-hr-info"></div>
+        </details>`}
+
+        <details class="card f-ad-card">
+          <summary><label class="check"><input type="checkbox" class="f-ad"> ADetailer</label></summary>
+          ${[0, 1].map((n) => `
+          <div class="ad-unit" data-unit="${n}">
+            <h4>${n === 0 ? "1st" : "2nd"} detector</h4>
+            <div class="grid2">
+              <label>Model <select class="ad-model"></select></label>
+              <label>Denoising <input type="number" class="ad-denoise" min="0" max="1" step="0.05"></label>
+              <label>Confidence <input type="number" class="ad-confidence" min="0" max="1" step="0.05"></label>
+              <label>Mask blur <input type="number" class="ad-blur" min="0" max="64"></label>
+              <label>Dilate / erode <input type="number" class="ad-dilate" min="-64" max="64"></label>
+              <label>Padding <input type="number" class="ad-padding" min="0" max="256"></label>
+            </div>
+            <textarea class="ad-prompt" rows="1" placeholder="Detail prompt (empty = main prompt)"></textarea>
+          </div>`).join("")}
+        </details>
+
+        <label class="check save"><input type="checkbox" class="f-save"> Save results to outputs folder</label>
+      </div>
+
+      <div class="result-col">
+        <div class="result-main"><img class="r-img" alt=""><div class="r-empty">Results appear here</div></div>
+        <div class="r-thumbs"></div>
+        <div class="row r-actions">
+          <button class="r-to-canvas" disabled>Open in Canvas</button>
+          ${i2i ? `<button class="r-to-input" disabled>Use as input</button>` : `<button class="r-to-i2i" disabled>Send to Image to Image</button>`}
+          <button class="r-download" disabled>Download</button>
+        </div>
+        <pre class="r-info"></pre>
+      </div>`;
+    this.bind();
+  }
+
+  q(sel) { return $(sel, this.root); }
+
+  bind() {
+    const s = this.s;
+    const i2i = this.mode === "img2img";
+    const num = (sel, key, onChange) => {
+      const el = this.q(sel);
+      el.value = s[key];
+      el.onchange = () => { s[key] = Number(el.value); this.persist(); onChange && onChange(); };
+    };
+    const txt = (sel, key) => {
+      const el = this.q(sel);
+      el.value = s[key];
+      el.oninput = () => { s[key] = el.value; this.persist(); };
+    };
+    const chk = (sel, key, onChange) => {
+      const el = this.q(sel);
+      el.checked = s[key];
+      el.onchange = () => { s[key] = el.checked; this.persist(); onChange && onChange(); };
+    };
+
+    txt(".f-prompt", "prompt");
+    txt(".f-negative", "negative");
+    chk(".f-quality", "qualityPrefix");
+    chk(".f-save", "saveImages");
+    num(".f-steps", "steps");
+    num(".f-cfg", "cfg");
+    num(".f-shift", "shift");
+    num(".f-width", "width", () => this.updateHrInfo());
+    num(".f-height", "height", () => this.updateHrInfo());
+    num(".f-batch-size", "batchSize");
+    num(".f-batch-count", "batchCount");
+    num(".f-seed", "seed");
+    this.q(".f-sampler").onchange = (e) => { s.sampler = e.target.value; this.persist(); };
+    this.q(".f-scheduler").onchange = (e) => { s.scheduler = e.target.value; this.persist(); };
+    this.q(".f-preset").onchange = (e) => this.applyPreset(e.target.value);
+    this.q(".f-seed-random").onclick = () => { s.seed = -1; this.q(".f-seed").value = -1; this.persist(); };
+    this.q(".f-seed-reuse").onclick = () => {
+      const r = this.results[this.current];
+      if (r) { s.seed = r.seed; this.q(".f-seed").value = r.seed; this.persist(); }
+    };
+    $$(".sizes button[data-w]", this.root).forEach((b) => (b.onclick = () => this.setSize(Number(b.dataset.w), Number(b.dataset.h))));
+    this.q(".f-swap").onclick = () => this.setSize(s.height, s.width);
+    this.q(".f-generate").onclick = () => this.generate();
+    this.q(".f-cancel").onclick = () => api("/sdapi/v1/interrupt", {}).catch(() => {});
+    this.q(".f-lora").onchange = (e) => this.insertLora(e);
+    this.root.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); e.stopPropagation(); this.generate(); }
+    });
+
+    if (i2i) {
+      num(".f-mask-blur", "maskBlur");
+      num(".f-padding", "onlyMaskedPadding");
+      chk(".f-soft", "softInpaint");
+      this.q(".f-fill").value = s.fill;
+      this.q(".f-fill").onchange = (e) => { s.fill = Number(e.target.value); this.persist(); };
+      this.q(".f-only-masked").value = s.onlyMasked ? "1" : "0";
+      this.q(".f-only-masked").onchange = (e) => { s.onlyMasked = e.target.value === "1"; this.persist(); };
+      this.q(".f-resize-mode").value = s.resizeMode;
+      this.q(".f-resize-mode").onchange = (e) => { s.resizeMode = Number(e.target.value); this.persist(); };
+      const den = this.q(".f-denoise");
+      den.value = Math.round(s.denoise * 100);
+      den.nextElementSibling.textContent = den.value / 100;
+      den.oninput = () => { s.denoise = den.value / 100; den.nextElementSibling.textContent = s.denoise; this.persist(); };
+      this.q(".f-size-from-image").onclick = () => this.sizeFromImage();
+      this.bindImageInput();
+    } else {
+      chk(".f-hr", "hr", () => this.updateHrInfo());
+      this.q(".f-hr").onclick = (e) => e.stopPropagation(); // don't toggle the <details>
+      num(".f-hr-steps", "hrSteps");
+      num(".f-hr-scale", "hrScale", () => this.updateHrInfo());
+      num(".f-hr-denoise", "hrDenoise");
+      num(".f-hr-x", "hrResizeX", () => this.updateHrInfo());
+      num(".f-hr-y", "hrResizeY", () => this.updateHrInfo());
+      num(".f-hr-cfg", "hrCfg");
+      num(".f-hr-shift", "hrShift");
+      this.q(".f-hr-upscaler").onchange = (e) => { s.hrUpscaler = e.target.value; this.persist(); };
+      this.updateHrInfo();
+    }
+
+    // ADetailer
+    const ad = s.adetailer;
+    const adChk = this.q(".f-ad");
+    adChk.checked = ad.enabled;
+    adChk.onclick = (e) => e.stopPropagation();
+    adChk.onchange = () => { ad.enabled = adChk.checked; this.persist(); };
+    $$(".ad-unit", this.root).forEach((el) => {
+      const u = ad.units[Number(el.dataset.unit)];
+      const bindU = (sel, key, isNum = true) => {
+        const f = $(sel, el);
+        f.value = u[key];
+        f.onchange = () => { u[key] = isNum ? Number(f.value) : f.value; this.persist(); };
+      };
+      bindU(".ad-model", "model", false);
+      bindU(".ad-denoise", "denoise");
+      bindU(".ad-confidence", "confidence");
+      bindU(".ad-blur", "maskBlur");
+      bindU(".ad-dilate", "dilate");
+      bindU(".ad-padding", "padding");
+      const p = $(".ad-prompt", el);
+      p.value = u.prompt;
+      p.oninput = () => { u.prompt = p.value; this.persist(); };
+    });
+
+    // results
+    this.q(".r-to-canvas").onclick = () => this.withCurrent((r) => this.ctx.onSendToCanvas(r.src));
+    const toI2I = this.q(".r-to-i2i") || this.q(".r-to-input");
+    toI2I.onclick = () => this.withCurrent((r) => this.ctx.onSendToImg2Img(r.src));
+    this.q(".r-download").onclick = () => this.withCurrent((r) => downloadDataURL(r.src, `venno-${r.seed}.png`));
+  }
+
+  withCurrent(fn) {
+    const r = this.results[this.current];
+    if (r) fn(r);
+  }
+
+  // called whenever /venno/api/info is (re)loaded
+  setInfo(info) {
+    const s = this.s;
+    fillSelect(this.q(".f-sampler"), info.samplers.map((x) => ({ value: x, label: x })), s.sampler);
+    fillSelect(this.q(".f-scheduler"), info.schedulers.map((x) => ({ value: x, label: x })), s.scheduler);
+    fillSelect(this.q(".f-preset"), Object.entries(info.presets).map(([k, p]) => ({ value: k, label: p.label })), s.preset, { empty: "Custom" });
+    this.q(".f-lora").innerHTML = `<option value="">+ LoRA… (${info.loras.length})</option>` + info.loras.map((l) => `<option value="${escapeHtml(l.name)}">${escapeHtml(l.name)}</option>`).join("");
+    if (this.q(".f-hr-upscaler")) fillSelect(this.q(".f-hr-upscaler"), info.upscalers.map((x) => ({ value: x, label: x })), s.hrUpscaler);
+    const adModels = [{ value: "None", label: "None" }, ...info.adetailer_models.map((x) => ({ value: x, label: x }))];
+    $$(".ad-unit", this.root).forEach((el) => fillSelect($(".ad-model", el), adModels, s.adetailer.units[Number(el.dataset.unit)].model));
+    if (!s.negative && info.prompt_defaults?.negative) { s.negative = info.prompt_defaults.negative; this.q(".f-negative").value = s.negative; }
+    if (!s.preset) this.applyPreset(/turbo/i.test(this.ctx.state.model.checkpoint) ? "turbo" : "standard");
+  }
+
+  applyPreset(name) {
+    const p = this.ctx.state.info?.presets?.[name];
+    if (!p) return;
+    Object.assign(this.s, { preset: name, sampler: p.sampler, scheduler: p.scheduler, steps: p.steps, cfg: p.cfg, shift: p.shift });
+    this.q(".f-sampler").value = p.sampler;
+    this.q(".f-scheduler").value = p.scheduler;
+    this.q(".f-steps").value = p.steps;
+    this.q(".f-cfg").value = p.cfg;
+    this.q(".f-shift").value = p.shift;
+    this.q(".f-preset").value = name;
+    this.persist();
+  }
+
+  setSize(w, h) {
+    this.s.width = w;
+    this.s.height = h;
+    this.q(".f-width").value = w;
+    this.q(".f-height").value = h;
+    this.persist();
+    this.updateHrInfo();
+  }
+
+  updateHrInfo() {
+    const el = this.q(".f-hr-info");
+    if (!el) return;
+    const s = this.s;
+    let w = s.hrResizeX || Math.round((s.width * s.hrScale) / 64) * 64;
+    let h = s.hrResizeY || Math.round((s.height * s.hrScale) / 64) * 64;
+    if (s.hrResizeX && !s.hrResizeY) h = Math.round((s.height * s.hrResizeX) / s.width / 64) * 64;
+    if (s.hrResizeY && !s.hrResizeX) w = Math.round((s.width * s.hrResizeY) / s.height / 64) * 64;
+    el.textContent = s.hr ? `${s.width}×${s.height} → ${w}×${h}` : "Generate at low resolution, then upscale and refine (like Forge's Hires. fix).";
+  }
+
+  insertLora(e) {
+    const name = e.target.value;
+    e.target.value = "";
+    if (!name) return;
+    const ta = this.q(".f-prompt");
+    const pos = ta.selectionStart ?? ta.value.length;
+    const v = ta.value;
+    const sep = pos > 0 && !/[\s,]$/.test(v.slice(0, pos)) ? ", " : "";
+    ta.value = v.slice(0, pos) + sep + `<lora:${name}:0.8>` + v.slice(pos);
+    ta.dispatchEvent(new Event("input"));
+    ta.focus();
+  }
+
+  // ---------------- img2img input & mask ----------------
+  bindImageInput() {
+    const drop = this.q(".i2i-drop");
+    const file = document.createElement("input");
+    file.type = "file";
+    file.accept = "image/*";
+    file.onchange = () => { if (file.files[0]) this.setInputImage(URL.createObjectURL(file.files[0])); file.value = ""; };
+    this.q(".f-open").onclick = () => file.click();
+    drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("dragging"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("dragging"));
+    drop.addEventListener("drop", (e) => {
+      e.preventDefault();
+      drop.classList.remove("dragging");
+      const f = [...e.dataTransfer.files].find((x) => x.type.startsWith("image/"));
+      if (f) this.setInputImage(URL.createObjectURL(f));
+    });
+
+    const mc = this.q(".i2i-mask");
+    let erase = false, size = 48, drawing = false, last = null;
+    this.q(".f-mask-draw").onclick = () => { erase = false; this.q(".f-mask-draw").classList.add("on"); this.q(".f-mask-erase").classList.remove("on"); };
+    this.q(".f-mask-erase").onclick = () => { erase = true; this.q(".f-mask-erase").classList.add("on"); this.q(".f-mask-draw").classList.remove("on"); };
+    this.q(".f-mask-size").oninput = (e) => (size = Number(e.target.value));
+    this.q(".f-mask-clear").onclick = () => this.clearMask();
+    this.q(".f-mask-invert").onclick = () => this.invertMask();
+    this.q(".f-image-clear").onclick = () => this.setInputImage(null);
+    const pos = (e) => {
+      const r = mc.getBoundingClientRect();
+      return { x: ((e.clientX - r.left) / r.width) * mc.width, y: ((e.clientY - r.top) / r.height) * mc.height, k: mc.width / r.width };
+    };
+    const paint = (p) => {
+      const c = mc.getContext("2d");
+      c.globalCompositeOperation = erase ? "destination-out" : "source-over";
+      c.strokeStyle = c.fillStyle = MASK_COLOR;
+      c.lineWidth = size * p.k;
+      c.lineCap = c.lineJoin = "round";
+      c.beginPath();
+      c.moveTo((last || p).x, (last || p).y);
+      c.lineTo(p.x, p.y);
+      c.stroke();
+      last = p;
+    };
+    mc.addEventListener("pointerdown", (e) => { mc.setPointerCapture(e.pointerId); drawing = true; last = null; paint(pos(e)); });
+    mc.addEventListener("pointermove", (e) => drawing && paint(pos(e)));
+    mc.addEventListener("pointerup", () => { drawing = false; last = null; });
+  }
+
+  async setInputImage(src) {
+    if (!src) {
+      this.inputImage = null;
+      this.q(".i2i-stage").hidden = true;
+      this.q(".i2i-empty").hidden = false;
+      this.q(".mask-tools").hidden = true;
+      return;
+    }
+    const img = new Image();
+    img.src = src;
+    await img.decode();
+    this.inputImage = img;
+    this.q(".i2i-img").src = src;
+    const mc = this.q(".i2i-mask");
+    mc.width = img.naturalWidth;
+    mc.height = img.naturalHeight;
+    this.q(".i2i-stage").hidden = false;
+    this.q(".i2i-empty").hidden = true;
+    this.q(".mask-tools").hidden = false;
+    this.sizeFromImage();
+  }
+
+  sizeFromImage() {
+    if (!this.inputImage) return;
+    const { naturalWidth: w, naturalHeight: h } = this.inputImage;
+    // keep the aspect ratio, ~1 megapixel for Anima, multiples of 64
+    const scale = Math.sqrt((1024 * 1024) / (w * h));
+    const snap = (v) => Math.max(256, Math.round((v * scale) / 64) * 64);
+    this.setSize(snap(w), snap(h));
+  }
+
+  maskHasContent() {
+    const mc = this.q(".i2i-mask");
+    if (!mc || !this.inputImage) return false;
+    const d = mc.getContext("2d").getImageData(0, 0, mc.width, mc.height).data;
+    for (let i = 3; i < d.length; i += 16) if (d[i] > 0) return true;
+    return false;
+  }
+
+  clearMask() {
+    const mc = this.q(".i2i-mask");
+    mc.getContext("2d").clearRect(0, 0, mc.width, mc.height);
+  }
+
+  invertMask() {
+    const mc = this.q(".i2i-mask");
+    const c = mc.getContext("2d");
+    const t = document.createElement("canvas");
+    t.width = mc.width;
+    t.height = mc.height;
+    const tc = t.getContext("2d");
+    tc.fillStyle = MASK_COLOR;
+    tc.fillRect(0, 0, t.width, t.height);
+    tc.globalCompositeOperation = "destination-out";
+    tc.drawImage(mc, 0, 0);
+    c.clearRect(0, 0, mc.width, mc.height);
+    c.drawImage(t, 0, 0);
+  }
+
+  maskDataURL() {
+    const mc = this.q(".i2i-mask");
+    const out = document.createElement("canvas");
+    out.width = mc.width;
+    out.height = mc.height;
+    const c = out.getContext("2d");
+    // painted alpha -> white-on-black mask
+    const white = document.createElement("canvas");
+    white.width = mc.width;
+    white.height = mc.height;
+    const wc = white.getContext("2d");
+    wc.drawImage(mc, 0, 0);
+    wc.globalCompositeOperation = "source-in";
+    wc.fillStyle = "#fff";
+    wc.fillRect(0, 0, white.width, white.height);
+    c.fillStyle = "#000";
+    c.fillRect(0, 0, out.width, out.height);
+    c.drawImage(white, 0, 0);
+    return out.toDataURL("image/png");
+  }
+
+  inputDataURL() {
+    const img = this.inputImage;
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    c.getContext("2d").drawImage(img, 0, 0);
+    return c.toDataURL("image/png");
+  }
+
+  // ---------------- generation ----------------
+  buildPayload() {
+    const s = this.s;
+    const st = this.ctx.state;
+    const payload = {
+      prompt: withQualityPrefix(s.prompt, s.qualityPrefix, st.info),
+      negative_prompt: s.negative,
+      steps: s.steps,
+      cfg_scale: s.cfg,
+      distilled_cfg_scale: s.shift,
+      sampler_name: s.sampler,
+      scheduler: s.scheduler,
+      seed: s.seed,
+      width: s.width,
+      height: s.height,
+      batch_size: s.batchSize,
+      n_iter: s.batchCount,
+      send_images: true,
+      save_images: s.saveImages,
+      do_not_save_grid: true,
+      override_settings: modelOverrides(st.model),
+      override_settings_restore_afterwards: false,
+      alwayson_scripts: {},
+    };
+    if (this.mode === "txt2img" && s.hr) {
+      Object.assign(payload, {
+        enable_hr: true,
+        hr_upscaler: s.hrUpscaler,
+        hr_scale: s.hrScale,
+        hr_resize_x: s.hrResizeX,
+        hr_resize_y: s.hrResizeY,
+        hr_second_pass_steps: s.hrSteps,
+        denoising_strength: s.hrDenoise,
+        hr_cfg: s.hrCfg || s.cfg,
+        hr_distilled_cfg: s.hrShift || s.shift,
+      });
+    }
+    if (this.mode === "img2img") {
+      if (!this.inputImage) throw new Error("Add an input image first");
+      Object.assign(payload, { init_images: [this.inputDataURL()], denoising_strength: s.denoise, resize_mode: s.resizeMode });
+      if (this.maskHasContent()) {
+        Object.assign(payload, {
+          mask: this.maskDataURL(),
+          mask_blur: s.maskBlur,
+          inpainting_fill: s.fill,
+          inpaint_full_res: s.onlyMasked,
+          inpaint_full_res_padding: s.onlyMaskedPadding,
+          inpainting_mask_invert: 0,
+        });
+        if (s.softInpaint) payload.alwayson_scripts["soft inpainting"] = { args: [true, 1, 0.5, 4, 0, 0.5, 2] };
+      }
+    }
+    const ad = adetailerArgs(s.adetailer);
+    if (ad) payload.alwayson_scripts.adetailer = ad;
+    return payload;
+  }
+
+  async generate() {
+    if (this.busy) return;
+    if (!this.ctx.state.model.checkpoint) return toast("Select or download an Anima checkpoint first (Models tab).");
+    let payload;
+    try { payload = this.buildPayload(); } catch (e) { return toast(e.message); }
+
+    this.busy = true;
+    this.q(".f-generate").disabled = true;
+    this.q(".f-cancel").hidden = false;
+    const bar = this.q(".f-progress");
+    bar.hidden = false;
+    const poll = pollProgress((p) => {
+      const { pct, text } = progressText(p);
+      $(".bar", bar).style.width = `${pct}%`;
+      $("span", bar).textContent = text;
+      if (p.current_image) this.showPreview(`data:image/jpeg;base64,${p.current_image}`);
+    });
+    try {
+      const res = await api(this.mode === "txt2img" ? "/sdapi/v1/txt2img" : "/sdapi/v1/img2img", payload);
+      const info = safeJSON(res.info) || {};
+      const count = payload.batch_size * payload.n_iter;
+      const images = (res.images || []).slice(0, count);
+      if (!images.length) throw new Error("No image returned (interrupted?)");
+      const fresh = images.map((b64, i) => ({
+        src: b64.startsWith("data:") ? b64 : `data:image/png;base64,${b64}`,
+        seed: info.all_seeds?.[i] ?? payload.seed,
+        info: info.infotexts?.[i] || "",
+      }));
+      this.results = [...fresh, ...this.results].slice(0, 60);
+      this.select(0);
+    } catch (e) {
+      toast(e.message);
+      if (this.current >= 0) this.select(this.current);
+    } finally {
+      poll.stop();
+      this.busy = false;
+      this.q(".f-generate").disabled = false;
+      this.q(".f-cancel").hidden = true;
+      bar.hidden = true;
+    }
+  }
+
+  showPreview(src) {
+    this.q(".r-img").src = src;
+    this.q(".r-empty").hidden = true;
+  }
+
+  select(i) {
+    this.current = i;
+    const r = this.results[i];
+    if (!r) return;
+    this.showPreview(r.src);
+    this.q(".r-info").textContent = r.info;
+    $$(".r-actions button", this.root).forEach((b) => (b.disabled = false));
+    const thumbs = this.q(".r-thumbs");
+    thumbs.innerHTML = "";
+    this.results.forEach((x, k) => {
+      const img = document.createElement("img");
+      img.src = x.src;
+      img.title = `Seed ${x.seed}`;
+      img.classList.toggle("on", k === i);
+      img.onclick = () => this.select(k);
+      thumbs.appendChild(img);
+    });
+  }
+}
+

@@ -99,6 +99,10 @@ export class View {
     this.overlay = canvas ? { canvas, rect } : null;
     this.render();
   }
+  setRegionPreview(canvas) {
+    this.regionPreview = canvas;
+    this.render();
+  }
   setGenRect(rect) {
     this.genRect = rect;
     this.render();
@@ -153,6 +157,12 @@ export class View {
         ctx.globalAlpha = l.id === doc.activeId ? 0.55 : 0.35;
         ctx.drawImage(this.layerWithStroke(l), 0, 0);
       }
+      ctx.globalAlpha = 1;
+    }
+
+    if (this.regionPreview && !this.overlay) {
+      ctx.globalAlpha = 0.4;
+      ctx.drawImage(this.regionPreview, 0, 0);
       ctx.globalAlpha = 1;
     }
 
