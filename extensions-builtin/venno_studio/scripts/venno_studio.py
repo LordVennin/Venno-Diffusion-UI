@@ -7,7 +7,6 @@ a single worker queue, and a WebSocket event stream for progress and live previe
 
 import asyncio
 import base64
-import io
 import os
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -163,7 +162,7 @@ def on_app_started(_demo, app: FastAPI):
         """Pushes {"type": "job", ...summary} on every job change and {"type": "preview", id, image} for live previews."""
         await ws.accept()
         sent: dict[str, int] = {}
-        last_preview = -1
+        last_preview: dict[str, int] = {}
         try:
             while True:
                 jobs.update_progress()
@@ -172,12 +171,9 @@ def on_app_started(_demo, app: FastAPI):
                         sent[rec.id] = rec.version
                         await ws.send_json({"type": "job", **rec.summary()})
                 running = jobs.running_record()
-                st = shared.state
-                if running is not None and st.current_image is not None and st.id_live_preview != last_preview:
-                    last_preview = st.id_live_preview
-                    buf = io.BytesIO()
-                    st.current_image.convert("RGB").save(buf, format="JPEG", quality=80)
-                    await ws.send_json({"type": "preview", "id": running.id, "image": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()})
+                if running is not None and running.preview is not None and running.preview_id != last_preview.get(running.id):
+                    last_preview[running.id] = running.preview_id
+                    await ws.send_json({"type": "preview", "id": running.id, "image": "data:image/jpeg;base64," + base64.b64encode(running.preview).decode()})
                 await asyncio.sleep(0.3)
         except (WebSocketDisconnect, RuntimeError):
             return

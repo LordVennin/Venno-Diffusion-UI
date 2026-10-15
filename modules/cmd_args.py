@@ -52,6 +52,7 @@ parser.add_argument("--disable-console-progressbars", action="store_true", help=
 parser.add_argument("--api", action="store_true", help="use api=True to launch the API together with the webui (use --nowebui instead for only the API)")
 parser.add_argument("--api-auth", type=str, help='Set authentication for API like "username:password"; or comma-delimit multiple like "u1:p1,u2:p2,u3:p3"', default=None)
 parser.add_argument("--api-log", action="store_true", help="use api-log=True to enable logging of all API requests")
+parser.add_argument("--engine", type=str, choices=["forge", "venno"], default="forge", help="Venno: generation pipeline for Studio jobs (venno = new engine, falls back to forge for features it does not support yet)")
 parser.add_argument("--nowebui", action="store_true", help="use api=True to launch the API instead of the webui")
 parser.add_argument("--ui-debug-mode", action="store_true", help="Don't load model to quickly launch UI")
 parser.add_argument("--device-id", type=str, help="Select the default CUDA device to use (export CUDA_VISIBLE_DEVICES=0,1,etc might be needed before)", default=None)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import io
 import json
 import threading
 import time
@@ -106,6 +107,7 @@ class Job(BaseModel):
     detailer: list[Detailer] = []
     save: bool = True
     tag: str = ""  # free-form client label (e.g. "live")
+    engine: Literal["default", "venno", "forge"] = "default"  # Phases 1-3: pick the pipeline (parity testing)
 
 
 FILL_MODES = {"fill": 0, "original": 1, "latent_noise": 2, "latent_nothing": 3}
@@ -131,7 +133,15 @@ class JobRecord:
         self.job_no = 0
         self.job_count = 0
         self.eta = 0.0
+        self.engine = ""  # pipeline that ran the job: "venno" | "forge"
+        self.preview: Optional[bytes] = None  # latest live preview (JPEG)
+        self.preview_id = 0
+        self.cancel_event = threading.Event()
         self.version = 0  # bumped on every change (for event streaming)
+
+    def set_preview(self, jpeg: bytes):
+        self.preview = jpeg
+        self.preview_id += 1
 
     def summary(self) -> dict:
         return {
@@ -150,6 +160,7 @@ class JobRecord:
             "seeds": self.seeds,
             "infotexts": self.infotexts,
             "queue_position": queue_position(self.id),
+            "engine": self.engine,
         }
 
 
@@ -202,6 +213,7 @@ def cancel(job_id: str) -> bool:
             _cond.notify_all()
             return True
         if rec.status == "running":
+            rec.cancel_event.set()
             shared.state.interrupt()
             return True
     return False
@@ -232,8 +244,12 @@ def _work_loop():
             rec.version += 1
             _running = job_id
         try:
-            _run_forge(rec)
-            rec.status = "cancelled" if shared.state.interrupted else "done"
+            if _choose_engine(rec) == "venno":
+                cancelled = _run_venno(rec)
+            else:
+                _run_forge(rec)
+                cancelled = shared.state.interrupted
+            rec.status = "cancelled" if cancelled or rec.cancel_event.is_set() else "done"
         except Exception as e:  # report, keep the worker alive
             rec.status = "error"
             rec.error = getattr(e, "detail", None) or str(e) or type(e).__name__
@@ -252,11 +268,16 @@ def running_record() -> Optional[JobRecord]:
 
 
 def update_progress():
-    """Copy Forge's global progress state into the running job record."""
+    """Forge path: copy Forge's global progress state (and preview) into the running job record."""
     rec = running_record()
     st = shared.state
-    if rec is None or st.job_count == 0:
+    if rec is None or rec.engine != "forge" or st.job_count == 0:
         return rec
+    if st.current_image is not None and st.id_live_preview != getattr(rec, "_forge_preview_id", -1):
+        rec._forge_preview_id = st.id_live_preview
+        buf = io.BytesIO()
+        st.current_image.convert("RGB").save(buf, format="JPEG", quality=80)
+        rec.set_preview(buf.getvalue())
     progress = 0.01
     if st.job_count > 0:
         progress += st.job_no / st.job_count
@@ -276,7 +297,76 @@ def update_progress():
     return rec
 
 
-# ---------------------------------------------------------------- Forge adapter (replaced in Phase 1)
+# ---------------------------------------------------------------- engine selection
+
+
+def default_engine() -> str:
+    return getattr(shared.cmd_opts, "engine", "forge") or "forge"
+
+
+def venno_unsupported(job: Job) -> Optional[str]:
+    """Why the Venno engine can't run this job yet (None = it can). Grows smaller each phase."""
+    from venno.engine import conditioning, sampling, schedulers
+
+    if job.mode != "txt2img":
+        return "image to image (Phase 2)"
+    if job.loras:
+        return "LoRAs (Phase 2)"
+    if job.regions:
+        return "regional prompts (Phase 2)"
+    if job.guides:
+        return "guides (Phase 3)"
+    if job.hires:
+        return "hires fix (Phase 3)"
+    if any(d.model and d.model != "None" for d in job.detailer):
+        return "detailer (Phase 3)"
+    for text in (job.prompt, job.negative):
+        if why := conditioning.unsupported_syntax(text):
+            return f"{why} (Phase 2)"
+    if job.sampler not in sampling.SAMPLERS:
+        return f'sampler "{job.sampler}"'
+    if job.scheduler not in schedulers.SCHEDULERS and job.scheduler not in ("", "Automatic"):
+        return f'scheduler "{job.scheduler}"'
+    return None
+
+
+def _choose_engine(rec: JobRecord) -> str:
+    wanted = rec.job.engine if rec.job.engine != "default" else default_engine()
+    if wanted == "venno":
+        why = venno_unsupported(rec.job)
+        if why is not None:
+            if rec.job.engine == "venno":  # explicitly requested: fail loudly
+                raise ValueError(f"The Venno engine does not support {why} yet")
+            print(f"[Venno] job {rec.id}: {why} not on the Venno engine yet, using Forge")
+            wanted = "forge"
+    rec.engine = wanted
+    rec.version += 1
+    return wanted
+
+
+# ---------------------------------------------------------------- Venno engine
+
+
+def _run_venno(rec: JobRecord) -> bool:
+    from venno.pipeline import txt2img
+
+    total_runs = rec.job.count
+
+    def on_step(step, steps, run, runs):
+        rec.step, rec.steps, rec.job_no, rec.job_count = step, steps, run, runs
+        rec.progress = min(1.0, (run + step / max(steps, 1)) / max(runs, 1))
+        elapsed = time.time() - rec.started
+        rec.eta = elapsed / rec.progress - elapsed if rec.progress > 0.01 else 0.0
+        rec.version += 1
+
+    progress = txt2img.Progress(on_step=on_step, on_preview=rec.set_preview, is_cancelled=rec.cancel_event.is_set)
+    rec.job_count = total_runs
+    result = txt2img.run(rec.job, progress)
+    rec.images, rec.seeds, rec.infotexts = result.images, result.seeds, result.infotexts
+    return result.cancelled
+
+
+# ---------------------------------------------------------------- Forge adapter (replaced as the Venno engine grows)
 
 def _b64(data: Optional[str]) -> Optional[str]:
     if not data:
@@ -398,6 +488,9 @@ def _forge_payload(job: Job) -> dict:
 def _run_forge(rec: JobRecord):
     from modules.api import models
 
+    from venno.engine.models import manager
+
+    manager.unload()  # never hold the model twice while both pipelines exist
     forge_api = getattr(shared, "forge_api", None)  # set in webui.create_api
     if forge_api is None:
         raise RuntimeError("generation backend is not ready yet")
