@@ -36,7 +36,7 @@ The generation engine is **[Stable Diffusion WebUI Forge – Neo](https://github
    | `qwen_3_06b_base.safetensors` | `models/text_encoder/` |
    | `qwen_image_vae.safetensors` | `models/VAE/` |
    | *(optional)* LoRAs | `models/Lora/` |
-   | *(optional)* Anima ControlLLLite / ControlNet models | `models/ControlNet/` |
+   | *(optional)* Anima ControlLLLite guide models, e.g. [`anima-lllite-any-test-like-v2`](https://huggingface.co/kohya-ss/Anima-LLLite) (line art / scribble / grayscale) | `models/ControlNet/` |
 
 4. Run `webui-user.bat` (Windows) or `./webui-user.sh` (Linux/macOS). The first start installs dependencies. Studio then opens at **http://127.0.0.1:7860/**.
 
@@ -60,6 +60,10 @@ Add `--classic-ui` to `COMMANDLINE_ARGS` to start the original Forge (Gradio) in
 | yes | < 100 % | **Refine the selection** (partial inpaint) |
 
 Results are rendered at about the chosen *Resolution* (default 1024², Anima's native size), whatever the size of the area you work on. A small selection is upscaled for detail and the result scaled back in.
+
+### Sketch guides
+
+Add a **Guide** layer, pick a model (Venno prefers `any-test-like` / `lineart` models), and draw dark lines. The guide steers composition without being painted into the image, so it works even at 100 % strength. You can combine it with paint layers at lower strength to control colours as well. For scribble models, *Line polarity: Auto* sends white-on-black lines automatically. Lower *Guide until* if the result follows wobbly lines too literally.
 
 ### Shortcuts
 

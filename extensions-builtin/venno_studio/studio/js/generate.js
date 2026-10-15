@@ -158,6 +158,15 @@ export class Generator {
       if (l.type !== LAYER_CONTROL || !l.visible || !l.controlModel) continue;
       if (!hasContentIn(l.canvas, rect)) continue;
       const img = doc.crop(l.canvas, rect, gw, gh, { background: "#ffffff" });
+      // the user always draws dark lines on white; scribble-type models expect white lines on black
+      const invert = l.controlInvert === "yes" || (l.controlInvert === "auto" && /scribble|hed|pidi/i.test(l.controlModel));
+      if (invert) {
+        const c = ctx2d(img);
+        c.globalCompositeOperation = "difference";
+        c.fillStyle = "#ffffff";
+        c.fillRect(0, 0, gw, gh);
+        c.globalCompositeOperation = "source-over";
+      }
       units.push({
         enabled: true,
         module: "None",

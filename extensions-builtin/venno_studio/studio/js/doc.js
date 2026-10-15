@@ -36,6 +36,7 @@ export class Layer {
     this.controlWeight = 0.8;
     this.controlStart = 0;
     this.controlEnd = 0.8;
+    this.controlInvert = "auto"; // "auto" | "yes" | "no"
   }
 }
 
@@ -154,7 +155,7 @@ export class Doc {
     const c = makeCanvas(this.width, this.height);
     ctx2d(c).drawImage(layer.canvas, 0, 0);
     const copy = this.addLayer(layer.type, { name: `${layer.name} copy`, canvas: c, above: layer });
-    Object.assign(copy, { prompt: layer.prompt, opacity: layer.opacity, controlModel: layer.controlModel, controlWeight: layer.controlWeight, controlStart: layer.controlStart, controlEnd: layer.controlEnd, regionStrength: layer.regionStrength });
+    Object.assign(copy, { prompt: layer.prompt, opacity: layer.opacity, controlModel: layer.controlModel, controlWeight: layer.controlWeight, controlStart: layer.controlStart, controlEnd: layer.controlEnd, controlInvert: layer.controlInvert, regionStrength: layer.regionStrength });
     return copy;
   }
 

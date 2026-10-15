@@ -158,7 +158,8 @@ const actions = {
   "clear-selection": () => clearSelection(),
   "add-paint": () => doc.addLayer(LAYER_PAINT),
   "add-region": () => { const l = doc.addLayer(LAYER_REGION); setTool("brush"); brush.size = Math.max(brush.size, 60); syncBrushUI(); toast(`Paint where "${l.name}" applies, then write its prompt below`, "info"); },
-  "add-control": () => { const l = doc.addLayer(LAYER_CONTROL); l.controlModel = state.info?.controlnets?.[0] || ""; setTool("brush"); setColor("#000000"); renderLayers(); },
+  "add-control": () => { const l = doc.addLayer(LAYER_CONTROL); const cns = state.info?.controlnets || [];
+    l.controlModel = cns.find((m) => /any-?test|lineart|sketch/i.test(m)) || cns[0] || ""; setTool("brush"); setColor("#000000"); renderLayers(); },
   "layer-up": () => doc.moveLayer(doc.active, 1),
   "layer-down": () => doc.moveLayer(doc.active, -1),
   "layer-dup": () => doc.duplicateLayer(doc.active),
@@ -281,6 +282,14 @@ function renderLayerProps() {
     sel.onchange = () => { l.controlModel = sel.value; doc.emit("layer-props"); };
     lab.appendChild(sel);
     box.appendChild(lab);
+    const inv = document.createElement("label");
+    inv.textContent = "Line polarity sent to the model";
+    const isel = document.createElement("select");
+    isel.innerHTML = '<option value="auto">Auto (invert for scribble models)</option><option value="no">Dark lines on white</option><option value="yes">Inverted: white lines on black</option>';
+    isel.value = l.controlInvert;
+    isel.onchange = () => { l.controlInvert = isel.value; gen.scheduleLive(); };
+    inv.appendChild(isel);
+    box.appendChild(inv);
     box.appendChild(rangeField("Guide strength", Math.round(l.controlWeight * 100), 0, 200, (v) => (l.controlWeight = v / 100), "%"));
     box.appendChild(rangeField("Guide from", Math.round(l.controlStart * 100), 0, 100, (v) => (l.controlStart = v / 100), "%"));
     box.appendChild(rangeField("Guide until", Math.round(l.controlEnd * 100), 0, 100, (v) => (l.controlEnd = v / 100), "%"));
