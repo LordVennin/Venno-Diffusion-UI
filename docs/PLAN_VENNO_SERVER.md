@@ -62,7 +62,7 @@ backend/         (unchanged engine)
 | Today | Replacement | Notes / est. lines |
 |---|---|---|
 | `sd_models` + `main_entry` model switching, `--*-dirs` scanning | `engine/models.py` `ModelManager`: scans folders, calls `backend.loader.forge_loader(ckpt, [te, vae])`, keeps one engine loaded, unloads on switch | ~200 |
-| `prompt_parser`, `extra_networks` | `engine/conditioning.py`: strip `<lora:…>` tags, encode positive/negative/region prompts through the Anima text engine (which already handles weights/emphasis) | ~150. Decision: drop `[a:b:when]` scheduling and `AND`, or port `prompt_parser.py` (~370) |
+| `prompt_parser`, `extra_networks` | `engine/conditioning.py`: strip `<lora:…>` tags, parse schedules/`AND` (ported `prompt_parser.py`), encode positive/negative/region prompts through the Anima text engine (which already handles weights/emphasis) | ~150 + ported 370 |
 | `sd_samplers*`, `sd_schedulers`, `forge_alter_samplers` | `engine/sampling.py`: build sigmas (Simple, Beta, Karras, Normal, SGM, …), wrap the model as a k-diffusion denoiser calling `backend.sampling.sampling_function_inner`, run `vendor/k_diffusion` samplers (Euler, Euler a, ER SDE, DPM++ 2M/SDE, …) | ~400 |
 | `rng.py`, `rng_philox` | `engine/rng.py`: per-image seeded CPU noise (+ subseed variation if wanted) | ~60. **Old seeds won't reproduce bit-for-bit** |
 | `processing.py` (txt2img / img2img / inpaint / hires) | `pipeline/*`: init latent, mask prep (blur, fill modes, "only masked" crop + paste-back), denoise, decode, overlay | ~900 |
@@ -113,8 +113,9 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 - `engine/` (ModelManager, conditioning, sampling, schedulers, rng, VAE, preview) and `pipeline/txt2img`, behind `--engine venno` (Forge path stays default).
 - Parity check: same prompt/sampler/steps on both engines. Results should match closely, not bit-exact, because the noise generator differs.
 
-**Phase 2: img2img, inpainting, regions, LoRA** (4–6 days)
+**Phase 2: img2img, inpainting, regions, LoRA, prompt syntax** (5–7 days)
 - Mask handling, fill modes, only-masked crop, differential (soft) inpainting, regional prompting, LoRA patching and caching.
+- Prompt scheduling / `AND` (ported parser) incl. inside region prompts; syntax hint in Studio.
 
 **Phase 2b: Anima 3.8B** (3–5 days)
 - Load Qwen3.5 4B as a second text encoder and implement the 3.8B conditioning path (from the 3.8B model card and the companion Forge extension).
@@ -136,7 +137,7 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 
 **Phase 6: plugin system** (after the rewrite)
 - Manifest, loader and hook API as described under Decisions.
-- First external plugins written by us (e.g. prompt scheduling, tiled upscale).
+- First plugins written by us (e.g. tiled upscale).
 
 **Total: roughly 4–5 weeks of focused work for Phases 0–4 + 2b.** Phases 0 and 1 are where most of the risk shows up early.
 
@@ -145,7 +146,7 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 | # | Topic | Decision |
 |---|---|---|
 | 1 | `/sdapi` (A1111/Forge API) | **Dropped.** Only the Venno API exists after Phase 4. |
-| 2 | Prompt scheduling (`[a:b:when]`, `[a\|b]`, `AND`) | *Open*: recommended to drop for v1 (see below) |
+| 2 | Prompt scheduling (`[a:b:when]`, `[a\|b]`, `AND`) | **Keep.** Port `prompt_parser.py` as-is and surface the syntax in Studio (see below) |
 | 3 | Seed compatibility with the Forge-based builds | **Not needed.** Use a simple seeded noise generator. |
 | 4 | Anima variants | **All versions.** Must-have: Base / Aesthetic / Turbo (2B) and **2.9B**. Also planned: 3.8B (see below) |
 | 5 | Upstream sync of `backend/` | *Open*: recommended to keep it close to Forge Neo |
@@ -160,7 +161,16 @@ A1111 prompt syntax that changes the prompt *during* sampling:
 - `[cat|dog]` alternates every step
 - `prompt A AND prompt B` mixes two separately-encoded prompts
 
-These are rarely used with Anima. Venno regions and `(word:1.5)` weights cover most needs, and mid-run switching re-encodes prompts during sampling, which complicates the conditioning cache. Recommendation: keep weights/emphasis and LoRA tags, drop scheduling and `AND` in v1, and offer them later as a plugin if wanted.
+It is little-used mostly because few people know it exists. Keeping it is cheap:
+- The parser is self-contained (only `lark` + `torch`) and ports unchanged.
+- The sampler needs ~30 lines to pick the per-step conditioning.
+- `AND` maps onto the weighted-conditions support already in `backend/`.
+- Hires schedules are built in.
+- Region prompts go through the same parser.
+
+All schedule variants are encoded once up front and cached. Estimated ~1 day in Phase 2 plus unit tests (nesting, escapes, LoRA tags inside schedules).
+
+Studio gets a prompt-syntax hint and, later, highlighting that shows where switches happen.
 
 ### Anima variants (decision 4)
 
