@@ -490,7 +490,7 @@ def _run_forge(rec: JobRecord):
 
     from venno.engine.models import manager
 
-    manager.unload()  # never hold the model twice while both pipelines exist
+    manager.release_for_forge()  # never hold the model twice while both pipelines exist
     forge_api = getattr(shared, "forge_api", None)  # set in webui.create_api
     if forge_api is None:
         raise RuntimeError("generation backend is not ready yet")

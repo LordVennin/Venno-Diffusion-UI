@@ -68,8 +68,9 @@ class SampleRequest:
 class Denoiser:
     """k-diffusion model wrapper: CFG over the engine's conditioning pipeline."""
 
-    def __init__(self, req: SampleRequest):
+    def __init__(self, req: SampleRequest, linker):
         self.req = req
+        self.inner_model = linker  # samplers read inner_model.predictor (flow / const checks)
         self.unet = req.engine.forge_objects.unet
         self.cond = compile_conditions(req.cond)
         self.uncond = compile_conditions(req.uncond)
@@ -125,7 +126,7 @@ def sample(req: SampleRequest) -> torch.Tensor:
     kd.torch = rng.TorchProxy(req.noise)  # ancestral / SDE noise from the job's seeded generators
     try:
         with torch.inference_mode():
-            return func(Denoiser(req), x, sigmas, extra_args={}, callback=callback, disable=True, **kwargs)
+            return func(Denoiser(req, linker), x, sigmas, extra_args={}, callback=callback, disable=True, **kwargs)
     finally:
         kd.torch = previous_torch
         sampling_cleanup(unet)
