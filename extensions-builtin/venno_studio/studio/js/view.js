@@ -147,18 +147,19 @@ export class View {
     }
     ctx.globalAlpha = 1;
 
-    if (this.overlay) {
-      const { canvas, rect } = this.overlay;
-      ctx.drawImage(canvas, rect.x, rect.y, rect.w, rect.h);
-    }
-
-    if (this.showRegions) {
+    if (this.showRegions && !this.overlay) {
       for (const l of doc.layers) {
         if (!l.visible || l.type !== LAYER_REGION) continue;
         ctx.globalAlpha = l.id === doc.activeId ? 0.55 : 0.35;
         ctx.drawImage(this.layerWithStroke(l), 0, 0);
       }
       ctx.globalAlpha = 1;
+    }
+
+    // result / progress preview (region tints are hidden so the result is seen as-is)
+    if (this.overlay) {
+      const { canvas, rect } = this.overlay;
+      ctx.drawImage(canvas, rect.x, rect.y, rect.w, rect.h);
     }
 
     // selection

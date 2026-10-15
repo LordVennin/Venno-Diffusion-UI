@@ -14,7 +14,7 @@ const state = {
   model: { checkpoint: "", textEncoder: "", vae: "", ...(saved.model || {}) },
   gen: {
     prompt: "", negative: "", strength: 1, batch: 2, steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple",
-    seed: 0, seedLocked: false, resolution: 1024, context: 0.3, feather: 12, qualityPrefix: true, saveImages: true,
+    seed: 0, seedLocked: false, resolution: 1024, context: 0.5, feather: 12, qualityPrefix: true, saveImages: true, softInpaint: true,
     regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, preset: "",
     ...(saved.gen || {}),
   },
@@ -79,9 +79,13 @@ function setTool(id) {
   const paints = ["brush", "eraser", "select-brush"].includes(id);
   $('.group[data-for="paint"]').style.display = paints ? "" : "none";
   $('.group[data-for="fill"]').style.display = id === "fill" ? "" : "none";
-  $('.group[data-for="select"]').style.display = id.startsWith("select") ? "" : "none";
+  updateSelectionOpts();
   view.canvas.style.cursor = id === "pan" ? "grab" : id === "move" ? "move" : paints ? "none" : "crosshair";
   view.render();
+}
+
+function updateSelectionOpts() {
+  $('.group[data-for="select"]').style.display = view.tool.startsWith("select") || doc.hasSelection ? "" : "none";
 }
 
 // ---------------- tool options ----------------
@@ -321,7 +325,7 @@ let layersTimer = 0;
 doc.on((what) => {
   if (["layers", "reset", "active", "layer-props"].includes(what)) renderLayers();
   else if (what === "pixels") { clearTimeout(layersTimer); layersTimer = setTimeout(renderLayers, 150); }
-  if (["selection", "reset"].includes(what)) updateModeLabel();
+  if (["selection", "reset"].includes(what)) { updateModeLabel(); updateSelectionOpts(); }
   if (["pixels", "selection", "layers", "layer-props", "region-prompt"].includes(what)) gen.scheduleLive(what === "region-prompt" ? 1200 : 700);
   updateUndoButtons();
 });
@@ -393,7 +397,7 @@ bindRange("context", () => Math.round(g.context * 100), (v) => (g.context = v / 
 bindRange("feather", () => g.feather, (v) => (g.feather = v));
 bindRange("region-base", () => Math.round(g.regionBase * 100), (v) => (g.regionBase = v / 100), (v) => `${v}%`);
 bindRange("region-end", () => Math.round(g.regionEnd * 100), (v) => (g.regionEnd = v / 100), (v) => `${v}%`);
-for (const [id, key] of [["quality-prefix", "qualityPrefix"], ["save-images", "saveImages"], ["region-append", "regionAppendRoot"]]) {
+for (const [id, key] of [["quality-prefix", "qualityPrefix"], ["save-images", "saveImages"], ["soft-inpaint", "softInpaint"], ["region-append", "regionAppendRoot"]]) {
   $(`#${id}`).checked = g[key];
   $(`#${id}`).onchange = (e) => { g[key] = e.target.checked; persist(); };
 }

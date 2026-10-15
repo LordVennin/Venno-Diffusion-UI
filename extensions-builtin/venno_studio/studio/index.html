@@ -126,10 +126,11 @@
             <option value="1280">1280²</option>
             <option value="1536">1536² (max)</option>
           </select></label>
-          <label title="Extra surrounding context included when generating inside a selection">Context <input type="range" id="context" min="0" max="100" value="30"><output id="out-context">30%</output></label>
+          <label title="Extra surrounding context included when generating inside a selection">Context <input type="range" id="context" min="0" max="150" value="50"><output id="out-context">50%</output></label>
           <label title="Soft edge for inpainting / blending results">Feather <input type="range" id="feather" min="0" max="64" value="12"><output id="out-feather">12</output></label>
         </div>
         <label class="check"><input type="checkbox" id="quality-prefix" checked> Add Anima quality tags</label>
+        <label class="check" title="Blend inpainted areas step-by-step for invisible seams (Forge soft inpainting)"><input type="checkbox" id="soft-inpaint" checked> Seamless inpainting</label>
         <label class="check"><input type="checkbox" id="save-images" checked> Save results to outputs folder</label>
         <label class="check"><input type="checkbox" id="progress-preview" checked> Show progress preview</label>
         <h4>Regional prompts</h4>

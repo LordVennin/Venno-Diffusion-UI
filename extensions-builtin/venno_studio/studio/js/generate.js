@@ -62,7 +62,11 @@ export class Generator {
     const W = doc.width, H = doc.height;
 
     let rect;
-    if (sel) rect = expandRect(sel, Math.max(16, Math.max(sel.w, sel.h) * g.context), W, H);
+    if (sel) {
+      // surrounding context helps the model match style / lighting; scale with both the selection and the canvas
+      const pad = Math.max(Math.max(sel.w, sel.h) * g.context, Math.max(W, H) * g.context * 0.25, 16);
+      rect = expandRect(sel, pad, W, H);
+    }
     else rect = { x: 0, y: 0, w: W, h: H };
 
     const [gw, gh] = fitResolution(rect.w, rect.h, g.resolution * g.resolution);
@@ -125,6 +129,10 @@ export class Generator {
         payload.inpainting_fill = 1; // original
         payload.inpaint_full_res = false;
         payload.inpainting_mask_invert = 0;
+        if (g.softInpaint) {
+          // Forge "soft inpainting": per-step latent blending for seamless edges
+          payload.alwayson_scripts["soft inpainting"] = { args: [true, 1, 0.5, 4, 0, 0.5, 2] };
+        }
       }
     }
 

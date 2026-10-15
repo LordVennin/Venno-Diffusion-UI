@@ -1,3 +1,14 @@
+import sys
+
+# Venno: the canvas Studio is the default front-end (served by the API server).
+# Pass --classic-ui to get the original Forge (Gradio) interface instead; Studio is then at /studio/
+# (only when run as the entry point: extensions also `import launch`)
+if __name__ == "__main__":
+    if "--classic-ui" in sys.argv:
+        sys.argv.remove("--classic-ui")
+    elif "--nowebui" not in sys.argv:
+        sys.argv.append("--nowebui")
+
 from modules import launch_utils
 
 args = launch_utils.args

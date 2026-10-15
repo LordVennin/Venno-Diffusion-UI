@@ -6,7 +6,7 @@ def register(options_templates, options_section, OptionInfo):
             (None, "Forge Hidden Options"),
             {
                 "VERSION_UID": OptionInfo(None, "internal version for breaking-changes"),
-                "forge_preset": OptionInfo("sd"),
+                "forge_preset": OptionInfo("anima"),
                 "forge_additional_modules": OptionInfo([]),
                 "forge_unet_storage_dtype": OptionInfo("Automatic"),
             },

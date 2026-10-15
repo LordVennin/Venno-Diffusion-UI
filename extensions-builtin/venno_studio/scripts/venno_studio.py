@@ -122,8 +122,25 @@ def on_app_started(demo, app: FastAPI):
 
     if api_only:
         app.add_api_route("/", lambda: RedirectResponse("/studio/"), methods=["GET"], include_in_schema=False)
+        port = cmd_opts.port or 7860
+        print(f"[Venno] Studio running on: http://127.0.0.1:{port}/")
+        _maybe_open_browser(port)
+    else:
+        print("[Venno] Studio available at /studio/")
 
-    print("[Venno] Studio available at /studio/")
+
+def _maybe_open_browser(port: int):
+    if os.getenv("SD_WEBUI_RESTARTING") == "1":
+        return
+    launch = cmd_opts.autolaunch or shared.opts.auto_launch_browser == "Remote" or (shared.opts.auto_launch_browser == "Local" and not cmd_opts.webui_is_non_local)
+    if not launch:
+        return
+
+    import threading
+    import webbrowser
+
+    # the API server starts listening right after the app_started callbacks
+    threading.Timer(2.0, lambda: webbrowser.open(f"http://127.0.0.1:{port}/")).start()
 
 
 script_callbacks.on_app_started(on_app_started, name="venno_studio")

@@ -62,7 +62,7 @@ def api_only_worker():
     script_callbacks.app_started_callback(None, app)
 
     print(f"Startup time: {startup_timer.summary()}.")
-    api.launch(server_name=initialize_util.gradio_server_name(), port=cmd_opts.port if cmd_opts.port else 7861, root_path=f"/{cmd_opts.subpath}" if cmd_opts.subpath else "")
+    api.launch(server_name=initialize_util.gradio_server_name(), port=cmd_opts.port if cmd_opts.port else 7860, root_path=f"/{cmd_opts.subpath}" if cmd_opts.subpath else "")
 
 
 def webui_worker():
