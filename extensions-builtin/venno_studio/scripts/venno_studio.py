@@ -23,6 +23,8 @@ STUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 PRESETS = {
     "turbo": {"label": "Anima Turbo", "sampler": "Euler", "scheduler": "Simple", "steps": 10, "cfg": 1.0, "shift": 3.0},
     "standard": {"label": "Anima Base / Aesthetic", "sampler": "ER SDE", "scheduler": "Beta", "steps": 32, "cfg": 4.0, "shift": 3.0},
+    # Anima 2.9B model card: 28-50 steps, CFG 3.5-5, Euler + SGM Uniform
+    "anima29": {"label": "Anima 2.9B", "sampler": "Euler", "scheduler": "SGM Uniform", "steps": 32, "cfg": 4.0, "shift": 3.0},
 }
 PROMPT_DEFAULTS = {
     "positive_prefix": "masterpiece, best quality, score_7, safe, ",

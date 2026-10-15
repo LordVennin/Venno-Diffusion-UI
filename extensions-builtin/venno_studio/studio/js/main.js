@@ -2,6 +2,7 @@ import { Doc, LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, ctx2d, loadImage, makeCa
 import { Generator, api } from "./generate.js";
 import { TOOLS, View } from "./view.js";
 import { GenForm } from "./forms.js";
+import { presetForCheckpoint } from "./common.js";
 import { ModelsPage } from "./models.js";
 
 const $ = (s) => document.querySelector(s);
@@ -608,7 +609,7 @@ async function loadInfo(refresh = false) {
     const loraSel = $("#sel-lora");
     loraSel.innerHTML = `<option value="">+ LoRA… (${info.loras.length})</option>` + info.loras.map((l) => `<option value="${escapeHtml(l.name)}">${escapeHtml(l.name)}</option>`).join("");
     if (!g.negative && info.prompt_defaults?.negative) { g.negative = info.prompt_defaults.negative; negative.value = g.negative; }
-    if (!g.preset) applyPreset(/turbo/i.test(state.model.checkpoint) ? "turbo" : "standard");
+    if (!g.preset) applyPreset(presetForCheckpoint(state.model.checkpoint));
     persist();
     renderLayerProps();
     txt2imgForm.setInfo(info);
@@ -623,7 +624,7 @@ async function loadInfo(refresh = false) {
 
 $("#sel-checkpoint").onchange = (e) => {
   state.model.checkpoint = e.target.value;
-  const preset = /turbo/i.test(e.target.value) ? "turbo" : "standard";
+  const preset = presetForCheckpoint(e.target.value);
   if (g.preset && g.preset !== preset) { applyPreset(preset); toast(`Switched to ${state.info.presets[preset].label} settings`, "info"); }
   persist();
 };

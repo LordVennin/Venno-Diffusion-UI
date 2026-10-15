@@ -141,3 +141,10 @@ export function downloadDataURL(src, name) {
   a.download = name;
   a.click();
 }
+
+// Recommended preset for a checkpoint (by file name; Phase 2b detects the variant server-side)
+export function presetForCheckpoint(name = "") {
+  if (/turbo/i.test(name)) return "turbo";
+  if (/2[._-]?9b/i.test(name)) return "anima29";
+  return "standard";
+}

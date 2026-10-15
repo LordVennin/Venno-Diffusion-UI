@@ -2,7 +2,7 @@
 
 import {
   $, $$, ADETAILER_DEFAULT, adetailerArgs, api, downloadDataURL, escapeHtml, fillSelect, loadStore, modelOverrides,
-  pollProgress, progressText, safeJSON, saveStore, toast, withQualityPrefix,
+  pollProgress, presetForCheckpoint, progressText, safeJSON, saveStore, toast, withQualityPrefix,
 } from "./common.js";
 
 const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768]];
@@ -289,7 +289,7 @@ export class GenForm {
     const adModels = [{ value: "None", label: "None" }, ...info.adetailer_models.map((x) => ({ value: x, label: x }))];
     $$(".ad-unit", this.root).forEach((el) => fillSelect($(".ad-model", el), adModels, s.adetailer.units[Number(el.dataset.unit)].model));
     if (!s.negative && info.prompt_defaults?.negative) { s.negative = info.prompt_defaults.negative; this.q(".f-negative").value = s.negative; }
-    if (!s.preset) this.applyPreset(/turbo/i.test(this.ctx.state.model.checkpoint) ? "turbo" : "standard");
+    if (!s.preset) this.applyPreset(presetForCheckpoint(this.ctx.state.model.checkpoint));
   }
 
   applyPreset(name) {

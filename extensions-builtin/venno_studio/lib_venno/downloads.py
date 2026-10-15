@@ -34,6 +34,7 @@ CATALOG = [
     ("anima-turbo", "checkpoint", "Anima Turbo v1.1", "Distilled, 8–12 steps at CFG 1. Recommended to start with; best for live mode.", f"{ANIMA}/diffusion_models/anima-turbo-v1.1.safetensors", 4182230656),
     ("anima-aesthetic", "checkpoint", "Anima Aesthetic v1.1", "Fine-tuned for a consistent, high quality default style. 30–50 steps, CFG 4–5.", f"{ANIMA}/diffusion_models/anima-aesthetic-v1.1.safetensors", 4182230656),
     ("anima-base", "checkpoint", "Anima Base v1.0", "Unrefined base model: most flexible, best for style LoRAs.", f"{ANIMA}/diffusion_models/anima-base-v1.0.safetensors", 4182218328),
+    ("anima-29b", "checkpoint", "Anima 2.9B preview (community)", "Layer-expanded Anima (40 blocks) by Gazingstars123. Same text encoder / VAE. 28–50 steps, CFG 3.5–5.", f"{HF}/Gazingstars123/Anima-2.9B/resolve/main/Anima-2.9B-preview-v1.safetensors", 5843204206),
     ("qwen3-te", "text_encoder", "Qwen3 0.6B text encoder", "Required by every Anima checkpoint.", f"{ANIMA}/text_encoders/qwen_3_06b_base.safetensors", 1192135096),
     ("qwen-vae", "vae", "Qwen-Image VAE", "Required by every Anima checkpoint.", f"{ANIMA}/vae/qwen_image_vae.safetensors", 253806246),
     ("lllite-anytest", "controlnet", "LLLite any-test-like v2", "Best all-round sketch guide: line art, scribbles and grayscale. Trained on Anima Base v1.0.", f"{LLLITE}/anima-lllite-any-test-like-v2.safetensors", 16403008),

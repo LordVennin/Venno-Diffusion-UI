@@ -74,7 +74,7 @@ backend/         (unchanged engine)
 | `upscaler*`, `esrgan_model`, `modelloader` | `engine/upscale.py`: spandrel load + tiled upscale; latent upscale modes | ~180 |
 | `images.py` (save + infotext) | `pipeline/metadata.py`: PNG with an A1111-compatible `parameters` text chunk (Civitai etc. still read it), output folders by date | ~120 |
 | `shared_state`, `progress`, API queue | `server/jobs.py`: one worker thread, FIFO queue, cancel, progress + live previews (latent→RGB from `LatentFormat.latent_rgb_factors`) pushed over WebSocket | ~250 |
-| `api.py` (`/sdapi/v1/*`) | `server/api.py`: `POST /v1/jobs` (one schema for all modes), `GET /v1/jobs/{id}`, `WS /v1/events`, `/v1/models`, `/v1/loras`, `/v1/downloads` | ~300 |
+| `api.py` (`/sdapi/v1/*`, dropped) | `server/api.py`: `POST /v1/jobs` (one schema for all modes), `GET /v1/jobs/{id}`, `WS /v1/events`, `/v1/models`, `/v1/loras`, `/v1/downloads` | ~300 |
 | `options`, `shared_options`, `config.json` | `server/settings.py`: small typed settings (paths, VRAM mode, attention backend, output dir) in `venno.json` | ~120 |
 | `launch_utils` (torch/CUDA/ROCm install, uv) | `launcher/`: keep its torch-build selection logic, drop extension installers | ~250, mostly ported |
 
@@ -95,6 +95,7 @@ backend/         (unchanged engine)
   "guides": [{ "model": "…", "image": "<png>", "weight": 0.8, "start": 0, "end": 0.8 }],
   "hires": { "upscaler": "Latent", "scale": 1.5, "steps": 0, "denoise": 0.5, "cfg": null, "shift": null },
   "detailer": [{ "model": "face_yolov8n.pt", "denoise": 0.4, "confidence": 0.3, "padding": 32, "prompt": "" }],
+  "plugins": { "<plugin name>": { /* plugin-defined fields */ } },
   "save": true
 }
 ```
@@ -115,12 +116,16 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 **Phase 2: img2img, inpainting, regions, LoRA** (4–6 days)
 - Mask handling, fill modes, only-masked crop, differential (soft) inpainting, regional prompting, LoRA patching and caching.
 
+**Phase 2b: Anima 3.8B** (3–5 days)
+- Load Qwen3.5 4B as a second text encoder and implement the 3.8B conditioning path (from the 3.8B model card and the companion Forge extension).
+- Variant-aware presets for 2B / 2.9B / 3.8B.
+
 **Phase 3: hires fix, upscalers, guides, detailer, saving** (4–6 days)
 - Spandrel upscalers, latent upscale, ControlLLLite port, YOLO/mediapipe detailer, PNG metadata, output folders.
 
 **Phase 4: switch over and delete** (2–3 days)
 - `--engine venno` becomes the default.
-- Remove `modules/`, Forge extensions, Gradio, the scripts system, `webui.py` and `/sdapi`.
+- Remove `modules/`, Forge extensions, Gradio, the scripts system, `webui.py` and `/sdapi` (no compatibility layer).
 - Move `modules_forge/packages` to `venno/vendor` and the Studio folder to `studio/`.
 - New launcher (`venno.bat` / `venno.sh`) plus requirements without Gradio.
 
@@ -129,15 +134,56 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 - A local smoke script that runs every mode on Anima Turbo at 512² × 4 steps (CPU-capable, ~10 min).
 - Low-VRAM checks (`--lowvram`, Never-OOM equivalent: always-offload + tiled VAE) on a real GPU.
 
-**Total: roughly 3–4 weeks of focused work.** Phases 0 and 1 are where most of the risk shows up early.
+**Phase 6: plugin system** (after the rewrite)
+- Manifest, loader and hook API as described under Decisions.
+- First external plugins written by us (e.g. prompt scheduling, tiled upscale).
 
-## Decisions needed from you
+**Total: roughly 4–5 weeks of focused work for Phases 0–4 + 2b.** Phases 0 and 1 are where most of the risk shows up early.
 
-1. **`/sdapi` compatibility:** drop it (simplest), or keep a small compatibility shim for scripts, bots or plugins written against the A1111/Forge API?
-2. **Prompt syntax:** keep `[from:to:when]` prompt scheduling and `AND` composition (port `prompt_parser.py`), or support only weights/emphasis, LoRA tags and Venno regions?
-3. **Seeds:** accept that seeds from the Forge-based versions won't reproduce exactly after the switch? (Porting A1111's RNG bit-for-bit is possible but adds complexity.)
-4. **Anima variants:** besides Anima 2B (Turbo/Aesthetic/Base), do the 2.9B/3.8B community variants and Anima Edit/reference mode need first-class support? (The engine already supports them; it's a testing and UI question.)
-5. **Upstream sync:** keep `backend/` structurally close to Forge Neo, so engine fixes and speedups can still be merged from upstream, or let it diverge freely?
+## Decisions
+
+| # | Topic | Decision |
+|---|---|---|
+| 1 | `/sdapi` (A1111/Forge API) | **Dropped.** Only the Venno API exists after Phase 4. |
+| 2 | Prompt scheduling (`[a:b:when]`, `[a\|b]`, `AND`) | *Open*: recommended to drop for v1 (see below) |
+| 3 | Seed compatibility with the Forge-based builds | **Not needed.** Use a simple seeded noise generator. |
+| 4 | Anima variants | **All versions.** Must-have: Base / Aesthetic / Turbo (2B) and **2.9B**. Also planned: 3.8B (see below) |
+| 5 | Upstream sync of `backend/` | *Open*: recommended to keep it close to Forge Neo |
+| 6 | Extensions | **No Forge/A1111 extension compatibility.** Venno gets its own plugin system after the rewrite (Phase 6). |
+
+### Prompt scheduling (decision 2)
+
+A1111 prompt syntax that changes the prompt *during* sampling:
+- `[cat:dog:0.4]` uses "cat" for the first 40 % of steps, then "dog"
+- `[cat:dog:12]` switches at step 12
+- `[hat:0.5]` adds "hat" halfway; `[hat::0.5]` removes it halfway
+- `[cat|dog]` alternates every step
+- `prompt A AND prompt B` mixes two separately-encoded prompts
+
+These are rarely used with Anima. Venno regions and `(word:1.5)` weights cover most needs, and mid-run switching re-encodes prompts during sampling, which complicates the conditioning cache. Recommendation: keep weights/emphasis and LoRA tags, drop scheduling and `AND` in v1, and offer them later as a plugin if wanted.
+
+### Anima variants (decision 4)
+
+| Variant | Diffusion model | Text encoder(s) | Status in Venno |
+|---|---|---|---|
+| Anima 2B Base / Aesthetic / Turbo | 28 blocks | Qwen3 0.6B | works today |
+| Anima 2.9B (Gazingstars123) | 40 blocks, layer-expanded 2B | Qwen3 0.6B | engine detects the 40 blocks and remaps 2B LoRAs / ControlLLLite; generation verified (incl. region + remapped guide); preset + Models-tab download added |
+| Anima 3.8B (lylogummy) | 52 blocks + bundled "Semantic Connector v2" | Qwen3 0.6B **+ Qwen3.5 4B** | needs work: Forge Neo only loads the extra Qwen3.5 encoder through a third-party extension (`GumGum10/forge-anima-3.8B`); Venno must implement the dual-encoder conditioning itself (Phase 2b) |
+
+Requirements that follow:
+- Presets come from the detected variant, not the file name. 2.9B recommends ~28–50 steps, CFG 3.5–5, Euler + SGM Uniform or Res Multistep + Linear Quadratic.
+- The Models tab offers the 2.9B (and later 3.8B) downloads.
+- The parity/smoke tests run on 2B Turbo and 2.9B.
+
+### Plugins (decision 6)
+
+Venno plugins are Python packages in `plugins/<name>/` with a `venno_plugin.toml` manifest. They can:
+- register pipeline hooks: `before_encode`, `model_wrapper` (per-step, like regions/guides), `after_decode`, `post_process`
+- add job fields with validation
+- add server routes
+- ship a Studio ES module that adds a panel or tool
+
+Built-in features (regions, guides, detailer, soft inpaint) are written against the same hook points, so the plugin API is exercised from day one.
 
 ## Risks and mitigations
 
@@ -147,4 +193,5 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 | VRAM regressions on small GPUs | Engine memory management is unchanged; we only call it. Test `--lowvram` on a real 6–8 GB card before Phase 4 |
 | Detailer quality vs ADetailer-Neo | Same detectors and the same crop/inpaint/paste algorithm; compare side-by-side in Phase 3 |
 | Windows install / torch selection | Port `launch_utils.prepare_environment` logic rather than rewrite it |
+| RAM blow-up on CPU / weak machines: the engine upcasts the DiT to fp32 when no GPU is present (2.9B → 10.6 GB) | Default the storage dtype to bf16 when system RAM is tight (verified: 2.9B then fits in 5.3 GB) |
 | Losing upstream engine fixes | Keep `backend/` layout and names; record upstream commit in `docs/` for periodic merges |
