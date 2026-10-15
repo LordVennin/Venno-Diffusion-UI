@@ -14,20 +14,6 @@ from transformers.modeling_utils import no_init_weights
 import backend.args
 from backend import memory_management, utils
 from backend.diffusion_engine.anima import Anima
-from backend.diffusion_engine.chroma import Chroma
-from backend.diffusion_engine.ernie import ErnieImage
-from backend.diffusion_engine.flux import Flux
-from backend.diffusion_engine.flux2 import Flux2
-from backend.diffusion_engine.krea import Krea2
-from backend.diffusion_engine.lumina import Lumina2
-from backend.diffusion_engine.mugen import Mugen
-from backend.diffusion_engine.pid import PiD
-from backend.diffusion_engine.qwen import QwenImage
-from backend.diffusion_engine.qwen21 import QwenImage21
-from backend.diffusion_engine.sd15 import StableDiffusion
-from backend.diffusion_engine.sdxl import StableDiffusionXL, StableDiffusionXLRefiner
-from backend.diffusion_engine.wan import Wan
-from backend.diffusion_engine.zimage import ZImage
 from backend.logging import setup_logger
 from backend.operations import using_forge_operations
 from backend.state_dict import (
@@ -44,7 +30,8 @@ from backend.utils import (
 )
 from modules_forge.packages.comfy.utils import convert_diffusers_mmdit
 
-possible_models: tuple["ForgeDiffusionEngine"] = (StableDiffusion, StableDiffusionXLRefiner, StableDiffusionXL, Mugen, Chroma, Flux, Flux2, Wan, QwenImage, QwenImage21, Krea2, Lumina2, ZImage, Anima, ErnieImage, PiD)
+# Venno: Anima is the only supported architecture
+possible_models: tuple["ForgeDiffusionEngine"] = (Anima,)
 
 logger = logging.getLogger("loader")
 setup_logger(logger)
@@ -783,7 +770,7 @@ def _load_diffuser(path: os.PathLike):
     sd, metadata = load_torch_file(path, return_metadata=True)
     sd, metadata = convert_quantization(sd, metadata)
     if (sd := convert_diffusers_mmdit(sd, "")) is None:
-        raise ModuleNotFoundError("Failed to recognize model...")
+        raise ModuleNotFoundError("Failed to recognize model... (only Anima is supported)")
     sd = preprocess_state_dict(sd)
     guess = huggingface_guess.guess(sd)
 
@@ -852,6 +839,9 @@ def forge_loader(sd: os.PathLike, additional_state_dicts: list[os.PathLike] = No
     state_dicts, estimated_config = split_state_dict(sd, additional_state_dicts=additional_state_dicts)
     repo_name: str = estimated_config.huggingface_repo
 
+    if not any(type(estimated_config) is x for M in possible_models for x in M.matched_guesses):
+        raise ModuleNotFoundError(f"Venno Diffusion UI only supports Anima models (detected: {repo_name})")
+
     backend.args.dynamic_args.reset()
     backend.args.dynamic_args.kontext = "kontext" in str(sd).lower()
     backend.args.dynamic_args.edit = "qwen" in str(sd).lower() and "edit" in str(sd).lower()
@@ -919,4 +909,4 @@ def forge_loader(sd: os.PathLike, additional_state_dicts: list[os.PathLike] = No
         if any(type(estimated_config) is x for x in M.matched_guesses):
             return M(estimated_config=estimated_config, huggingface_components=huggingface_components)
 
-    raise ModuleNotFoundError("Failed to recognize model...")
+    raise ModuleNotFoundError("Failed to recognize model... (only Anima is supported)")
