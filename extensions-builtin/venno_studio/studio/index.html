@@ -13,6 +13,8 @@
     <button data-tab="canvas" class="on">Canvas</button>
     <button data-tab="txt2img">Text to Image</button>
     <button data-tab="img2img">Image to Image</button>
+    <button data-tab="inpaint">Inpaint</button>
+    <button data-tab="info">Image Info</button>
     <button data-tab="models">Models</button>
   </nav>
   <div class="menu canvas-only">
@@ -97,6 +99,11 @@
       <div class="row lora">
         <select id="sel-lora"><option value="">+ LoRA…</option></select>
       </div>
+      <details class="regions-box" id="regions-box">
+        <summary>Regions <span id="regions-count"></span><button id="btn-add-region" title="A new region: drag rectangles (or paint) where its prompt applies">+ Region</button></summary>
+        <ul id="region-list"></ul>
+        <div class="hint">Drag rectangles with <b>U</b>, or paint with the brush. LoRAs apply to the whole image.</div>
+      </details>
       <details class="switch-box" id="switch-box">
         <summary>Then switch to… <span id="switch-state"></span></summary>
         <textarea id="switch-prompt" rows="2" placeholder="Prompt for the later steps, e.g. the same scene with character or style details. Empty = off"></textarea>
@@ -181,6 +188,8 @@
 
 <div class="page form-page" id="page-txt2img" hidden></div>
 <div class="page form-page" id="page-img2img" hidden></div>
+<div class="page form-page" id="page-inpaint" hidden></div>
+<div class="page info-page" id="page-info" hidden></div>
 <div class="page" id="page-models" hidden></div>
 
 <div class="toast" id="toast"></div>

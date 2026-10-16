@@ -43,7 +43,7 @@ export class GridCard {
     this.o = opts;
     this.timer = 0;
     this.el.innerHTML = `
-      <summary><label class="check"><input type="checkbox" class="g-on"> Comparison grid (X/Y/Z)</label> <span class="g-sum"></span></summary>
+      <summary><input type="checkbox" class="g-on" title="Use the comparison grid"> <span>Comparison grid (X/Y/Z)</span> <span class="g-sum"></span></summary>
       ${["X", "Y", "Z"].map((n, i) => `
         <div class="g-axis" data-i="${i}">
           <span class="g-name">${n}</span>

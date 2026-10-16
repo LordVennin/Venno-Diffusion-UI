@@ -1,5 +1,5 @@
 // LoRA chips: the job's LoRAs live in a list shown under the prompts instead of <lora:…> text.
-// Click a chip to remove it; the number is its weight (type, or scroll over it).
+// Click a chip's name to remove it; the number is its weight (−/+ step 0.05, type, or scroll over it).
 
 import { escapeHtml } from "./common.js";
 
@@ -34,6 +34,14 @@ export class LoraChips {
     this.el.addEventListener("click", (e) => {
       const chip = e.target.closest(".lora-chip");
       if (!chip || e.target.closest("input")) return;
+      const step = e.target.closest("button.step");
+      if (step) {  // − / + : 0.05 per click
+        const input = chip.querySelector("input.w");
+        const v = Math.round((Number(input.value) + Number(step.dataset.d)) * 100) / 100;
+        input.value = v;
+        this.setWeight(chip.dataset.name, v);
+        return;
+      }
       this.remove(chip.dataset.name);
     });
     this.el.addEventListener("change", (e) => {
@@ -104,7 +112,9 @@ export class LoraChips {
       const title = missing ? `${l.name} is not in your LoRA folder — click to remove` : `${l.name} — click to remove`;
       return `<span class="lora-chip${missing ? " missing" : ""}${l.weight === 0 ? " off" : ""}" data-name="${escapeHtml(l.name)}" title="${escapeHtml(title)}">`
         + `<span class="n">${escapeHtml(l.name)}</span>`
+        + `<button class="step" data-d="-0.05" title="−0.05">−</button>`
         + `<input class="w" type="number" step="0.05" value="${l.weight}" title="Weight (scroll to adjust, 0 = off)">`
+        + `<button class="step" data-d="0.05" title="+0.05">+</button>`
         + `<span class="x" aria-hidden="true">×</span></span>`;
     }).join("");
   }

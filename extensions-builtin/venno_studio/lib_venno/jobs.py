@@ -15,6 +15,7 @@ import json
 import random
 import threading
 import time
+import traceback
 import uuid
 from collections import OrderedDict
 from typing import Literal, Optional, Union
@@ -306,6 +307,7 @@ def _work_loop():
             rec.status = "error"
             rec.error = getattr(e, "detail", None) or str(e) or type(e).__name__
             print(f"[Venno] job {job_id} failed: {rec.error}")
+            traceback.print_exc()  # full trace in the console, for bug reports
         finally:
             rec.finished = time.time()
             rec.progress = 1.0 if rec.status == "done" else rec.progress
@@ -408,7 +410,10 @@ def _run_venno(rec: JobRecord) -> bool:
 
     progress = generate.Progress(on_step=on_step, on_preview=rec.set_preview, is_cancelled=rec.cancel_event.is_set)
     rec.job_count = total_runs
-    result = generate.run(rec.job, progress)
+    import torch
+
+    with torch.inference_mode():  # like Forge: the whole job, so weights moved / patched during it are consistent
+        result = generate.run(rec.job, progress)
     rec.images, rec.seeds, rec.infotexts, rec.warnings = result.images, result.seeds, result.infotexts, result.warnings
     return result.cancelled
 

@@ -2,10 +2,11 @@
 
 A painting-first UI for the **[Anima](https://huggingface.co/circlestone-labs/Anima)** image model, in the spirit of Krita AI Diffusion. You sketch, select and paint on a layered canvas. The model then generates, refines or inpaints exactly the part you point it at.
 
-The generation engine is **[Stable Diffusion WebUI Forge – Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)** by Haoming02, cut down to Anima only. Its memory management, samplers, LoRA support and API are kept. Forge's Gradio interface is removed. Venno Studio is the only front end, with four tabs:
+The generation engine is **[Stable Diffusion WebUI Forge – Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)** by Haoming02, cut down to Anima only. Its memory management, samplers, LoRA support and API are kept. Forge's Gradio interface is removed. Venno Studio is the only front end, with these tabs:
 
 - **Canvas**: the layered painting workspace.
-- **Text to Image** and **Image to Image**: classic form-style generation, with hires fix, ADetailer, inpaint masks and a results gallery.
+- **Text to Image**, **Image to Image** and **Inpaint**: classic form-style generation, with hires fix, ADetailer, comparison grids and a results gallery. Image to Image and Inpaint show the input (and mask) large, next to the result.
+- **Image Info**: drop any image to read its generation parameters and send them (with the image) to another tab.
 - **Models**: one-click downloads of Anima, guide (ControlLLLite) models, upscalers and detectors.
 
 ![Venno Studio](docs/studio.png)
@@ -72,6 +73,10 @@ Forge's [command-line flags](docs/FORGE_NEO_README.md#commandline) still apply, 
 
 Results are rendered at about the chosen *Resolution* (default 1024², Anima's native size), whatever the size of the area you work on. A small selection is upscaled for detail and the result scaled back in.
 
+### Regions
+
+The **Regions** list under the prompt shows every region with its prompt. *+ Region* adds one and picks the **Rectangle tool (U)**: drag boxes where it applies (or paint with the brush; Ctrl+drag erases a box). *Area* reselects a region's layer to edit it, the eye turns it off. LoRAs apply to the whole image, not to a single region.
+
 ### Prompting sketch layers
 
 Write a prompt in a paint or guide layer's *Layer prompt* field. That layer's strokes then act as a region, which is handy for "sketch each character on its own layer". *Region spread* sets how far around the strokes the prompt reaches. *Fill enclosed shapes* makes a closed outline count as its whole interior. Tick *Show region* to see the area that will be used. Paint layers stay part of the image. Guide layers with a prompt both steer the lines and prompt the area.
@@ -107,9 +112,10 @@ Add a **Guide** layer, pick a model (Venno prefers `any-test-like` / `lineart` m
 These are Forge-style form pages: prompt, negative, LoRA chips, preset/sampler/scheduler/steps/CFG/shift, size presets, batch size and count, and seed reuse.
 
 - **Hires. fix (Text to Image):** generate small, upscale with a latent mode or an upscaler model, then refine. Set the upscale factor or a target width/height, plus separate hires steps, denoising, CFG and shift (0 = same as the first pass).
-- **Image to Image:** drop, paste or send in an image. Painting on it creates an inpaint mask; with no mask, the whole image is refined. Settings include masked content, whole picture vs only masked (with padding), mask blur and seamless inpainting.
+- **Image to Image / Inpaint:** drop, paste or send in an image; it is shown large next to the result. Size is *Resize by* a scale (e.g. 150 %) or *Resize to* a width/height. On **Inpaint**, paint the mask (wheel = brush size); settings include masked content, whole picture vs only masked (with padding), mask blur and seamless inpainting.
 - **ADetailer:** up to two detectors (e.g. `face_yolov8n.pt` + `hand_yolov8n.pt`), each with its own denoising, confidence, mask blur, dilation, padding and optional detail prompt.
-- **Results:** *Open in Canvas* adds the image as a layer, *Send to Image to Image* passes it along, *Download* saves it. Results are also saved to `outputs/` unless you turn that off.
+- **Results:** *Open in Canvas* adds the image as a layer; *Send to Image to Image* / *Send to Inpaint* pass it on **with the prompt, LoRAs, seed, sampler settings and ADetailer** of the tab it came from; *Use settings* loads its parameters; *Download* saves it. Results are also saved to `outputs/` unless you turn that off.
+- **Option cards:** the checkbox turns hires fix / ADetailer / the grid on and off; clicking the title only opens its settings.
 
 ## API
 

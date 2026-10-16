@@ -9,6 +9,8 @@ import time
 import types
 import weakref
 
+import torch
+
 from backend import memory_management
 from backend.loader import forge_loader
 
@@ -44,6 +46,7 @@ class ModelManager:
         return path
 
     # -- loading --
+    @torch.inference_mode()
     def get(self, checkpoint: str, modules: list[str]):
         ckpt_path, ckpt_name = self.resolve_checkpoint(checkpoint)
         module_paths = sorted(self.resolve_module(m) for m in modules if m)
@@ -66,6 +69,7 @@ class ModelManager:
             print(f"[Venno] model ready in {time.time() - t0:.1f}s")
             return self.engine
 
+    @torch.inference_mode()
     def release_for_forge(self):
         """Before a Forge-path job: drop a Venno-only copy; keep one shared with Forge."""
         with self.lock:
@@ -76,6 +80,7 @@ class ModelManager:
             if self.engine is not sd_models.model_data.sd_model:
                 self.unload()
 
+    @torch.inference_mode()
     def unload(self):
         with self.lock:
             if self.engine is None:

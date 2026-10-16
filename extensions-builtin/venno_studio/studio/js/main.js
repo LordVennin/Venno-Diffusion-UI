@@ -1,10 +1,11 @@
-import { Doc, LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, ctx2d, loadImage, makeCanvas, strokeRegionMask } from "./doc.js";
+import { Doc, LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, ctx2d, hasContentIn, loadImage, makeCanvas, strokeRegionMask } from "./doc.js";
 import { Generator } from "./generate.js";
 import { jobProgress } from "./jobs.js";
 import { TOOLS, View } from "./view.js";
 import { GenForm } from "./forms.js";
 import { api, presetForCheckpoint } from "./common.js";
 import { ModelsPage } from "./models.js";
+import { InfoPage } from "./info.js";
 import { LoraChips } from "./loras.js";
 import { describeSettings, hasQualityTags, offerSettings } from "./params.js";
 import { enableAutocomplete, setWildcards } from "./autocomplete.js";
@@ -63,11 +64,27 @@ $$("#tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 const formCtx = {
   state,
   onSendToCanvas: async (src) => { showTab("canvas"); await addImageAsLayer(src, "From gallery"); },
-  onSendToImg2Img: (src) => { showTab("img2img"); img2imgForm.setInputImage(src); },
+  // a result (and the sending tab's settings) to another tab
+  onSend: (target, src, formState) => { showTab(target); forms[target].receive(src, formState); },
   selectCheckpoint: (name) => selectCheckpoint(name),
 };
 const txt2imgForm = new GenForm($("#page-txt2img"), "txt2img", formCtx);
 const img2imgForm = new GenForm($("#page-img2img"), "img2img", formCtx);
+const inpaintForm = new GenForm($("#page-inpaint"), "inpaint", formCtx);
+const forms = { txt2img: txt2imgForm, img2img: img2imgForm, inpaint: inpaintForm };
+const infoPage = new InfoPage($("#page-info"), {
+  // Image Info → a tab: the image (where it has one) and the settings read from it
+  send: async (target, src, settings) => {
+    showTab(target);
+    if (target === "canvas") {
+      if (src) await addImageAsLayer(src, "From Image Info");
+      if (settings) applyCanvasSettings(settings);
+      return;
+    }
+    if (target !== "txt2img" && src) await forms[target].setInputImage(src);
+    if (settings) forms[target].applySettings(settings);
+  },
+});
 const modelsPage = new ModelsPage($("#page-models"), { onInstalled: () => loadInfo(true) });
 
 // ---------------- toast / status ----------------
@@ -92,11 +109,12 @@ const ICONS = {
   "select-lasso": '<path d="M12 5c5 0 8 2 8 5s-3 5-8 5c-2 0-3 0-4-.5" stroke-dasharray="3 2"/><path d="M8 14.5C5 14 4 12 4 10c0-3 3-5 8-5"/><path d="M8 15c-1 1-1 3 1 4"/>',
   "select-brush": '<circle cx="12" cy="12" r="7" stroke-dasharray="3 2"/><circle cx="12" cy="12" r="2"/>',
   move: '<path d="M12 3v18M3 12h18"/><path d="m9 6 3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
+  "shape-rect": '<rect x="4" y="6" width="16" height="12" rx="1" fill="currentColor" fill-opacity=".25" stroke="currentColor" stroke-width="2"/>',
   pan: '<path d="M8 13V6a1.5 1.5 0 0 1 3 0v6V4.5a1.5 1.5 0 0 1 3 0V12V6a1.5 1.5 0 0 1 3 0v8c0 4-2.5 7-6 7s-5-2-7-5l-1.5-2.5a1.5 1.5 0 0 1 2.5-1.5z"/>',
 };
 const toolbar = $("#toolbar");
 Object.entries(TOOLS).forEach(([id, t], i) => {
-  if (i === 4 || i === 7) toolbar.appendChild(document.createElement("hr"));
+  if (id === "select-rect" || id === "move") toolbar.appendChild(document.createElement("hr"));
   const b = document.createElement("button");
   b.dataset.tool = id;
   b.title = `${t.label} (${t.key.toUpperCase()})`;
@@ -189,7 +207,7 @@ const actions = {
   "fill-selection": () => fillSelection(),
   "clear-selection": () => clearSelection(),
   "add-paint": () => doc.addLayer(LAYER_PAINT),
-  "add-region": () => { const l = doc.addLayer(LAYER_REGION); setTool("brush"); brush.size = Math.max(brush.size, 60); syncBrushUI(); toast(`Paint where "${l.name}" applies, then write its prompt below`, "info"); },
+  "add-region": () => addRegion(),
   "add-control": () => { const l = doc.addLayer(LAYER_CONTROL); const cns = state.info?.controlnets || [];
     l.controlModel = cns.find((m) => /any-?test|lineart|sketch/i.test(m)) || cns[0] || ""; setTool("brush"); setColor("#000000"); renderLayers(); },
   "layer-up": () => doc.moveLayer(doc.active, 1),
@@ -421,8 +439,77 @@ function escapeHtml(s) {
   return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
+// ---------------- regions panel: every region with its prompt, without hunting through layers ----------------
+function addRegion() {
+  const l = doc.addLayer(LAYER_REGION);
+  setTool("shape-rect");
+  $("#regions-box").open = true;
+  toast(`Drag rectangles where "${l.name}" applies (U), or paint it with the brush (B)`, "info");
+  renderRegions();
+  setTimeout(() => $(`#region-list li[data-id="${l.id}"] textarea`)?.focus(), 50);
+}
+$("#btn-add-region").onclick = (e) => { e.preventDefault(); e.stopPropagation(); addRegion(); };
+
+function updateRegionCount() {
+  const items = doc.layers.filter((l) => l.type === LAYER_REGION || l.prompt?.trim());
+  const active = items.filter((l) => l.visible && l.prompt.trim() && hasContentIn(l.type === LAYER_REGION ? l.canvas : strokeRegionMask(l.canvas, l.regionSpread, l.regionFill), { x: 0, y: 0, w: doc.width, h: doc.height })).length;
+  $("#regions-count").textContent = items.length ? `(${active} active)` : "";
+}
+
+function renderRegions() {
+  const list = $("#region-list");
+  const items = doc.layers.filter((l) => l.type === LAYER_REGION || (l.prompt && l.prompt.trim())).reverse();
+  list.innerHTML = "";
+  updateRegionCount();
+  if (!items.length) { list.innerHTML = `<li class="empty">No regions yet: add one to prompt part of the image separately (e.g. one character each).</li>`; return; }
+  for (const l of items) {
+    const li = document.createElement("li");
+    li.dataset.id = l.id;
+    li.classList.toggle("on", l.id === doc.activeId);
+    li.classList.toggle("off", !l.visible);
+    const color = l.type === LAYER_REGION ? l.color : "#9aa4b0";
+    const painted = hasContentIn(l.canvas, { x: 0, y: 0, w: doc.width, h: doc.height });
+    li.innerHTML = `
+      <span class="dot" style="background:${color}" title="${l.type === LAYER_REGION ? "Region layer" : "Sketch layer with a prompt"}"></span>
+      <textarea rows="2" placeholder="Prompt for this region, e.g. 1girl, silver hair, blue kimono"></textarea>
+      <div class="r-side">
+        <button class="r-edit" title="Edit its area (selects the layer and the rectangle tool)">${painted ? "Area" : "Draw area"}</button>
+        <label title="Region strength">×<input type="number" class="r-str" min="0.1" max="2" step="0.1"></label>
+        <button class="r-eye" title="Use / ignore this region">${l.visible ? "👁" : "—"}</button>
+        ${l.type === LAYER_REGION ? `<button class="r-del" title="Delete region">✕</button>` : ""}
+      </div>`;
+    const ta = li.querySelector("textarea");
+    ta.value = l.prompt;
+    ta.oninput = () => { l.prompt = ta.value; doc.emit("region-prompt"); updateLayerThumbLabel(); };
+    ta.onfocus = () => { if (doc.activeId !== l.id) { doc.activeId = l.id; doc.emit("active"); } };
+    li.querySelector(".r-str").value = l.regionStrength;
+    li.querySelector(".r-str").onchange = (e) => { l.regionStrength = Math.max(0.1, Number(e.target.value) || 1); gen.scheduleLive(); };
+    li.querySelector(".r-edit").onclick = () => { doc.activeId = l.id; doc.emit("active"); setTool(l.type === LAYER_REGION ? "shape-rect" : "brush"); };
+    li.querySelector(".r-eye").onclick = () => { l.visible = !l.visible; doc.emit("layer-props"); };
+    li.querySelector(".r-del")?.addEventListener("click", () => { doc.removeLayer(l); });
+    if (!painted) li.classList.add("unpainted");
+    list.appendChild(li);
+  }
+}
+
 let layersTimer = 0;
 doc.on((what) => {
+  if (["layers", "reset", "layer-props"].includes(what)) renderRegions();
+  if (what === "region-prompt") $$("#region-list li").forEach((li) => {  // edited in the layer panel: mirror here
+    const l = doc.layers.find((x) => String(x.id) === li.dataset.id), ta = li.querySelector("textarea");
+    if (l && ta && document.activeElement !== ta) ta.value = l.prompt;
+  });
+  if (what === "region-prompt") {  // a sketch layer gained or lost its prompt: it joins / leaves the list
+    const listed = new Set($$("#region-list li[data-id]").map((li) => li.dataset.id));
+    const wanted = doc.layers.filter((l) => l.type === LAYER_REGION || l.prompt?.trim()).map((l) => String(l.id));
+    if (wanted.length !== listed.size || wanted.some((id) => !listed.has(id))) renderRegions();
+  }
+  if (what === "active") $$("#region-list li").forEach((li) => li.classList.toggle("on", li.dataset.id === String(doc.activeId)));
+  if (what === "pixels") setTimeout(() => $$("#region-list li").forEach((li) => {
+    const l = doc.layers.find((x) => String(x.id) === li.dataset.id);
+    if (l) { const p = hasContentIn(l.canvas, { x: 0, y: 0, w: doc.width, h: doc.height }); li.classList.toggle("unpainted", !p); li.querySelector(".r-edit").textContent = p ? "Area" : "Draw area"; }
+  }) || updateRegionCount(), 160);
+  if (what === "region-prompt") updateRegionCount();
   if (["layers", "reset", "active", "layer-props"].includes(what)) renderLayers();
   else if (what === "pixels") { clearTimeout(layersTimer); layersTimer = setTimeout(() => { renderLayers(); if (regionPreviewLayer) refreshRegionPreview(); }, 150); }
   if (what === "reset" && regionPreviewLayer) setRegionPreview(null);
@@ -638,8 +725,7 @@ async function loadInfo(refresh = false) {
     if (!g.preset) applyPreset(presetForCheckpoint(state.model.checkpoint));
     persist();
     renderLayerProps();
-    txt2imgForm.setInfo(info);
-    img2imgForm.setInfo(info);
+    for (const f of Object.values(forms)) f.setInfo(info);
     if (!ckpts.length && !refresh) showTab("models");
     setStatus(ckpts.length ? `${ckpts.length} model(s) · ${info.loras.length} LoRA(s) · ${info.controlnets.length} guide model(s)` : "No Anima checkpoint yet — download one in the Models tab");
   } catch (e) {
@@ -734,7 +820,8 @@ document.addEventListener("paste", (e) => {
   e.preventDefault();
   const file = item.getAsFile();
   const src = URL.createObjectURL(file);
-  if (activeTab === "img2img") img2imgForm.setInputImage(src, { offer: true });
+  if (activeTab === "img2img" || activeTab === "inpaint") forms[activeTab].setInputImage(src, { offer: true });
+  else if (activeTab === "info") infoPage.load(file);
   else if (activeTab === "canvas") { addImageAsLayer(src, "Pasted"); offerSettings(file, applyCanvasSettings); }
 });
 
@@ -810,6 +897,7 @@ window.addEventListener("beforeunload", (e) => {
 // ---------------- boot ----------------
 setTool("brush");
 renderLayers();
+renderRegions();
 updateModeLabel();
 updateUndoButtons();
 loadInfo();

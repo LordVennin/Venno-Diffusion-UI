@@ -21,7 +21,7 @@ const DEFAULTS = {
   // hires fix (txt2img)
   hr: false, hrUpscaler: "Latent", hrScale: 1.5, hrResizeX: 0, hrResizeY: 0, hrSteps: 0, hrDenoise: 0.5, hrCfg: 0, hrShift: 0,
   // img2img
-  denoise: 0.6, resizeMode: 0, scaleBy: 1, maskBlur: 8, fill: 1, onlyMasked: false, onlyMaskedPadding: 64, softInpaint: true,
+  denoise: 0.6, resizeMode: 0, resizeBy: "by", scaleBy: 1, maskBlur: 8, fill: 1, onlyMasked: false, onlyMaskedPadding: 64, softInpaint: true,
   saveImages: true,
   adetailer: ADETAILER_DEFAULT,
   grid: GRID_DEFAULT,
@@ -30,7 +30,7 @@ const DEFAULTS = {
 export class GenForm {
   constructor(root, mode, ctx) {
     this.root = root;
-    this.mode = mode; // "txt2img" | "img2img"
+    this.mode = mode; // "txt2img" | "img2img" | "inpaint" (the last two send img2img jobs)
     this.ctx = ctx; // { state, onSendToCanvas, onSendToImg2Img }
     this.key = `venno-form-${mode}`;
     this.s = loadStore(this.key, structuredClone(DEFAULTS));
@@ -48,7 +48,8 @@ export class GenForm {
 
   // ---------------- DOM ----------------
   build() {
-    const i2i = this.mode === "img2img";
+    const i2i = this.mode !== "txt2img";
+    const inpaint = this.mode === "inpaint";
     this.root.innerHTML = `
       <div class="form-col">
         <section class="card">
@@ -73,24 +74,6 @@ export class GenForm {
           <div class="f-progress progress-inline" hidden><div class="bar"></div><span></span></div>
         </section>
 
-        ${i2i ? `
-        <section class="card">
-          <h3>Input image</h3>
-          <div class="i2i-drop">
-            <div class="i2i-empty">Drop, paste or <button class="f-open">open</button> an image<br><small>or use “Send to Image to Image” from another tab</small></div>
-            <div class="i2i-stage" hidden><img class="i2i-img" alt=""><canvas class="i2i-mask"></canvas></div>
-          </div>
-          <div class="row mask-tools" hidden>
-            <span class="lbl">Inpaint mask</span>
-            <div class="seg"><button class="f-mask-draw on">Paint</button><button class="f-mask-erase">Erase</button></div>
-            <label>Brush <input type="range" class="f-mask-size" min="4" max="300" value="48"></label>
-            <button class="f-mask-invert">Invert</button>
-            <button class="f-mask-clear">Clear</button>
-            <button class="f-image-clear" title="Remove image">✕</button>
-          </div>
-          <div class="hint">Paint over the image to inpaint only that area. No mask = whole image (image to image).</div>
-        </section>` : ""}
-
         <section class="card">
           <div class="grid2">
             <label>Preset <select class="f-preset"></select></label>
@@ -100,6 +83,13 @@ export class GenForm {
             <label>CFG <input type="number" class="f-cfg" min="1" max="30" step="0.1"></label>
             <label>Shift <input type="number" class="f-shift" min="0" max="20" step="0.1"></label>
           </div>
+          ${i2i ? `
+          <div class="seg resize-tabs"><button class="f-rt-by">Resize by</button><button class="f-rt-to">Resize to</button></div>
+          <div class="f-resize-by">
+            <label class="slider">Scale <input type="range" class="f-scale" min="25" max="400" step="5"><output></output></label>
+            <div class="hint f-scale-info"></div>
+          </div>
+          <div class="f-resize-to">` : ""}
           <div class="grid2">
             <label>Width <input type="number" class="f-width" min="256" max="2048" step="64"></label>
             <label>Height <input type="number" class="f-height" min="256" max="2048" step="64"></label>
@@ -110,6 +100,7 @@ export class GenForm {
             <label>Resize mode <select class="f-resize-mode">${RESIZE_MODES.map((m, i) => `<option value="${i}">${m}</option>`).join("")}</select></label>
             <label>Size from image <span class="row"><button class="f-size-from-image">Match input</button></span></label>
           </div>
+          </div>
           <label class="slider">Denoising strength <input type="range" class="f-denoise" min="0" max="100"><output></output></label>` : ""}
           <div class="grid2">
             <label>Batch size <input type="number" class="f-batch-size" min="1" max="8"></label>
@@ -118,7 +109,7 @@ export class GenForm {
           <label>Seed <span class="row seed"><input type="number" class="f-seed"><button class="f-seed-random" title="Random (-1)">🎲</button><button class="f-seed-reuse" title="Reuse seed of the shown image">♻️</button></span></label>
         </section>
 
-        ${i2i ? `
+        ${inpaint ? `
         <details class="card" open>
           <summary>Inpainting</summary>
           <div class="grid2">
@@ -128,9 +119,9 @@ export class GenForm {
             <label>Only-masked padding <input type="number" class="f-padding" min="0" max="256"></label>
           </div>
           <label class="check"><input type="checkbox" class="f-soft"> Seamless (soft) inpainting</label>
-        </details>` : `
+        </details>` : i2i ? "" : `
         <details class="card f-hr-card">
-          <summary><label class="check"><input type="checkbox" class="f-hr"> Hires. fix</label></summary>
+          <summary><input type="checkbox" class="f-hr" title="Use hires fix"> <span>Hires. fix</span></summary>
           <div class="grid2">
             <label>Upscaler <select class="f-hr-upscaler"></select></label>
             <label>Hires steps <input type="number" class="f-hr-steps" min="0" max="150" title="0 = same as first pass"></label>
@@ -145,7 +136,7 @@ export class GenForm {
         </details>`}
 
         <details class="card f-ad-card">
-          <summary><label class="check"><input type="checkbox" class="f-ad"> ADetailer</label></summary>
+          <summary><input type="checkbox" class="f-ad" title="Use ADetailer"> <span>ADetailer</span></summary>
           ${[0, 1].map((n) => `
           <div class="ad-unit" data-unit="${n}">
             <h4>${n === 0 ? "1st" : "2nd"} detector</h4>
@@ -166,12 +157,40 @@ export class GenForm {
         <label class="check save"><input type="checkbox" class="f-save"> Save results to outputs folder</label>
       </div>
 
-      <div class="result-col">
-        <div class="result-main"><img class="r-img" alt=""><div class="r-empty">Results appear here</div></div>
+      <div class="result-col${i2i ? " work" : ""}">
+        ${i2i ? `
+        <div class="panes">
+          <div class="pane in-pane">
+            <div class="pane-head">
+              <span class="pane-title">${inpaint ? "Image & mask" : "Input image"}</span>
+              <div class="row mask-tools" hidden>
+                ${inpaint ? `
+                <div class="seg"><button class="f-mask-draw on">Paint</button><button class="f-mask-erase">Erase</button></div>
+                <label>Brush <input type="range" class="f-mask-size" min="4" max="300" value="48"></label>
+                <button class="f-mask-invert">Invert</button>
+                <button class="f-mask-clear">Clear mask</button>` : ""}
+                <button class="f-open-again" title="Open another image">Open…</button>
+                <button class="f-image-clear" title="Remove image">✕</button>
+              </div>
+            </div>
+            <div class="i2i-drop">
+              <div class="i2i-empty">Drop, paste or <button class="f-open">open</button> an image<br><small>or use “Send to ${inpaint ? "Inpaint" : "Image to Image"}” from another tab</small></div>
+              <div class="i2i-stage" hidden><img class="i2i-img" alt="">${inpaint ? `<canvas class="i2i-mask"></canvas>` : ""}</div>
+            </div>
+            ${inpaint ? `<div class="hint">Paint over the area to regenerate. No mask = the whole image.</div>` : ""}
+          </div>
+          <div class="pane out-pane">
+            <div class="pane-head"><span class="pane-title">Result</span></div>
+            <div class="result-main"><img class="r-img" alt=""><div class="r-empty">Results appear here</div></div>
+          </div>
+        </div>` : `
+        <div class="result-main"><img class="r-img" alt=""><div class="r-empty">Results appear here</div></div>`}
         <div class="r-thumbs"></div>
         <div class="row r-actions">
           <button class="r-to-canvas" disabled>Open in Canvas</button>
-          ${i2i ? `<button class="r-to-input" disabled>Use as input</button>` : `<button class="r-to-i2i" disabled>Send to Image to Image</button>`}
+          ${i2i ? `<button class="r-to-input" disabled>Use as input</button>` : ""}
+          ${this.mode !== "img2img" ? `<button class="r-to-i2i" disabled>Send to Image to Image</button>` : ""}
+          ${this.mode !== "inpaint" ? `<button class="r-to-inpaint" disabled>Send to Inpaint</button>` : ""}
           <button class="r-use-settings" disabled title="Load this image's prompt and settings into the form">Use settings</button>
           <button class="r-download" disabled>Download</button>
         </div>
@@ -184,7 +203,8 @@ export class GenForm {
 
   bind() {
     const s = this.s;
-    const i2i = this.mode === "img2img";
+    const i2i = this.mode !== "txt2img";
+    const inpaint = this.mode === "inpaint";
     this.syncs = []; // re-apply state to the inputs (after loading settings from an image)
     const sync = (fn) => { fn(); this.syncs.push(fn); };
     const num = (sel, key, onChange) => {
@@ -244,21 +264,28 @@ export class GenForm {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); e.stopPropagation(); this.generate(); }
     });
 
-    if (i2i) {
+    if (inpaint) {
       num(".f-mask-blur", "maskBlur");
       num(".f-padding", "onlyMaskedPadding");
       chk(".f-soft", "softInpaint");
       sync(() => {
         this.q(".f-fill").value = s.fill;
         this.q(".f-only-masked").value = s.onlyMasked ? "1" : "0";
+      });
+      this.q(".f-fill").onchange = (e) => { s.fill = Number(e.target.value); this.persist(); };
+      this.q(".f-only-masked").onchange = (e) => { s.onlyMasked = e.target.value === "1"; this.persist(); };
+    }
+    if (i2i) {
+      sync(() => {
         this.q(".f-resize-mode").value = s.resizeMode;
         this.q(".f-denoise").value = Math.round(s.denoise * 100);
         this.q(".f-denoise").nextElementSibling.textContent = s.denoise;
+        this.q(".f-scale").value = Math.round(s.scaleBy * 100);
+        this.showResize();
       });
-      this.q(".f-fill").onchange = (e) => { s.fill = Number(e.target.value); this.persist(); };
-      this.q(".f-only-masked").value = s.onlyMasked ? "1" : "0";
-      this.q(".f-only-masked").onchange = (e) => { s.onlyMasked = e.target.value === "1"; this.persist(); };
-      this.q(".f-resize-mode").value = s.resizeMode;
+      this.q(".f-rt-by").onclick = () => { s.resizeBy = "by"; this.persist(); this.showResize(); };
+      this.q(".f-rt-to").onclick = () => { s.resizeBy = "to"; this.persist(); this.showResize(); };
+      this.q(".f-scale").oninput = (e) => { s.scaleBy = Number(e.target.value) / 100; this.persist(); this.showResize(); };
       this.q(".f-resize-mode").onchange = (e) => { s.resizeMode = Number(e.target.value); this.persist(); };
       const den = this.q(".f-denoise");
       den.value = Math.round(s.denoise * 100);
@@ -311,8 +338,9 @@ export class GenForm {
 
     // results
     this.q(".r-to-canvas").onclick = () => this.withCurrent((r) => this.ctx.onSendToCanvas(r.src));
-    const toI2I = this.q(".r-to-i2i") || this.q(".r-to-input");
-    toI2I.onclick = () => this.withCurrent((r) => this.ctx.onSendToImg2Img(r.src));
+    this.q(".r-to-input")?.addEventListener("click", () => this.withCurrent((r) => this.setInputImage(r.src)));
+    this.q(".r-to-i2i")?.addEventListener("click", () => this.withCurrent((r) => this.ctx.onSend("img2img", r.src, this.exportState(r))));
+    this.q(".r-to-inpaint")?.addEventListener("click", () => this.withCurrent((r) => this.ctx.onSend("inpaint", r.src, this.exportState(r))));
     this.q(".r-download").onclick = () => this.withCurrent((r) => downloadDataURL(r.src, `venno-${r.seed}.png`));
     this.q(".r-use-settings").onclick = () => this.withCurrent((r) => this.loadSettingsFrom(r.src));
 
@@ -331,6 +359,30 @@ export class GenForm {
       e.preventDefault();
       this.loadSettingsFrom(f);
     });
+  }
+
+  /** Everything another tab needs to continue from a result of this one. */
+  exportState(result = null) {
+    const s = this.s;
+    return structuredClone({
+      prompt: s.prompt, negative: s.negative, loras: s.loras, qualityPrefix: s.qualityPrefix,
+      steps: s.steps, cfg: s.cfg, shift: s.shift, sampler: s.sampler, scheduler: s.scheduler, preset: s.preset,
+      switchPrompt: s.switchPrompt, switchAt: s.switchAt, adetailer: s.adetailer, saveImages: s.saveImages,
+      seed: result?.seed ?? s.seed,
+    });
+  }
+
+  /** Take an image (and optionally the sending tab's settings) as this tab's input. */
+  async receive(src, state = null) {
+    if (state) {
+      Object.assign(this.s, structuredClone(state));
+      this.persist();
+      this.syncs.forEach((fn) => fn());
+      this.loras.render();
+      this.schedule.refresh();
+      this.gridCard.render();
+    }
+    if (src && this.mode !== "txt2img") await this.setInputImage(src);
   }
 
   async loadSettingsFrom(source) {
@@ -353,7 +405,7 @@ export class GenForm {
     if (x.scheduler && info.schedulers?.includes(x.scheduler)) s.scheduler = x.scheduler;
     s.preset = "";
     if (this.mode === "txt2img" || !this.inputImage) { set("width", x.width); set("height", x.height); }
-    if (this.mode === "img2img") set("denoise", x.denoise);
+    if (this.mode !== "txt2img") set("denoise", x.denoise);
     s.switchPrompt = x.switch_prompt || "";
     set("switchAt", x.switch_at);
     if (this.mode === "txt2img") {
@@ -376,7 +428,7 @@ export class GenForm {
     if (x.checkpoint) this.ctx.selectCheckpoint?.(x.checkpoint);
     const notes = [];
     if (x.regions?.length) notes.push(`${x.regions.length} region prompt(s) are only usable on the Canvas`);
-    if (x.template) notes.push("wildcard template restored as the resolved prompt");
+    if (x.template) notes.push("it used wildcards: its resolved prompt was loaded");
     toast(`Loaded: ${describeSettings(x)}${notes.length ? ` (${notes.join("; ")})` : ""}`, "info");
   }
 
@@ -434,8 +486,20 @@ export class GenForm {
   }
 
   // ---------------- img2img input & mask ----------------
+  /** Fit the input image (and its mask canvas) to the pane, scaling small images up too. */
+  fitStage() {
+    const img = this.inputImage, drop = this.q(".i2i-drop"), stage = this.q(".i2i-stage");
+    if (!img || !drop || stage.hidden) return;
+    const r = drop.getBoundingClientRect();
+    const k = Math.min((r.width - 16) / img.naturalWidth, (r.height - 16) / img.naturalHeight);
+    if (!(k > 0)) return;
+    stage.style.width = `${Math.floor(img.naturalWidth * k)}px`;
+    stage.style.height = `${Math.floor(img.naturalHeight * k)}px`;
+  }
+
   bindImageInput() {
     const drop = this.q(".i2i-drop");
+    new ResizeObserver(() => this.fitStage()).observe(drop);
     const file = document.createElement("input");
     file.type = "file";
     file.accept = "image/*";
@@ -450,14 +514,19 @@ export class GenForm {
       if (f) this.setInputImage(URL.createObjectURL(f), { offer: true });
     });
 
+    this.q(".f-open-again").onclick = () => file.click();
+    this.q(".f-image-clear").onclick = () => this.setInputImage(null);
     const mc = this.q(".i2i-mask");
+    if (!mc) return; // Image to Image: no mask
     let erase = false, size = 48, drawing = false, last = null;
+    const cursor = document.createElement("div");
+    cursor.className = "mask-cursor";
+    this.q(".i2i-stage").appendChild(cursor);
     this.q(".f-mask-draw").onclick = () => { erase = false; this.q(".f-mask-draw").classList.add("on"); this.q(".f-mask-erase").classList.remove("on"); };
     this.q(".f-mask-erase").onclick = () => { erase = true; this.q(".f-mask-erase").classList.add("on"); this.q(".f-mask-draw").classList.remove("on"); };
     this.q(".f-mask-size").oninput = (e) => (size = Number(e.target.value));
     this.q(".f-mask-clear").onclick = () => this.clearMask();
     this.q(".f-mask-invert").onclick = () => this.invertMask();
-    this.q(".f-image-clear").onclick = () => this.setInputImage(null);
     const pos = (e) => {
       const r = mc.getBoundingClientRect();
       return { x: ((e.clientX - r.left) / r.width) * mc.width, y: ((e.clientY - r.top) / r.height) * mc.height, k: mc.width / r.width };
@@ -475,8 +544,19 @@ export class GenForm {
       last = p;
     };
     mc.addEventListener("pointerdown", (e) => { mc.setPointerCapture(e.pointerId); drawing = true; last = null; paint(pos(e)); });
-    mc.addEventListener("pointermove", (e) => drawing && paint(pos(e)));
+    mc.addEventListener("pointermove", (e) => {
+      const r = mc.getBoundingClientRect();
+      Object.assign(cursor.style, { display: "block", width: `${size}px`, height: `${size}px`, left: `${e.clientX - r.left}px`, top: `${e.clientY - r.top}px` });
+      if (drawing) paint(pos(e));
+    });
+    mc.addEventListener("pointerleave", () => (cursor.style.display = "none"));
     mc.addEventListener("pointerup", () => { drawing = false; last = null; });
+    mc.addEventListener("wheel", (e) => {  // brush size with the wheel over the image
+      e.preventDefault();
+      size = Math.max(4, Math.min(300, size * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+      this.q(".f-mask-size").value = size;
+      cursor.style.width = cursor.style.height = `${size}px`;
+    }, { passive: false });
   }
 
   async setInputImage(src, { offer = false } = {}) {
@@ -494,12 +574,39 @@ export class GenForm {
     this.q(".i2i-img").src = src;
     if (offer) offerSettings(src, (st) => this.applySettings(st));
     const mc = this.q(".i2i-mask");
-    mc.width = img.naturalWidth;
-    mc.height = img.naturalHeight;
+    if (mc) {
+      mc.width = img.naturalWidth;
+      mc.height = img.naturalHeight;
+    }
     this.q(".i2i-stage").hidden = false;
     this.q(".i2i-empty").hidden = true;
     this.q(".mask-tools").hidden = false;
-    this.sizeFromImage();
+    this.fitStage();
+    if (this.s.resizeBy !== "by") this.sizeFromImage();
+    this.showResize();
+  }
+
+  /** Output size for image modes: input × scale ("Resize by"), or width / height ("Resize to"). */
+  outputSize() {
+    const s = this.s, img = this.inputImage;
+    if (s.resizeBy === "by" && img) {
+      const snap = (v) => Math.max(64, Math.round((v * s.scaleBy) / 8) * 8);
+      return [snap(img.naturalWidth), snap(img.naturalHeight)];
+    }
+    return [s.width, s.height];
+  }
+
+  showResize() {
+    if (this.mode === "txt2img") return;
+    const by = this.s.resizeBy === "by";
+    this.q(".f-rt-by").classList.toggle("on", by);
+    this.q(".f-rt-to").classList.toggle("on", !by);
+    this.q(".f-resize-by").hidden = !by;
+    this.q(".f-resize-to").hidden = by;
+    this.q(".f-scale").nextElementSibling.textContent = `${Math.round(this.s.scaleBy * 100)}%`;
+    const img = this.inputImage;
+    const [w, h] = this.outputSize();
+    this.q(".f-scale-info").textContent = img ? `${img.naturalWidth}×${img.naturalHeight} → ${w}×${h}` : "Scales the input image (output = input size × scale).";
   }
 
   sizeFromImage() {
@@ -586,7 +693,7 @@ export class GenForm {
     show();
     this.schedule = new SchedulePreview(this.q(".f-prompt"), {
       el: this.q(".f-schedule"),
-      getSteps: () => (this.mode === "img2img" && this.inputImage ? runSteps(s.steps, s.denoise) : s.steps),
+      getSteps: () => (this.mode !== "txt2img" && this.inputImage ? runSteps(s.steps, s.denoise) : s.steps),
       getSwitch: () => (s.switchPrompt.trim() ? { prompt: s.switchPrompt, at: s.switchAt } : null),
     });
     this.root.addEventListener("change", (e) => { if (e.target.matches(".f-steps, .f-denoise")) this.schedule.refresh(); });
@@ -596,16 +703,17 @@ export class GenForm {
   buildJob() {
     const s = this.s;
     const st = this.ctx.state;
+    const [width, height] = this.mode === "txt2img" ? [s.width, s.height] : this.outputSize();
     const job = {
-      mode: this.mode,
+      mode: this.mode === "txt2img" ? "txt2img" : "img2img",
       model: jobModel(st.model),
       prompt: withQualityPrefix(s.prompt, s.qualityPrefix, st.info),
       negative: s.negative,
       loras: jobLoras(s.loras),
       switch_prompt: s.switchPrompt.trim() ? withQualityPrefix(s.switchPrompt, s.qualityPrefix, st.info) : "",
       switch_at: s.switchAt,
-      width: s.width,
-      height: s.height,
+      width,
+      height,
       batch: s.batchSize,
       count: s.batchCount,
       seed: s.seed,
@@ -629,7 +737,7 @@ export class GenForm {
         shift: s.hrShift || null,
       };
     }
-    if (this.mode === "img2img") {
+    if (this.mode !== "txt2img") {
       if (!this.inputImage) throw new Error("Add an input image first");
       Object.assign(job, { init_image: this.inputDataURL(), strength: s.denoise, resize_mode: s.resizeMode });
       if (this.maskHasContent()) {

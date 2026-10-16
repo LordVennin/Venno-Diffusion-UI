@@ -30,12 +30,13 @@ def load_rgb(data: str, background=(255, 255, 255)) -> Image.Image:
 
 
 def load_mask(data: str) -> Image.Image:
-    """White = regenerate. Transparent pixels count as black."""
+    """White = selected. Masks painted in any colour on a transparent background (Studio's region layers)
+    use their transparency, so a blue region counts as fully as a white one; opaque masks use brightness."""
     img = load(data)
-    if img.mode in ("RGBA", "LA", "P"):
-        img = img.convert("RGBA")
-        bg = Image.new("RGBA", img.size, (0, 0, 0, 255))
-        img = Image.alpha_composite(bg, img)
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        alpha = img.convert("RGBA").getchannel("A")
+        if alpha.getextrema() != (255, 255):
+            return alpha
     return img.convert("L")
 
 

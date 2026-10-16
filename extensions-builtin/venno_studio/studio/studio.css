@@ -304,3 +304,73 @@ dialog .row input { width: 100%; }
 .grid-card .g-count { color: var(--muted); font-size: 12px; }
 .grid-card .g-count.err { color: var(--danger); }
 .grid-card summary .g-sum { color: var(--accent2); font-size: 12px; margin-left: 4px; }
+
+/* regions panel (generate sidebar) */
+.regions-box { margin: 6px 0 2px; }
+.regions-box > summary { font-size: 12px; }
+.regions-box > summary span { color: var(--accent2); margin-left: 4px; }
+#region-list { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+#region-list li { display: grid; grid-template-columns: 10px 1fr auto; gap: 7px; align-items: start; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+#region-list li.on { border-color: var(--sel); }
+#region-list li.off { opacity: .5; }
+#region-list li.unpainted .r-edit { border-color: var(--accent); color: var(--accent2); }
+#region-list li.empty { display: block; color: var(--muted); font-size: 12px; border-style: dashed; }
+#region-list .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; }
+#region-list textarea { min-height: 38px; font-size: 12.5px; }
+#region-list .r-side { display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+#region-list .r-side button { padding: 2px 6px; font-size: 12px; }
+#region-list .r-side label { display: flex; align-items: center; gap: 2px; font-size: 12px; }
+#region-list .r-str { width: 46px; padding: 1px 3px; }
+.regions-box .row .hint { font-size: 11px; margin: 0; }
+.lora-chip button.step { padding: 0 5px; border: none; border-radius: 4px; background: rgba(0,0,0,.25); color: inherit; font-size: 13px; line-height: 18px; cursor: pointer; }
+.lora-chip button.step:hover { background: rgba(255,255,255,.12); }
+.lora-chip:has(button.step:hover) { border-color: #5a4330; background: #3a2c20; }
+.lora-chip:has(button.step:hover) .n { text-decoration: none; }
+.lora-chip:has(button.step:hover) .x { color: #c79a78; }
+
+/* option cards: the box toggles the option, the title opens the settings */
+details.card > summary > input[type=checkbox] { margin: 0 6px 0 0; vertical-align: middle; cursor: pointer; }
+details.card > summary > span { color: var(--text); }
+
+/* Image to Image / Inpaint: the input (and mask) and the result side by side, as large as the page allows */
+.result-col.work .panes { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 6px; }
+.pane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; flex-wrap: wrap; }
+.pane-title { font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.pane .mask-tools { gap: 6px; flex-wrap: wrap; }
+.pane .mask-tools label { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+.pane .mask-tools input[type=range] { width: 90px; }
+.in-pane .i2i-drop { flex: 1; min-height: 0; overflow: hidden; background: #141518; }
+.in-pane .i2i-stage { max-height: 100%; }
+.in-pane .i2i-stage img { max-width: 100%; max-height: calc(100vh - 250px); }
+.out-pane .result-main { flex: 1; }
+.in-pane .hint { margin: 0; }
+.mask-cursor { position: absolute; display: none; pointer-events: none; border: 1.5px solid #fff; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 1px rgba(0,0,0,.6); }
+.i2i-mask { cursor: none; }
+@media (max-width: 1250px) { .result-col.work .panes { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } .in-pane .i2i-stage img { max-height: calc(50vh - 140px); } }
+
+/* Resize by / Resize to */
+.resize-tabs { margin: 10px 0 6px; }
+.f-resize-by .slider output { min-width: 44px; }
+
+/* Image Info tab */
+.info-page { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 520px); gap: 12px; padding: 12px; overflow: hidden; }
+.info-drop { display: grid; place-items: center; min-height: 0; border: 1px dashed var(--line); border-radius: 8px; background: #141518; overflow: hidden; cursor: pointer; }
+.info-drop.dragging { border-color: var(--accent); background: rgba(255,138,61,.08); }
+.info-drop img { max-width: 100%; max-height: calc(100vh - 90px); object-fit: contain; }
+.info-empty { color: var(--muted); text-align: center; line-height: 1.8; }
+.info-side { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; }
+.info-send { flex-wrap: wrap; gap: 6px; }
+.info-send .lbl { color: var(--muted); font-size: 12px; }
+.info-text { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12.5px; background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; padding: 10px; user-select: text; }
+.info-table { border-collapse: collapse; font-size: 12px; }
+.info-table th { text-align: left; color: var(--muted); font-weight: 500; padding: 3px 10px 3px 0; vertical-align: top; white-space: nowrap; }
+.info-table td { padding: 3px 0; word-break: break-word; }
+.regions-box > summary { display: flex; align-items: center; gap: 4px; }
+.regions-box > summary #btn-add-region { margin-left: auto; padding: 1px 8px; font-size: 12px; }
+.regions-box .hint { font-size: 11px; margin: 0 0 4px; }
+/* the stage is sized in JS (fitStage) so the mask canvas always lines up with the image */
+.in-pane .i2i-stage img { width: 100%; height: 100%; max-width: none; max-height: none; }
+.out-pane .result-main img, .form-page .result-main img { width: 100%; height: 100%; object-fit: contain; }
+#region-list .r-side { display: grid; grid-template-columns: auto auto; gap: 4px; }
+#region-list .r-side .r-edit, #region-list .r-side label { grid-column: 1 / span 2; }

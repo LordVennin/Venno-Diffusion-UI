@@ -6,6 +6,7 @@ export const TOOLS = {
   brush: { label: "Brush", key: "b", paints: true },
   eraser: { label: "Eraser", key: "e", paints: true },
   fill: { label: "Fill", key: "g" },
+  "shape-rect": { label: "Rectangle (fills a region on region layers; Ctrl = erase)", key: "u" },
   picker: { label: "Color picker", key: "i" },
   "select-rect": { label: "Rectangle select", key: "m" },
   "select-lasso": { label: "Lasso select", key: "l" },
@@ -197,8 +198,14 @@ export class View {
     const s = this.stroke;
     if (s && s.kind === "rect") {
       const r = normRect(s.start, s.last);
+      if (s.shape && !s.erase) {
+        ctx.globalAlpha = 0.35;
+        ctx.fillStyle = s.layer.type === LAYER_REGION ? s.layer.color : this.settings.color;
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.globalAlpha = 1;
+      }
       ctx.lineWidth = lw * 1.5;
-      ctx.strokeStyle = "#40c4ff";
+      ctx.strokeStyle = s.erase ? "#ff5c5c" : "#40c4ff";
       ctx.strokeRect(r.x, r.y, r.w, r.h);
     } else if (s && s.kind === "lasso" && s.points.length > 1) {
       ctx.lineWidth = lw * 1.5;
@@ -365,6 +372,11 @@ export class View {
       this.stroke = { kind: "lasso", points: [p], mode: selectionMode(e, this.settings.selectMode) };
       return;
     }
+    if (tool === "shape-rect") {
+      if (!this.checkLayer(layer)) return;
+      this.stroke = { kind: "rect", shape: true, layer, start: p, last: p, erase: e.ctrlKey || e.metaKey || e.button === 2 };
+      return;
+    }
     if (tool === "fill") {
       if (!this.checkLayer(layer)) return;
       this.floodFill(layer, p);
@@ -436,6 +448,25 @@ export class View {
     if (s.kind === "paint") {
       doc.editPixels(s.target, (c) => this.applyStroke(c, s), s.target === doc.selection ? "selection" : "pixels");
       this.onStrokeEnd(s.target === doc.selection ? "selection" : "pixels");
+    } else if (s.kind === "rect" && s.shape) {
+      const r = normRect(s.start, s.last);
+      if (r.w >= 2 && r.h >= 2) {
+        const l = s.layer;
+        doc.editPixels(l.canvas, (c) => {
+          if (s.erase) { c.clearRect(r.x, r.y, r.w, r.h); return; }
+          if (l.type === LAYER_CONTROL) {  // guides: an outline, like a sketched box
+            c.strokeStyle = this.settings.color;
+            c.lineWidth = Math.max(1, this.settings.size / 3);
+            c.strokeRect(r.x, r.y, r.w, r.h);
+            return;
+          }
+          c.globalAlpha = l.type === LAYER_REGION ? 1 : this.settings.opacity;
+          c.fillStyle = l.type === LAYER_REGION ? l.color : this.settings.color;
+          c.fillRect(r.x, r.y, r.w, r.h);
+          c.globalAlpha = 1;
+        });
+        this.onStrokeEnd("pixels");
+      }
     } else if (s.kind === "rect") {
       const r = normRect(s.start, s.last);
       if (r.w < 2 || r.h < 2) { if (s.mode === "replace") doc.deselect(); }
