@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from venno.engine import conditioning, rng, sampling, vae
+from venno.engine import conditioning, lora, rng, sampling, vae
 from venno.engine.models import manager
 
 from . import metadata
@@ -28,15 +28,18 @@ class Result:
     images: list[bytes] = field(default_factory=list)  # PNG
     seeds: list[int] = field(default_factory=list)
     infotexts: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     cancelled: bool = False
 
 
 def run(job, progress: Progress) -> Result:
     engine = manager.get(job.model.checkpoint, [job.model.text_encoder, job.model.vae])
     engine.set_shift(shift=job.shift, width=job.width, height=job.height)
+    loras = [(lr.name, lr.weight) for lr in job.loras]
+    result_warnings = lora.apply(engine, loras)  # before encoding: LoRAs can patch the text encoder too
 
     base_seed = rng.resolve_seed(job.seed)
-    result = Result()
+    result = Result(warnings=result_warnings)
     shape = vae.latent_shape(engine, job.width, job.height)
 
     # conditioning is the same for every run of the job: encode once
@@ -93,7 +96,7 @@ def run(job, progress: Progress) -> Result:
         params["Version"] = metadata.VERSION
 
         for seed, image in zip(seeds, vae.decode(engine, latents)):
-            info = metadata.infotext(job.prompt, job.negative, {**params, "Seed": seed})
+            info = metadata.infotext(metadata.with_lora_tags(job.prompt, loras), job.negative, {**params, "Seed": seed})
             if job.save:
                 metadata.save(image, info, "txt2img", seed)
             result.images.append(metadata.png_bytes(image, info))

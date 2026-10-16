@@ -20,6 +20,7 @@ The generation engine is **[Stable Diffusion WebUI Forge – Neo](https://github
 | **Image to image** | Open, paste or drag in an image and refine the whole canvas or just a selection at any strength. |
 | **Regional prompting** | *Region* layers are painted masks, each with its own prompt (e.g. one character per region). Regions apply at every denoising step, alongside the main prompt, with any sampler or LoRA. Inpainting works with regions too. |
 | **Prompted sketch layers** | Give any paint or guide layer its own prompt and its strokes become a region. Venno grows the strokes and fills closed outlines, so sketching a figure on its own layer is enough to prompt it separately. |
+| **LoRAs** | Picked LoRAs appear as chips under the prompts instead of `<lora:…>` text. Click a chip to remove it; edit or scroll its number to change the weight (0 = off). Pasted `<lora:name:weight>` tags turn into chips automatically. LoRAs made for a smaller Anima are re-mapped onto larger ones (e.g. 2B → 2.9B). |
 | **ADetailer** | [ADetailer-Neo](https://github.com/Haoming02/ADetailer-Neo) is built in and on by default. It re-renders detected faces (and optionally hands) at higher detail on every tab except live mode. |
 | **Hires. fix** | Text to Image has Forge's hires fix: latent or model upscalers, upscale factor or target size, separate steps, denoising, CFG and shift. |
 | **Live mode** | Re-generates automatically after each stroke (fixed seed, so changes stay comparable). Works best with **Anima Turbo** and the 512²/768² resolutions. |
@@ -98,7 +99,7 @@ Add a **Guide** layer, pick a model (Venno prefers `any-test-like` / `lineart` m
 
 ## Text to Image / Image to Image
 
-These are Forge-style form pages: prompt, negative, LoRA picker, preset/sampler/scheduler/steps/CFG/shift, size presets, batch size and count, and seed reuse.
+These are Forge-style form pages: prompt, negative, LoRA chips, preset/sampler/scheduler/steps/CFG/shift, size presets, batch size and count, and seed reuse.
 
 - **Hires. fix (Text to Image):** generate small, upscale with a latent mode or an upscaler model, then refine. Set the upscale factor or a target width/height, plus separate hires steps, denoising, CFG and shift (0 = same as the first pass).
 - **Image to Image:** drop, paste or send in an image. Painting on it creates an inpaint mask; with no mask, the whole image is refined. Settings include masked content, whole picture vs only masked (with padding), mask blur and seamless inpainting.

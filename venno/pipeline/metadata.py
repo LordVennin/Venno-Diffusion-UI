@@ -26,6 +26,12 @@ def infotext(prompt: str, negative: str, params: dict) -> str:
     return "\n".join(lines)
 
 
+def with_lora_tags(prompt: str, loras: list[tuple[str, float]]) -> str:
+    """LoRAs go into the infotext prompt as <lora:name:weight> tags, so pasted parameters bring them back."""
+    tags = " ".join(f"<lora:{name}:{weight:g}>" for name, weight in loras if weight != 0)
+    return f"{prompt.rstrip()} {tags}".strip() if tags else prompt
+
+
 def png_bytes(image: Image.Image, info: str) -> bytes:
     pnginfo = PngImagePlugin.PngInfo()
     pnginfo.add_text("parameters", info)

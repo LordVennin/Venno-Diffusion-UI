@@ -35,15 +35,10 @@ PROMPT_DEFAULTS = {
 
 def _loras() -> list[dict]:
     try:
-        import networks  # sd_forge_lora
+        from venno.engine import lora
 
-        if not networks.available_networks:
-            networks.list_available_networks()
-        return sorted(
-            ({"name": name, "alias": getattr(n, "alias", name)} for name, n in networks.available_networks.items()),
-            key=lambda x: x["name"].lower(),
-        )
-    except Exception as e:  # LoRA extension disabled or broken
+        return lora.available()
+    except Exception as e:
         print(f"[Venno] could not list LoRAs: {e}")
         return []
 

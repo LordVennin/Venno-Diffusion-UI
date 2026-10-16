@@ -3,6 +3,7 @@
 import { LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, alphaToMask, ctx2d, hasContentIn, loadImage, makeCanvas, strokeRegionMask } from "./doc.js";
 import { ADETAILER_DEFAULT, withQualityPrefix } from "./common.js";
 import { cancelJob, jobModel, runJob } from "./jobs.js";
+import { jobLoras } from "./loras.js";
 
 // Choose a model resolution for a canvas area: ~targetPixels, multiples of 64, Anima-friendly bounds.
 export function fitResolution(w, h, targetPixels) {
@@ -77,6 +78,7 @@ export class Generator {
       model: jobModel(st.model),
       prompt: withQualityPrefix(g.prompt, g.qualityPrefix, st.info),
       negative: g.negative,
+      loras: jobLoras(g.loras),
       width: gw,
       height: gh,
       batch: plan.live ? 1 : g.batch,

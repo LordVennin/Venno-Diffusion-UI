@@ -5,6 +5,7 @@ import { TOOLS, View } from "./view.js";
 import { GenForm } from "./forms.js";
 import { api, presetForCheckpoint } from "./common.js";
 import { ModelsPage } from "./models.js";
+import { LoraChips } from "./loras.js";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -17,7 +18,7 @@ const state = {
   info: null,
   model: { checkpoint: "", textEncoder: "", vae: "", ...(saved.model || {}) },
   gen: {
-    prompt: "", negative: "", strength: 1, batch: 2, steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple",
+    prompt: "", negative: "", loras: [], strength: 1, batch: 2, steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple",
     seed: 0, seedLocked: false, resolution: 1024, context: 0.5, feather: 12, qualityPrefix: true, saveImages: true, softInpaint: true,
     regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, preset: "", adetailer: true,
     ...(saved.gen || {}),
@@ -506,17 +507,12 @@ function applyPreset(name) {
   persist();
 }
 
+const loraChips = new LoraChips($("#lora-chips"), { get: () => g.loras, set: (list) => { g.loras = list; persist(); gen.scheduleLive(700); } });
+loraChips.watch(prompt_, (text) => { g.prompt = text; persist(); });
+loraChips.watch(negative, (text) => { g.negative = text; persist(); });
 $("#sel-lora").onchange = (e) => {
-  const name = e.target.value;
+  if (e.target.value) loraChips.add(e.target.value);
   e.target.value = "";
-  if (!name) return;
-  const tag = `<lora:${name}:0.8>`;
-  const pos = prompt_.selectionStart ?? prompt_.value.length;
-  const v = prompt_.value;
-  const sep = pos > 0 && !/[\s,]$/.test(v.slice(0, pos)) ? ", " : "";
-  prompt_.value = v.slice(0, pos) + sep + tag + v.slice(pos);
-  prompt_.dispatchEvent(new Event("input"));
-  prompt_.focus();
 };
 
 // ---------------- generator events ----------------
@@ -607,6 +603,7 @@ async function loadInfo(refresh = false) {
     fillSelect($("#preset"), Object.entries(info.presets).map(([k, p]) => ({ value: k, label: p.label })), g.preset, { empty: "Custom" });
     const loraSel = $("#sel-lora");
     loraSel.innerHTML = `<option value="">+ LoRA… (${info.loras.length})</option>` + info.loras.map((l) => `<option value="${escapeHtml(l.name)}">${escapeHtml(l.name)}</option>`).join("");
+    loraChips.setAvailable(info.loras.map((l) => l.name));
     if (!g.negative && info.prompt_defaults?.negative) { g.negative = info.prompt_defaults.negative; negative.value = g.negative; }
     if (!g.preset) applyPreset(presetForCheckpoint(state.model.checkpoint));
     persist();

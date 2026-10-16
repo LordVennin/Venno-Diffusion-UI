@@ -227,3 +227,25 @@ dialog .row input { width: 100%; }
   .menu button { padding: 4px 6px; }
 }
 .layer-props label.check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); }
+
+/* LoRA chips (under the prompts) */
+.lora-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 2px; }
+.lora-chip {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 4px 2px 9px;
+  border: 1px solid #5a4330; border-radius: 12px; background: #3a2c20; color: #ffd2b0; cursor: pointer; user-select: none;
+}
+.lora-chip .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lora-chip input.w {
+  width: 46px; padding: 0 2px; border: none; border-radius: 4px; background: rgba(0,0,0,.25); color: inherit; text-align: right;
+  font-size: 12px; font-variant-numeric: tabular-nums; cursor: text; -moz-appearance: textfield;
+}
+.lora-chip input.w::-webkit-inner-spin-button, .lora-chip input.w::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.lora-chip .x { width: 16px; text-align: center; color: #c79a78; font-size: 14px; line-height: 1; }
+.lora-chip:hover { border-color: var(--danger); background: #3d2424; }
+.lora-chip:hover .n { text-decoration: line-through; }
+.lora-chip:hover .x { color: var(--danger); }
+.lora-chip:has(input.w:hover, input.w:focus) { border-color: #5a4330; background: #3a2c20; }
+.lora-chip:has(input.w:hover, input.w:focus) .n { text-decoration: none; }
+.lora-chip.off { opacity: .55; }
+.lora-chip.missing { border-style: dashed; border-color: var(--danger); color: #ffb0b0; background: transparent; }
+.lora-chip.missing:hover { background: #3d2424; }

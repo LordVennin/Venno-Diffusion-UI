@@ -4,6 +4,7 @@ import {
   $, $$, ADETAILER_DEFAULT, downloadDataURL, escapeHtml, fillSelect, loadStore, presetForCheckpoint, saveStore, toast, withQualityPrefix,
 } from "./common.js";
 import { cancelJob, jobModel, jobProgress, runJob } from "./jobs.js";
+import { jobLoras, LoraChips } from "./loras.js";
 
 const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768]];
 const RESIZE_MODES = ["Just resize", "Crop and resize", "Resize and fill"];
@@ -12,7 +13,7 @@ const FILL_KEYS = ["fill", "original", "latent_noise", "latent_nothing"];
 const MASK_COLOR = "#ff8a3d";
 
 const DEFAULTS = {
-  prompt: "", negative: "", qualityPrefix: true, width: 1024, height: 1024, batchSize: 1, batchCount: 1,
+  prompt: "", negative: "", loras: [], qualityPrefix: true, width: 1024, height: 1024, batchSize: 1, batchCount: 1,
   steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple", seed: -1, preset: "",
   // hires fix (txt2img)
   hr: false, hrUpscaler: "Latent", hrScale: 1.5, hrResizeX: 0, hrResizeY: 0, hrSteps: 0, hrDenoise: 0.5, hrCfg: 0, hrShift: 0,
@@ -48,6 +49,7 @@ export class GenForm {
         <section class="card">
           <textarea class="f-prompt" rows="4" placeholder="Prompt (Ctrl+Enter to generate)"></textarea>
           <textarea class="f-negative" rows="2" placeholder="Negative prompt"></textarea>
+          <div class="f-lora-chips"></div>
           <div class="row">
             <select class="f-lora"></select>
             <label class="check"><input type="checkbox" class="f-quality"> Anima quality tags</label>
@@ -208,7 +210,13 @@ export class GenForm {
     this.q(".f-swap").onclick = () => this.setSize(s.height, s.width);
     this.q(".f-generate").onclick = () => this.generate();
     this.q(".f-cancel").onclick = () => this.jobId && cancelJob(this.jobId);
-    this.q(".f-lora").onchange = (e) => this.insertLora(e);
+    this.loras = new LoraChips(this.q(".f-lora-chips"), { get: () => s.loras, set: (list) => { s.loras = list; this.persist(); } });
+    this.q(".f-lora").onchange = (e) => {
+      if (e.target.value) this.loras.add(e.target.value);
+      e.target.value = "";
+    };
+    this.loras.watch(this.q(".f-prompt"), (text) => { s.prompt = text; this.persist(); });
+    this.loras.watch(this.q(".f-negative"), (text) => { s.negative = text; this.persist(); });
     this.root.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); e.stopPropagation(); this.generate(); }
     });
@@ -286,6 +294,7 @@ export class GenForm {
     fillSelect(this.q(".f-scheduler"), info.schedulers.map((x) => ({ value: x, label: x })), s.scheduler);
     fillSelect(this.q(".f-preset"), Object.entries(info.presets).map(([k, p]) => ({ value: k, label: p.label })), s.preset, { empty: "Custom" });
     this.q(".f-lora").innerHTML = `<option value="">+ LoRA… (${info.loras.length})</option>` + info.loras.map((l) => `<option value="${escapeHtml(l.name)}">${escapeHtml(l.name)}</option>`).join("");
+    this.loras.setAvailable(info.loras.map((l) => l.name));
     if (this.q(".f-hr-upscaler")) fillSelect(this.q(".f-hr-upscaler"), info.upscalers.map((x) => ({ value: x, label: x })), s.hrUpscaler);
     const adModels = [{ value: "None", label: "None" }, ...info.adetailer_models.map((x) => ({ value: x, label: x }))];
     $$(".ad-unit", this.root).forEach((el) => fillSelect($(".ad-model", el), adModels, s.adetailer.units[Number(el.dataset.unit)].model));
@@ -324,19 +333,6 @@ export class GenForm {
     if (s.hrResizeX && !s.hrResizeY) h = Math.round((s.height * s.hrResizeX) / s.width / 64) * 64;
     if (s.hrResizeY && !s.hrResizeX) w = Math.round((s.width * s.hrResizeY) / s.height / 64) * 64;
     el.textContent = s.hr ? `${s.width}×${s.height} → ${w}×${h}` : "Generate at low resolution, then upscale and refine (like Forge's Hires. fix).";
-  }
-
-  insertLora(e) {
-    const name = e.target.value;
-    e.target.value = "";
-    if (!name) return;
-    const ta = this.q(".f-prompt");
-    const pos = ta.selectionStart ?? ta.value.length;
-    const v = ta.value;
-    const sep = pos > 0 && !/[\s,]$/.test(v.slice(0, pos)) ? ", " : "";
-    ta.value = v.slice(0, pos) + sep + `<lora:${name}:0.8>` + v.slice(pos);
-    ta.dispatchEvent(new Event("input"));
-    ta.focus();
   }
 
   // ---------------- img2img input & mask ----------------
@@ -483,6 +479,7 @@ export class GenForm {
       model: jobModel(st.model),
       prompt: withQualityPrefix(s.prompt, s.qualityPrefix, st.info),
       negative: s.negative,
+      loras: jobLoras(s.loras),
       width: s.width,
       height: s.height,
       batch: s.batchSize,

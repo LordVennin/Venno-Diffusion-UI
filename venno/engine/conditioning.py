@@ -6,16 +6,32 @@ import re
 
 import torch
 
-# Phase 1 handles plain prompts (incl. (word:1.2) weights). LoRA tags, prompt scheduling
-# ([a:b:when], [a|b]) and AND arrive in Phase 2 - until then such jobs run on the Forge path.
-_LORA = re.compile(r"<lora:[^>]+>", re.I)
+# Plain prompts incl. (word:1.2) weights. Prompt scheduling ([a:b:when], [a|b]) and AND arrive in
+# Phase 2 - until then such jobs run on the Forge path. <lora:name:weight> tags are taken out of the
+# text by extract_lora_tags before a job runs.
+_LORA = re.compile(r"<lora:([^>:]+)(?::([^>:]*))?(?::[^>]*)?>", re.I)
 _SCHEDULE = re.compile(r"\[[^\[\]]*[:|][^\[\]]*\]")
 _AND = re.compile(r"\bAND\b")
 
 
+def extract_lora_tags(prompt: str) -> tuple[str, list[tuple[str, float]]]:
+    """'a cat <lora:x:0.6>' → ('a cat', [('x', 0.6)])"""
+    found: list[tuple[str, float]] = []
+
+    def take(m):
+        try:
+            weight = float(m.group(2)) if m.group(2) not in (None, "") else 1.0
+        except ValueError:
+            weight = 1.0
+        found.append((m.group(1).strip(), weight))
+        return ""
+
+    text = _LORA.sub(take, prompt)
+    text = re.sub(r"\s*,(\s*,)+", ",", text)  # ", ," left behind by a removed tag
+    return text.strip().strip(",").strip(), found
+
+
 def unsupported_syntax(prompt: str) -> str | None:
-    if _LORA.search(prompt):
-        return "LoRA tags"
     if _SCHEDULE.search(prompt.replace("\\[", "").replace("\\]", "")):
         return "prompt scheduling"
     if _AND.search(prompt):

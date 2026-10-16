@@ -114,12 +114,13 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 
 **Phase 1: Venno engine, text to image** ✅ done
 - `venno/engine/` (ModelManager, conditioning, sampling, schedulers, rng, VAE, preview) and `venno/pipeline/txt2img`, behind `--engine venno` (Forge path stays default).
-- Jobs the Venno engine can't run yet (img2img, LoRA, prompt scheduling / AND, regions, guides, hires, detailer) fall back to Forge automatically; a job that sets `"engine": "venno"` gets an error instead.
+- Jobs the Venno engine can't run yet (img2img, prompt scheduling / AND, regions, guides, hires, detailer) fall back to Forge automatically; a job that sets `"engine": "venno"` gets an error instead.
 - Both paths share one loaded model: the Venno engine adopts Forge's model when it was loaded from the same files, and starts every job from the unpatched objects, so Forge LoRAs/scripts don't carry over (checked: same image before and after a Forge LoRA job).
 - Parity check vs Forge at 256², 4 steps, same seed. Mean abs. pixel difference (0–255): Euler CFG 1 0.49, Euler CFG 4 0.32, ER SDE + Beta 0.48, DPM++ 2M Karras batch 2 0.50/0.50, Euler a batch 2 0.48/0.49. Visually identical. The noise matches too, so seeds carry over between the engines.
 
 **Phase 2: img2img, inpainting, regions, LoRA, prompt syntax** (5–7 days)
-- Mask handling, fill modes, only-masked crop, differential (soft) inpainting, regional prompting, LoRA patching and caching.
+- ✅ LoRA patching and caching (`venno/engine/lora.py`): diffusion model + text encoder patches, Anima size re-mapping, the patched model is reused while the LoRA set stays the same. Jobs carry `loras: [{name, weight}]`; `<lora:…>` tags in any prompt are lifted into that list on submit. Studio shows LoRAs as removable chips.
+- Mask handling, fill modes, only-masked crop, differential (soft) inpainting, regional prompting.
 - Prompt scheduling / `AND` (ported parser) incl. inside region prompts; syntax hint in Studio.
 
 **Phase 2b: Anima 3.8B** (3–5 days)

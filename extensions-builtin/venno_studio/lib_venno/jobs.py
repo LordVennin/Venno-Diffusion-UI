@@ -121,6 +121,7 @@ class JobRecord:
         self.job = job
         self.status = "queued"  # queued | running | done | error | cancelled
         self.error = ""
+        self.warnings: list[str] = []
         self.created = time.time()
         self.started = 0.0
         self.finished = 0.0
@@ -150,6 +151,7 @@ class JobRecord:
             "mode": self.job.mode,
             "status": self.status,
             "error": self.error,
+            "warnings": self.warnings,
             "progress": round(self.progress, 4),
             "step": self.step,
             "steps": self.steps,
@@ -171,7 +173,28 @@ _running: Optional[str] = None
 MAX_RECORDS = 60
 
 
+def _lift_lora_tags(job: Job):
+    """<lora:name:w> typed into any prompt becomes a job LoRA (the list wins over a tag naming the same LoRA)."""
+    from venno.engine.conditioning import extract_lora_tags
+
+    have = {lr.name for lr in job.loras}
+
+    def lift(text: str) -> str:
+        text, found = extract_lora_tags(text)
+        for name, weight in found:
+            if name not in have:
+                have.add(name)
+                job.loras.append(LoraRef(name=name, weight=weight))
+        return text
+
+    job.prompt = lift(job.prompt)
+    job.negative = lift(job.negative)
+    for region in job.regions:
+        region.prompt = lift(region.prompt)
+
+
 def submit(job: Job) -> JobRecord:
+    _lift_lora_tags(job)
     rec = JobRecord(job)
     with _cond:
         _records[rec.id] = rec
@@ -310,8 +333,6 @@ def venno_unsupported(job: Job) -> Optional[str]:
 
     if job.mode != "txt2img":
         return "image to image (Phase 2)"
-    if job.loras:
-        return "LoRAs (Phase 2)"
     if job.regions:
         return "regional prompts (Phase 2)"
     if job.guides:
@@ -362,7 +383,7 @@ def _run_venno(rec: JobRecord) -> bool:
     progress = txt2img.Progress(on_step=on_step, on_preview=rec.set_preview, is_cancelled=rec.cancel_event.is_set)
     rec.job_count = total_runs
     result = txt2img.run(rec.job, progress)
-    rec.images, rec.seeds, rec.infotexts = result.images, result.seeds, result.infotexts
+    rec.images, rec.seeds, rec.infotexts, rec.warnings = result.images, result.seeds, result.infotexts, result.warnings
     return result.cancelled
 
 
