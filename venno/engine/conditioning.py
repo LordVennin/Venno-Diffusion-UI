@@ -48,13 +48,13 @@ class PromptConditioning:
     Every distinct text is encoded once, up front (encoding mid-sampling would swap the text encoder back in).
     """
 
-    def __init__(self, engine, positive, negative, *, width: int, height: int):
+    def __init__(self, engine, positive, negative, *, width: int, height: int, cache: dict | None = None):
         from backend.sampling.condition import compile_conditions
 
         self.positive, self.negative = positive, negative  # prompts.PromptPlan
         self.needs_uncond = positive.composed  # AND / weights: CFG composition needs the negative even at CFG 1
         self._compile = compile_conditions
-        self._tensors: dict[tuple[str, bool], torch.Tensor] = {}
+        self._tensors: dict[tuple[str, bool], torch.Tensor] = {} if cache is None else cache  # shared between passes
         self._steps: dict[tuple, tuple] = {}
         for step in range(1, positive.steps + 1):
             for text, _ in positive.parts(step):

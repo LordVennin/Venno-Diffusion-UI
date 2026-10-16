@@ -73,11 +73,21 @@ def _info() -> dict:
         "schedulers": [s.label for s in sd_schedulers.schedulers],
         "loras": _loras(),
         "controlnets": _controlnets(),
-        "upscalers": [*shared.latent_upscale_modes.keys(), *(u.name for u in shared.sd_upscalers if u.name != "None")],
+        "upscalers": _upscalers(),
         "adetailer_models": _adetailer_models(),
         "presets": PRESETS,
         "prompt_defaults": PROMPT_DEFAULTS,
     }
+
+
+def _upscalers() -> list[str]:
+    try:
+        from venno.engine import upscale
+
+        return upscale.available()
+    except Exception as e:
+        print(f"[Venno] could not list upscalers: {e}")
+        return ["Latent", "Lanczos"]
 
 
 def _refresh():

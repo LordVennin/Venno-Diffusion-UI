@@ -7,9 +7,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+import torch
+import torch.nn.functional as F
 from PIL import Image
 
-from venno.engine import conditioning, images, lora, prompts, regions, rng, sampling, vae
+from venno.engine import conditioning, images, lora, prompts, regions, rng, sampling, upscale, vae
 from venno.engine.models import manager
 
 from . import metadata
@@ -133,21 +135,21 @@ def run(job, progress: Progress) -> Result:
         denoise = 1.0 if latent_mask is not None and job.fill == "latent_noise" else job.strength
     out_size = src.original.size if src is not None and src.box is not None else (job.width, job.height)
 
-    # prompts per step: scheduling / AND / the "then switch to" prompt, over the steps actually sampled
+    tensors: dict = {}  # encoded prompt texts, shared by every pass of the job
     steps_run = sampling.run_steps(job.steps, denoise if src is not None else 1.0)
-    positive = prompts.PromptPlan(steps_run, job.prompt, switch=job.switch_prompt or None, switch_at=job.switch_at)
-    negative = prompts.PromptPlan(steps_run, job.negative, allow_and=False)
-    cond = conditioning.PromptConditioning(engine, positive, negative, width=W, height=H)
+    cond = make_conditioning(engine, job, steps_run, W, H, tensors)
+    regional = make_regional(engine, job, src, steps_run, W, H, cond)
 
-    regional = None
-    if job.regions:
-        region_list = []
-        for r in job.regions:
-            plan = prompts.PromptPlan(steps_run, r.prompt, allow_and=False)
-            texts = {t for step in range(1, steps_run + 1) for t, _ in plan.parts(step)}
-            contexts = {t: cond.tensor(engine, t, False, W, H) for t in texts}
-            region_list.append(regions.Region(plan=plan, contexts=contexts, mask=region_mask(job, src, r.mask, W, H), strength=r.strength))
-        regional = regions.RegionalAttention(region_list, base_strength=job.region_base)
+    hires = job.hires if job.mode == "txt2img" else None
+    if hires is not None:
+        tw, th = hires_size(job)
+        TW, TH = images.snap(tw), images.snap(th)
+        hires_steps = hires.steps or job.steps
+        hires_run = sampling.run_steps(hires_steps, hires.denoise)
+        cond2 = make_conditioning(engine, job, hires_run, TW, TH, tensors)
+        regional2 = make_regional(engine, job, None, hires_run, TW, TH, cond2)
+        out_size = (tw, th)
+    total_steps = steps_run + (hires_run if hires is not None else 0)
 
     params = {
         "Steps": job.steps,
@@ -156,7 +158,7 @@ def run(job, progress: Progress) -> Result:
         "CFG scale": job.cfg,
         "Shift": job.shift,
         "Seed": None,  # filled per image
-        "Size": f"{out_size[0]}x{out_size[1]}",
+        "Size": f"{job.width}x{job.height}" if hires is not None else f"{out_size[0]}x{out_size[1]}",
         "Model": manager.info.get("name"),
     }
     if src is not None:
@@ -166,6 +168,15 @@ def run(job, progress: Progress) -> Result:
             params["Masked content"] = job.fill
             params["Inpaint area"] = "Only masked" if src.box else "Whole picture"
             params["Soft inpainting"] = job.soft_inpaint
+    if hires is not None:
+        params["Denoising strength"] = hires.denoise
+        params["Hires resize"] = f"{tw}x{th}"
+        params["Hires upscaler"] = hires.upscaler
+        params["Hires steps"] = hires_steps
+        if hires.cfg:
+            params["Hires CFG Scale"] = hires.cfg
+        if hires.shift:
+            params["Hires shift"] = hires.shift
     if job.switch_prompt:
         params["Prompt switch"] = job.switch_prompt
         params["Prompt switch at"] = job.switch_at
@@ -184,37 +195,36 @@ def run(job, progress: Progress) -> Result:
         seeds = [base_seed + run_index * job.batch + i for i in range(job.batch)]
         last_preview = [0.0]
 
-        def on_step(i, n, denoised, run_index=run_index):
-            progress.on_step(i, n, run_index, job.count)
-            now = time.time()
-            if progress.preview_every and i % progress.preview_every == 0 and i < n and now - last_preview[0] > 0.25:
-                last_preview[0] = now
-                img = vae.preview(engine, denoised)
-                if img is not None:
-                    buf = io.BytesIO()
-                    img.convert("RGB").save(buf, format="JPEG", quality=80)
-                    progress.on_preview(buf.getvalue())
+        def stepper(offset: int, run_index=run_index):
+            def on_step(i, n, denoised):
+                progress.on_step(offset + i, total_steps, run_index, job.count)
+                now = time.time()
+                if progress.preview_every and i % progress.preview_every == 0 and i < n and now - last_preview[0] > 0.25:
+                    last_preview[0] = now
+                    img = vae.preview(engine, denoised)
+                    if img is not None:
+                        buf = io.BytesIO()
+                        img.convert("RGB").save(buf, format="JPEG", quality=80)
+                        progress.on_preview(buf.getvalue())
+
+            return on_step
 
         try:
-            latents = sampling.sample(
-                sampling.SampleRequest(
-                    engine=engine,
-                    noise=rng.ImageNoise(seeds, shape),
-                    conditioning=cond,
-                    cfg=job.cfg,
-                    sampler=job.sampler,
-                    scheduler=job.scheduler,
-                    steps=job.steps,
-                    seeds=seeds,
-                    init_latent=init_latent,
-                    denoise=denoise,
-                    inpaint=sampling.Inpaint(latent_mask, differential=job.soft_inpaint, keep=keep_latent) if latent_mask is not None else None,
-                    regional=regional,
-                    regional_end=job.region_end,
-                    on_step=on_step,
-                    is_cancelled=progress.is_cancelled,
-                )
+            engine.set_shift(shift=job.shift, width=W, height=H)
+            latents = sample_pass(
+                engine, job, progress, seeds, shape, cond, regional,
+                steps=job.steps, cfg=job.cfg, init_latent=init_latent, denoise=denoise,
+                inpaint=sampling.Inpaint(latent_mask, differential=job.soft_inpaint, keep=keep_latent) if latent_mask is not None else None,
+                on_step=stepper(0),
             )
+            if hires is not None:
+                latents = upscale_latents(engine, latents, hires.upscaler, TW, TH)
+                engine.set_shift(shift=hires.shift or job.shift, width=TW, height=TH)  # shift follows the new resolution
+                latents = sample_pass(
+                    engine, job, progress, seeds, vae.latent_shape(engine, TW, TH), cond2, regional2,
+                    steps=hires_steps, cfg=hires.cfg or job.cfg, init_latent=latents, denoise=hires.denoise,
+                    on_step=stepper(steps_run),
+                )
         except sampling.Cancelled:
             result.cancelled = True
             break
@@ -228,3 +238,72 @@ def run(job, progress: Progress) -> Result:
             result.seeds.append(seed)
             result.infotexts.append(info)
     return result
+
+
+# ---------------------------------------------------------------- passes
+
+
+def make_conditioning(engine, job, steps_run: int, width: int, height: int, cache: dict, *, prompt: str | None = None, negative: str | None = None):
+    """Prompt plans (scheduling / AND / switch prompt) over the steps a pass samples, encoded via the shared cache."""
+    positive = prompts.PromptPlan(steps_run, job.prompt if prompt is None else prompt, switch=job.switch_prompt or None, switch_at=job.switch_at)
+    neg = prompts.PromptPlan(steps_run, job.negative if negative is None else negative, allow_and=False)
+    return conditioning.PromptConditioning(engine, positive, neg, width=width, height=height, cache=cache)
+
+
+def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int, height: int, cond):
+    if not job.regions:
+        return None
+    region_list = []
+    for r in job.regions:
+        plan = prompts.PromptPlan(steps_run, r.prompt, allow_and=False)
+        texts = {t for step in range(1, steps_run + 1) for t, _ in plan.parts(step)}
+        contexts = {t: cond.tensor(engine, t, False, width, height) for t in texts}
+        region_list.append(regions.Region(plan=plan, contexts=contexts, mask=region_mask(job, src, r.mask, width, height), strength=r.strength))
+    return regions.RegionalAttention(region_list, base_strength=job.region_base)
+
+
+def sample_pass(engine, job, progress, seeds, shape, cond, regional, *, steps, cfg, init_latent=None, denoise=1.0, inpaint=None, on_step):
+    return sampling.sample(
+        sampling.SampleRequest(
+            engine=engine,
+            noise=rng.ImageNoise(seeds, shape),
+            conditioning=cond,
+            cfg=cfg,
+            sampler=job.sampler,
+            scheduler=job.scheduler,
+            steps=steps,
+            seeds=seeds,
+            init_latent=init_latent,
+            denoise=denoise,
+            inpaint=inpaint,
+            regional=regional,
+            regional_end=job.region_end,
+            on_step=on_step,
+            is_cancelled=progress.is_cancelled,
+        )
+    )
+
+
+def hires_size(job) -> tuple[int, int]:
+    """Final size of a hires job: explicit width/height (one may be 0 = keep aspect), else the scale."""
+    h = job.hires
+    if h.resize_x and h.resize_y:
+        return h.resize_x, h.resize_y
+    if h.resize_x:
+        return h.resize_x, round(job.height * h.resize_x / job.width / 8) * 8
+    if h.resize_y:
+        return round(job.width * h.resize_y / job.height / 8) * 8, h.resize_y
+    return round(job.width * h.scale / 8) * 8, round(job.height * h.scale / 8) * 8
+
+
+def upscale_latents(engine, latents, upscaler_name: str, width: int, height: int):
+    """Latent resize, or decode → upscale (model / resampling) → encode."""
+    if upscale.is_latent(upscaler_name):
+        lat = latents.float()
+        squeeze = lat.ndim == 5
+        if squeeze:
+            lat = lat[:, :, 0]
+        lat = F.interpolate(lat, size=(height // 8, width // 8), mode=upscale.latent_mode(upscaler_name))
+        return lat.unsqueeze(2) if squeeze else lat
+    big = [upscale.upscale(im, upscaler_name, width, height) for im in vae.decode(engine, latents)]
+    return torch.cat([vae.encode(engine, im) for im in big])

@@ -345,8 +345,12 @@ def venno_unsupported(job: Job) -> Optional[str]:
         return "image to image without an input image"
     if job.guides:
         return "guides (Phase 3)"
-    if job.hires:
-        return "hires fix (Phase 3)"
+    if job.hires and job.mode == "txt2img":
+        from venno.engine import upscale
+
+        name = job.hires.upscaler
+        if not (upscale.is_latent(name) or name in upscale.RESAMPLE or name in upscale.models()):
+            return f'hires upscaler "{name}"'
     if any(d.model and d.model != "None" for d in job.detailer):
         return "detailer (Phase 3)"
     if job.sampler not in sampling.SAMPLERS:
