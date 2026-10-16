@@ -6,12 +6,9 @@ import re
 
 import torch
 
-# Plain prompts incl. (word:1.2) weights. Prompt scheduling ([a:b:when], [a|b]) and AND arrive in
-# Phase 2 - until then such jobs run on the Forge path. <lora:name:weight> tags are taken out of the
-# text by extract_lora_tags before a job runs.
+# <lora:name:weight> tags are taken out of the text by extract_lora_tags before a job runs; scheduling
+# ([a:b:when], [a|b]) and AND are resolved per step by PromptConditioning (venno/engine/prompts.py).
 _LORA = re.compile(r"<lora:([^>:]+)(?::([^>:]*))?(?::[^>]*)?>", re.I)
-_SCHEDULE = re.compile(r"\[[^\[\]]*[:|][^\[\]]*\]")
-_AND = re.compile(r"\bAND\b")
 
 
 def extract_lora_tags(prompt: str) -> tuple[str, list[tuple[str, float]]]:
@@ -31,14 +28,6 @@ def extract_lora_tags(prompt: str) -> tuple[str, list[tuple[str, float]]]:
     return text.strip().strip(",").strip(), found
 
 
-def unsupported_syntax(prompt: str) -> str | None:
-    if _SCHEDULE.search(prompt.replace("\\[", "").replace("\\]", "")):
-        return "prompt scheduling"
-    if _AND.search(prompt):
-        return "AND composition"
-    return None
-
-
 def encode(engine, prompt: str, batch: int, *, negative: bool, width: int, height: int) -> torch.Tensor:
     """(batch, L, D) conditioning for one prompt repeated over a batch."""
     from modules.prompt_parser import SdConditioning  # list + flags; replaced by a Venno type in Phase 4
@@ -51,3 +40,48 @@ def encode(engine, prompt: str, batch: int, *, negative: bool, width: int, heigh
         c = c.unsqueeze(0)
     c = c.reshape(-1, c.shape[-2], c.shape[-1])[:1]
     return c.repeat(batch, 1, 1)
+
+
+class PromptConditioning:
+    """Per-step conditioning for scheduled / composed prompts.
+
+    Every distinct text is encoded once, up front (encoding mid-sampling would swap the text encoder back in).
+    """
+
+    def __init__(self, engine, positive, negative, *, width: int, height: int):
+        from backend.sampling.condition import compile_conditions
+
+        self.positive, self.negative = positive, negative  # prompts.PromptPlan
+        self.needs_uncond = positive.composed  # AND / weights: CFG composition needs the negative even at CFG 1
+        self._compile = compile_conditions
+        self._tensors: dict[tuple[str, bool], torch.Tensor] = {}
+        self._steps: dict[tuple, tuple] = {}
+        for step in range(1, positive.steps + 1):
+            for text, _ in positive.parts(step):
+                self.tensor(engine, text, False, width, height)
+            for text, _ in negative.parts(step):
+                self.tensor(engine, text, True, width, height)
+
+    def tensor(self, engine, text: str, negative: bool, width: int = 0, height: int = 0) -> torch.Tensor:
+        key = (text, negative)
+        if key not in self._tensors:
+            self._tensors[key] = encode(engine, text, 1, negative=negative, width=width, height=height)
+        return self._tensors[key]
+
+    @property
+    def texts(self) -> int:
+        return len(self._tensors)
+
+    def at(self, step: int):
+        """(cond list, uncond list) in the backend's compiled form for a 1-based step."""
+        key = (self.positive.parts(step), self.negative.parts(step))
+        if key not in self._steps:
+            cond = []
+            for text, weight in key[0]:
+                c = self._compile(self._tensors[(text, False)])[0]
+                if weight != 1.0 or len(key[0]) > 1:
+                    c = {**c, "strength": weight}
+                cond.append(c)
+            uncond = [c for text, _ in key[1] for c in self._compile(self._tensors[(text, True)])]
+            self._steps[key] = (cond, uncond)
+        return self._steps[key]

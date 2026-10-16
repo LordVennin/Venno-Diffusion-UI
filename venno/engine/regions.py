@@ -22,24 +22,30 @@ import torch.nn.functional as F
 
 @dataclass
 class Region:
-    context: torch.Tensor  # (1, L, D) encoded region prompt
+    plan: object  # prompts.PromptPlan of the region prompt (scheduling works here too)
+    contexts: dict  # text → (1, L, D) encoded, for every text the plan uses
     mask: torch.Tensor  # (H, W) float 0..1 at image resolution
     strength: float = 1.0
+
+    def context(self, step: int) -> torch.Tensor:
+        return self.contexts[self.plan.parts(step)[0][0]]
 
 
 @dataclass
 class RegionalAttention:
     regions: list[Region]
     base_strength: float = 0.25
+    step: int = 1  # set by the denoiser before each model call
     _contexts: dict = field(default_factory=dict, repr=False)
     _weights: dict = field(default_factory=dict, repr=False)
 
     def contexts(self, like: torch.Tensor) -> torch.Tensor:
         """(R, L, D) region contexts, zero-padded to a common length (Anima pads prompts with zeros)."""
-        key = (like.device, like.dtype)
+        current = [r.context(self.step) for r in self.regions]
+        key = (like.device, like.dtype, tuple(id(c) for c in current))
         if key not in self._contexts:
-            length = max(max(r.context.shape[1] for r in self.regions), like.shape[1])
-            ctx = [F.pad(r.context[:1], (0, 0, 0, length - r.context.shape[1])) for r in self.regions]
+            length = max(max(c.shape[1] for c in current), like.shape[1])
+            ctx = [F.pad(c[:1], (0, 0, 0, length - c.shape[1])) for c in current]
             self._contexts[key] = torch.cat(ctx).to(device=like.device, dtype=like.dtype)
         return self._contexts[key]
 

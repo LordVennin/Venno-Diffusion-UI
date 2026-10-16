@@ -114,11 +114,11 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 
 **Phase 1: Venno engine, text to image** ✅ done
 - `venno/engine/` (ModelManager, conditioning, sampling, schedulers, rng, VAE, preview) and `venno/pipeline/txt2img`, behind `--engine venno` (Forge path stays default).
-- Jobs the Venno engine can't run yet (prompt scheduling / AND, guides, hires, detailer) fall back to Forge automatically; a job that sets `"engine": "venno"` gets an error instead.
+- Jobs the Venno engine can't run yet (guides, hires, detailer) fall back to Forge automatically; a job that sets `"engine": "venno"` gets an error instead.
 - Both paths share one loaded model: the Venno engine adopts Forge's model when it was loaded from the same files, and starts every job from the unpatched objects, so Forge LoRAs/scripts don't carry over (checked: same image before and after a Forge LoRA job).
 - Parity check vs Forge at 256², 4 steps, same seed. Mean abs. pixel difference (0–255): Euler CFG 1 0.49, Euler CFG 4 0.32, ER SDE + Beta 0.48, DPM++ 2M Karras batch 2 0.50/0.50, Euler a batch 2 0.48/0.49. Visually identical. The noise matches too, so seeds carry over between the engines.
 
-**Phase 2: img2img, inpainting, regions, LoRA, prompt syntax** (5–7 days)
+**Phase 2: img2img, inpainting, regions, LoRA, prompt syntax** ✅ done
 - ✅ LoRA patching and caching (`venno/engine/lora.py`): diffusion model + text encoder patches, Anima size re-mapping, the patched model is reused while the LoRA set stays the same. Jobs carry `loras: [{name, weight}]`; `<lora:…>` tags in any prompt are lifted into that list on submit. Studio shows LoRAs as removable chips.
 - ✅ Image to image and inpainting (`venno/pipeline/generate.py`, `venno/engine/images.py`), redesigned rather than ported:
   - Strength picks the last part of the full schedule (`round(steps × strength)` steps); 1.0 runs every step from pure noise (Forge skipped the first).
@@ -128,7 +128,11 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
   - Results are composited in pixel space with the feathered mask, so untouched pixels stay byte-identical (no VAE round trip).
   - Only masked: crop around the mask (+padding, grown to the output aspect), generate at full resolution, paste back into the input at its native size.
 - ✅ Regional prompting (`venno/engine/regions.py`) by cross-attention blending instead of latent couple: each Anima block runs its text cross-attention for the main prompt and for every region prompt (each with its own normal 512-token context), then blends the outputs per image token with the region masks (same weights as before: base strength, per-region strength, end-at). Self-attention and the MLP run once on the shared image, so regions stay coherent and a step costs one model pass: 2 regions at 512×320 took 41 s vs 94 s on Forge (CPU). The hook is a few lines in `backend/nn/anima.py` (`transformer_options["venno_regional"]`). Works with image to image, inpainting and CFG > 1 (regions only touch the positive prompt).
-- Prompt scheduling / `AND` (ported parser) incl. inside region prompts; syntax hint in Studio.
+- ✅ Prompt scheduling / `AND` (`venno/engine/prompts.py`, A1111 grammar, its test cases pass) incl. inside region prompts:
+  - Every distinct text is encoded once before sampling; the denoiser picks the parts for the step it is on (derived from sigma, so it stays right for samplers that evaluate between steps).
+  - Steps count as written: `[a:b:0.5]` at 8 steps is 4 + 4 (A1111/Forge give `a` one extra step because their counter starts at 0; `[a|b]` starts on `a` then alternates).
+  - `AND` uses the backend's weighted composition and always runs the negative pass, so it works at CFG 1 (Forge washes the image out there).
+  - Studio: a preview line under every prompt box says what the model gets at which step (same parser, `POST /venno/v1/prompt/schedule`), and a "Then switch to… after N %" prompt covers the common case without syntax (job fields `switch_prompt` / `switch_at`; sent to Forge as `[A:B:step]` when it falls back).
 
 **Phase 2b: Anima 3.8B** (3–5 days)
 - Load Qwen3.5 4B as a second text encoder and implement the 3.8B conditioning path (from the 3.8B model card and the companion Forge extension).

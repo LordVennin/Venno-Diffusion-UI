@@ -6,6 +6,7 @@ import { GenForm } from "./forms.js";
 import { api, presetForCheckpoint } from "./common.js";
 import { ModelsPage } from "./models.js";
 import { LoraChips } from "./loras.js";
+import { runSteps, SchedulePreview } from "./schedule.js";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -18,7 +19,7 @@ const state = {
   info: null,
   model: { checkpoint: "", textEncoder: "", vae: "", ...(saved.model || {}) },
   gen: {
-    prompt: "", negative: "", loras: [], strength: 1, batch: 2, steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple",
+    prompt: "", negative: "", loras: [], switchPrompt: "", switchAt: 0.4, strength: 1, batch: 2, steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple",
     seed: 0, seedLocked: false, resolution: 1024, context: 0.5, feather: 12, qualityPrefix: true, saveImages: true, softInpaint: true,
     regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, preset: "", adetailer: true,
     ...(saved.gen || {}),
@@ -285,6 +286,7 @@ function renderLayerProps() {
     ta.oninput = () => { l.prompt = ta.value; doc.emit("region-prompt"); updateLayerThumbLabel(); };
     lab.appendChild(ta);
     box.appendChild(lab);
+    new SchedulePreview(ta, { getSteps: () => runSteps(g.steps, g.strength), allowAnd: false });
     const color = document.createElement("label");
     color.textContent = "Overlay color";
     const ci = document.createElement("input");
@@ -339,6 +341,7 @@ function layerPromptBlock(box, l) {
   ta.placeholder = "e.g. 1girl, red dress — applies where this layer is drawn";
   lab.appendChild(ta);
   box.appendChild(lab);
+  new SchedulePreview(ta, { getSteps: () => runSteps(g.steps, g.strength), allowAnd: false });
   const extra = document.createElement("div");
   extra.className = "layer-props";
   box.appendChild(extra);
@@ -510,6 +513,27 @@ function applyPreset(name) {
 const loraChips = new LoraChips($("#lora-chips"), { get: () => g.loras, set: (list) => { g.loras = list; persist(); gen.scheduleLive(700); } });
 loraChips.watch(prompt_, (text) => { g.prompt = text; persist(); });
 loraChips.watch(negative, (text) => { g.negative = text; persist(); });
+// "then switch to" prompt + what-happens-when preview
+const switchTa = $("#switch-prompt"), switchAt = $("#switch-at");
+const showSwitch = () => {
+  $("#out-switch-at").textContent = `${Math.round(g.switchAt * 100)}%`;
+  $("#switch-state").textContent = g.switchPrompt.trim() ? `(on, after ${Math.round(g.switchAt * 100)}%)` : "";
+};
+switchTa.value = g.switchPrompt;
+switchAt.value = Math.round(g.switchAt * 100);
+$("#switch-box").open = !!g.switchPrompt.trim();
+const promptSchedule = new SchedulePreview(prompt_, {
+  el: $("#prompt-schedule"),
+  getSteps: () => runSteps(g.steps, g.strength),
+  getSwitch: () => (g.switchPrompt.trim() ? { prompt: g.switchPrompt, at: g.switchAt } : null),
+});
+switchTa.oninput = () => { g.switchPrompt = switchTa.value; persist(); showSwitch(); promptSchedule.refresh(); gen.scheduleLive(1200); };
+switchAt.oninput = () => { g.switchAt = Number(switchAt.value) / 100; persist(); showSwitch(); promptSchedule.refresh(); gen.scheduleLive(700); };
+loraChips.watch(switchTa, (text) => { g.switchPrompt = text; persist(); });
+showSwitch();
+for (const id of ["steps", "strength"]) $(`#${id}`).addEventListener("input", () => promptSchedule.refresh());
+for (const id of ["steps", "strength"]) $(`#${id}`).addEventListener("change", () => promptSchedule.refresh());
+
 $("#sel-lora").onchange = (e) => {
   if (e.target.value) loraChips.add(e.target.value);
   e.target.value = "";

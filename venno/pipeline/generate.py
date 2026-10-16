@@ -9,7 +9,7 @@ from typing import Callable, Optional
 
 from PIL import Image
 
-from venno.engine import conditioning, images, lora, regions, rng, sampling, vae
+from venno.engine import conditioning, images, lora, prompts, regions, rng, sampling, vae
 from venno.engine.models import manager
 
 from . import metadata
@@ -113,9 +113,6 @@ def run(job, progress: Progress) -> Result:
     shape = vae.latent_shape(engine, W, H)
 
     # everything below is the same for every run of the job: prepare once
-    cond = conditioning.encode(engine, job.prompt, job.batch, negative=False, width=W, height=H)
-    uncond = conditioning.encode(engine, job.negative, job.batch, negative=True, width=W, height=H)
-
     src = prepare_source(job, W, H) if job.mode == "img2img" and job.init_image else None
     init_latent = keep_latent = latent_mask = None
     if src is not None:
@@ -136,19 +133,21 @@ def run(job, progress: Progress) -> Result:
         denoise = 1.0 if latent_mask is not None and job.fill == "latent_noise" else job.strength
     out_size = src.original.size if src is not None and src.box is not None else (job.width, job.height)
 
+    # prompts per step: scheduling / AND / the "then switch to" prompt, over the steps actually sampled
+    steps_run = sampling.run_steps(job.steps, denoise if src is not None else 1.0)
+    positive = prompts.PromptPlan(steps_run, job.prompt, switch=job.switch_prompt or None, switch_at=job.switch_at)
+    negative = prompts.PromptPlan(steps_run, job.negative, allow_and=False)
+    cond = conditioning.PromptConditioning(engine, positive, negative, width=W, height=H)
+
     regional = None
     if job.regions:
-        regional = regions.RegionalAttention(
-            [
-                regions.Region(
-                    context=conditioning.encode(engine, r.prompt, 1, negative=False, width=W, height=H),
-                    mask=region_mask(job, src, r.mask, W, H),
-                    strength=r.strength,
-                )
-                for r in job.regions
-            ],
-            base_strength=job.region_base,
-        )
+        region_list = []
+        for r in job.regions:
+            plan = prompts.PromptPlan(steps_run, r.prompt, allow_and=False)
+            texts = {t for step in range(1, steps_run + 1) for t, _ in plan.parts(step)}
+            contexts = {t: cond.tensor(engine, t, False, W, H) for t in texts}
+            region_list.append(regions.Region(plan=plan, contexts=contexts, mask=region_mask(job, src, r.mask, W, H), strength=r.strength))
+        regional = regions.RegionalAttention(region_list, base_strength=job.region_base)
 
     params = {
         "Steps": job.steps,
@@ -167,6 +166,9 @@ def run(job, progress: Progress) -> Result:
             params["Masked content"] = job.fill
             params["Inpaint area"] = "Only masked" if src.box else "Whole picture"
             params["Soft inpainting"] = job.soft_inpaint
+    if job.switch_prompt:
+        params["Prompt switch"] = job.switch_prompt
+        params["Prompt switch at"] = job.switch_at
     if regional is not None:
         params["Regions"] = len(job.regions)
         params["Region base"] = job.region_base
@@ -198,8 +200,7 @@ def run(job, progress: Progress) -> Result:
                 sampling.SampleRequest(
                     engine=engine,
                     noise=rng.ImageNoise(seeds, shape),
-                    cond=cond,
-                    uncond=uncond,
+                    conditioning=cond,
                     cfg=job.cfg,
                     sampler=job.sampler,
                     scheduler=job.scheduler,

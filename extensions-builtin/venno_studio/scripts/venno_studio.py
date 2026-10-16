@@ -146,6 +146,19 @@ def on_app_started(_demo, app: FastAPI):
         jobs.update_progress()
         return [r.summary() for r in reversed(jobs.all_records())]
 
+    def prompt_schedule(req: jobs.ScheduleRequest):
+        """What a prompt means step by step (Studio's preview line). Same parser as generation."""
+        from venno.engine import prompts
+        from venno.engine.conditioning import extract_lora_tags
+
+        text = extract_lora_tags(req.prompt)[0]
+        switch = extract_lora_tags(req.switch_prompt)[0] if req.switch_prompt else None
+        plan = prompts.PromptPlan(req.steps, text, switch=switch, switch_at=req.switch_at, allow_and=req.allow_and)
+        segments = plan.segments()
+        constructs = prompts.describe(text, req.steps) if len(prompts.split_and(text)) == 1 else []
+        return {"segments": segments, "constructs": constructs, "changes": len(segments) > 1 or any(len(sg["parts"]) > 1 or sg["parts"][0]["weight"] != 1.0 for sg in segments)}
+
+    app.add_api_route(f"{V}/prompt/schedule", prompt_schedule, methods=["POST"])
     app.add_api_route(f"{V}/jobs", submit_job, methods=["POST"])
     app.add_api_route(f"{V}/jobs", list_jobs, methods=["GET"])
     app.add_api_route(f"{V}/jobs/{{job_id}}", get_job, methods=["GET"])

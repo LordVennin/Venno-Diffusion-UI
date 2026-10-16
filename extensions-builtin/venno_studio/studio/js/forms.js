@@ -5,6 +5,7 @@ import {
 } from "./common.js";
 import { cancelJob, jobModel, jobProgress, runJob } from "./jobs.js";
 import { jobLoras, LoraChips } from "./loras.js";
+import { runSteps, SchedulePreview } from "./schedule.js";
 
 const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768]];
 const RESIZE_MODES = ["Just resize", "Crop and resize", "Resize and fill"];
@@ -13,7 +14,7 @@ const FILL_KEYS = ["fill", "original", "latent_noise", "latent_nothing"];
 const MASK_COLOR = "#ff8a3d";
 
 const DEFAULTS = {
-  prompt: "", negative: "", loras: [], qualityPrefix: true, width: 1024, height: 1024, batchSize: 1, batchCount: 1,
+  prompt: "", negative: "", loras: [], switchPrompt: "", switchAt: 0.4, qualityPrefix: true, width: 1024, height: 1024, batchSize: 1, batchCount: 1,
   steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple", seed: -1, preset: "",
   // hires fix (txt2img)
   hr: false, hrUpscaler: "Latent", hrScale: 1.5, hrResizeX: 0, hrResizeY: 0, hrSteps: 0, hrDenoise: 0.5, hrCfg: 0, hrShift: 0,
@@ -50,6 +51,12 @@ export class GenForm {
           <textarea class="f-prompt" rows="4" placeholder="Prompt (Ctrl+Enter to generate)"></textarea>
           <textarea class="f-negative" rows="2" placeholder="Negative prompt"></textarea>
           <div class="f-lora-chips"></div>
+          <details class="switch-box f-switch-box">
+            <summary>Then switch to… <span class="f-switch-state"></span></summary>
+            <textarea class="f-switch" rows="2" placeholder="Prompt for the later steps, e.g. the same scene with character or style details. Empty = off"></textarea>
+            <label class="slider" title="Composition is mostly decided early; details late.">Switch after <input type="range" class="f-switch-at" min="5" max="95" step="5"><output></output></label>
+          </details>
+          <div class="f-schedule"></div>
           <div class="row">
             <select class="f-lora"></select>
             <label class="check"><input type="checkbox" class="f-quality"> Anima quality tags</label>
@@ -217,6 +224,7 @@ export class GenForm {
     };
     this.loras.watch(this.q(".f-prompt"), (text) => { s.prompt = text; this.persist(); });
     this.loras.watch(this.q(".f-negative"), (text) => { s.negative = text; this.persist(); });
+    this.bindSwitch();
     this.root.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); e.stopPropagation(); this.generate(); }
     });
@@ -471,6 +479,29 @@ export class GenForm {
   }
 
   // ---------------- generation ----------------
+  bindSwitch() {
+    const s = this.s;
+    const ta = this.q(".f-switch"), at = this.q(".f-switch-at"), out = at.nextElementSibling, state = this.q(".f-switch-state");
+    const show = () => {
+      out.textContent = `${Math.round(s.switchAt * 100)}%`;
+      state.textContent = s.switchPrompt.trim() ? `(on, after ${Math.round(s.switchAt * 100)}% of the steps)` : "";
+    };
+    ta.value = s.switchPrompt;
+    at.value = Math.round(s.switchAt * 100);
+    this.q(".f-switch-box").open = !!s.switchPrompt.trim();
+    ta.oninput = () => { s.switchPrompt = ta.value; this.persist(); show(); this.schedule.refresh(); };
+    at.oninput = () => { s.switchAt = Number(at.value) / 100; this.persist(); show(); this.schedule.refresh(); };
+    this.loras.watch(ta, (text) => { s.switchPrompt = text; this.persist(); });
+    show();
+    this.schedule = new SchedulePreview(this.q(".f-prompt"), {
+      el: this.q(".f-schedule"),
+      getSteps: () => (this.mode === "img2img" && this.inputImage ? runSteps(s.steps, s.denoise) : s.steps),
+      getSwitch: () => (s.switchPrompt.trim() ? { prompt: s.switchPrompt, at: s.switchAt } : null),
+    });
+    this.root.addEventListener("change", (e) => { if (e.target.matches(".f-steps, .f-denoise")) this.schedule.refresh(); });
+    this.root.addEventListener("input", (e) => { if (e.target.matches(".f-denoise")) this.schedule.refresh(); });
+  }
+
   buildJob() {
     const s = this.s;
     const st = this.ctx.state;
@@ -480,6 +511,8 @@ export class GenForm {
       prompt: withQualityPrefix(s.prompt, s.qualityPrefix, st.info),
       negative: s.negative,
       loras: jobLoras(s.loras),
+      switch_prompt: s.switchPrompt.trim() ? withQualityPrefix(s.switchPrompt, s.qualityPrefix, st.info) : "",
+      switch_at: s.switchAt,
       width: s.width,
       height: s.height,
       batch: s.batchSize,

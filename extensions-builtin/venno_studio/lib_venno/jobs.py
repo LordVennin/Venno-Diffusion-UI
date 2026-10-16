@@ -72,11 +72,21 @@ class Detailer(BaseModel):
     padding: int = 32
 
 
+class ScheduleRequest(BaseModel):
+    prompt: str = ""
+    switch_prompt: str = ""
+    switch_at: float = Field(0.4, ge=0.0, le=1.0)
+    steps: int = Field(20, ge=1, le=150)
+    allow_and: bool = True
+
+
 class Job(BaseModel):
     mode: Literal["txt2img", "img2img"] = "txt2img"
     model: ModelSelection = Field(default_factory=ModelSelection)
     prompt: str = ""
     negative: str = ""
+    switch_prompt: str = ""  # "then switch to …": replaces the prompt after switch_at of the steps
+    switch_at: float = Field(0.4, ge=0.0, le=1.0)
     loras: list[LoraRef] = []
     width: int = 1024
     height: int = 1024
@@ -329,7 +339,7 @@ def default_engine() -> str:
 
 def venno_unsupported(job: Job) -> Optional[str]:
     """Why the Venno engine can't run this job yet (None = it can). Grows smaller each phase."""
-    from venno.engine import conditioning, sampling, schedulers
+    from venno.engine import sampling, schedulers
 
     if job.mode == "img2img" and not job.init_image:
         return "image to image without an input image"
@@ -339,9 +349,6 @@ def venno_unsupported(job: Job) -> Optional[str]:
         return "hires fix (Phase 3)"
     if any(d.model and d.model != "None" for d in job.detailer):
         return "detailer (Phase 3)"
-    for text in (job.prompt, job.negative, *(r.prompt for r in job.regions)):
-        if why := conditioning.unsupported_syntax(text):
-            return f"{why} (Phase 2)"
     if job.sampler not in sampling.SAMPLERS:
         return f'sampler "{job.sampler}"'
     if job.scheduler not in schedulers.SCHEDULERS and job.scheduler not in ("", "Automatic"):
@@ -393,8 +400,22 @@ def _b64(data: Optional[str]) -> Optional[str]:
     return data.split(",", 1)[1] if data.lstrip().startswith("data:") else data
 
 
+def _forge_switch(job: Job) -> str:
+    """The "then switch to" prompt as A1111 syntax for the Forge path, when it parses back exactly."""
+    from venno.engine import prompts
+
+    if not job.switch_prompt:
+        return job.prompt
+    when = max(1, int(job.switch_at * job.steps))
+    candidate = f"[{job.prompt}:{job.switch_prompt}:{when}]"
+    if [t for _, t in prompts.schedule(candidate, job.steps)] == ([job.prompt, job.switch_prompt] if when < job.steps else [job.prompt]):
+        return candidate
+    print("[Venno] the switch prompt can't be expressed for the Forge path (brackets/colons in the prompt); using the main prompt only")
+    return job.prompt
+
+
 def _forge_payload(job: Job) -> dict:
-    prompt = job.prompt
+    prompt = _forge_switch(job)
     if job.loras:
         prompt += "".join(f" <lora:{lr.name}:{lr.weight:g}>" for lr in job.loras)
 

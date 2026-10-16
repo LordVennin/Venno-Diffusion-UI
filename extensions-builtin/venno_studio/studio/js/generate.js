@@ -79,6 +79,8 @@ export class Generator {
       prompt: withQualityPrefix(g.prompt, g.qualityPrefix, st.info),
       negative: g.negative,
       loras: jobLoras(g.loras),
+      switch_prompt: g.switchPrompt.trim() ? withQualityPrefix(g.switchPrompt, g.qualityPrefix, st.info) : "",
+      switch_at: g.switchAt,
       width: gw,
       height: gh,
       batch: plan.live ? 1 : g.batch,

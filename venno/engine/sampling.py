@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import math
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -11,7 +12,6 @@ import k_diffusion.sampling as kd
 import torch
 
 from backend import utils
-from backend.sampling.condition import compile_conditions
 from backend.sampling.sampling_function import sampling_cleanup, sampling_function_inner, sampling_prepare
 
 from . import rng, schedulers
@@ -65,8 +65,7 @@ class Inpaint:
 class SampleRequest:
     engine: object  # backend ForgeDiffusionEngine
     noise: rng.ImageNoise
-    cond: torch.Tensor  # (B, L, D) positive conditioning
-    uncond: torch.Tensor  # (B, L, D) negative conditioning
+    conditioning: object  # conditioning.PromptConditioning (per-step prompts)
     cfg: float
     sampler: str
     scheduler: str
@@ -82,6 +81,11 @@ class SampleRequest:
     extra_model_options: dict = field(default_factory=dict)
 
 
+def run_steps(steps: int, denoise: float = 1.0) -> int:
+    """Steps actually sampled: the last `denoise` part of the schedule (all of it at 1.0)."""
+    return steps if denoise >= 1.0 else max(1, min(steps, math.floor(steps * denoise + 0.5)))  # half up, like Studio
+
+
 class Denoiser:
     """k-diffusion model wrapper: CFG over the engine's conditioning pipeline."""
 
@@ -90,24 +94,31 @@ class Denoiser:
         self.inner_model = linker  # samplers read inner_model.predictor (flow / const checks)
         self.predictor = linker.predictor
         self.noise, self.latent = noise, latent  # inpainting: initial noise and the input latent (on the device)
+        self.sigmas = sigmas.float().cpu()
         self.regional_sigma_end = float(self.predictor.percent_to_sigma(req.regional_end)) if req.regional is not None and req.regional_end < 1.0 else -1.0
         if req.inpaint is not None:
             self.mask = req.inpaint.mask.to(latent)
             positive = sigmas[sigmas > 0]
             self.sigma_from, self.sigma_to = float(sigmas[0]), float(positive.min()) if len(positive) else 0.0
         self.unet = req.engine.forge_objects.unet
-        self.cond = compile_conditions(req.cond)
-        self.uncond = compile_conditions(req.uncond)
+
+    def step_at(self, sigma) -> int:
+        """1-based step for a model call (also right for samplers that evaluate between steps, e.g. Heun)."""
+        return max(1, int((self.sigmas[:-1] >= float(sigma.reshape(-1)[0]) - 1e-6).sum()))
 
     def __call__(self, x, sigma, **_):
         if self.req.is_cancelled():
             raise Cancelled
+        step = self.step_at(sigma)
         model_options = utils.join_dicts(self.unet.model_options, self.req.extra_model_options)
+        if self.req.conditioning.needs_uncond:
+            model_options = {**model_options, "disable_cfg1_optimization": True}
         if self.req.regional is not None and float(sigma.max()) >= self.regional_sigma_end:
+            self.req.regional.step = step
             transformer_options = dict(model_options.get("transformer_options", {}))
             transformer_options["venno_regional"] = self.req.regional  # read by the Anima blocks' cross-attention
             model_options = {**model_options, "transformer_options": transformer_options}
-        cond, uncond = self.cond, self.uncond
+        cond, uncond = self.req.conditioning.at(step)
         mask = None
         if self.req.inpaint is not None:
             mask = self.mask_at(sigma)
@@ -144,7 +155,7 @@ def sample(req: SampleRequest) -> torch.Tensor:
     else:
         # the last `denoise` part of the full schedule: strength 0.5 at 20 steps runs the final 10 steps,
         # strength 1.0 runs all of them (from pure noise)
-        run = max(1, min(req.steps, round(req.steps * req.denoise)))
+        run = run_steps(req.steps, req.denoise)
         sigmas = sigmas[len(sigmas) - 1 - run :]
         x = predictor.noise_scaling(sigmas[0], noise, req.init_latent.to(noise), max_denoise=False)
 
@@ -152,11 +163,11 @@ def sample(req: SampleRequest) -> torch.Tensor:
     device = unet.load_device
     x = x.to(device)
     sigmas = sigmas.to(device)
-    extra = {}
+    extra = {"sigmas": sigmas}
     if req.inpaint is not None:
         if req.init_latent is None:
             raise ValueError("inpainting needs an init latent")
-        extra = dict(sigmas=sigmas, noise=noise.to(device=device, dtype=x.dtype), latent=(req.inpaint.keep if req.inpaint.keep is not None else req.init_latent).to(device=device, dtype=x.dtype))
+        extra.update(noise=noise.to(device=device, dtype=x.dtype), latent=(req.inpaint.keep if req.inpaint.keep is not None else req.init_latent).to(device=device, dtype=x.dtype))
     unet.model_options.setdefault("transformer_options", {})["sampling_sigmas"] = sigmas
 
     func = getattr(kd, spec.func)
