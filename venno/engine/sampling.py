@@ -76,6 +76,7 @@ class SampleRequest:
     inpaint: Optional[Inpaint] = None  # needs init_latent
     regional: Optional[object] = None  # regions.RegionalAttention
     regional_end: float = 1.0  # stop regional prompts after this fraction of the full schedule
+    step_hooks: list = field(default_factory=list)  # called with the 1-based step before every model call (guides)
     on_step: Callable[[int, int, torch.Tensor], None] = lambda i, n, denoised: None
     is_cancelled: Callable[[], bool] = lambda: False
     extra_model_options: dict = field(default_factory=dict)
@@ -110,6 +111,8 @@ class Denoiser:
         if self.req.is_cancelled():
             raise Cancelled
         step = self.step_at(sigma)
+        for hook in self.req.step_hooks:
+            hook(step)
         model_options = utils.join_dicts(self.unet.model_options, self.req.extra_model_options)
         if self.req.conditioning.needs_uncond:
             model_options = {**model_options, "disable_cfg1_optimization": True}

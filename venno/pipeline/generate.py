@@ -11,10 +11,11 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from venno.engine import conditioning, images, lora, prompts, regions, rng, sampling, upscale, vae
+from venno.engine import conditioning, guides, images, lora, prompts, regions, rng, sampling, upscale, vae
 from venno.engine.models import manager
 
-from . import metadata
+from . import detail, metadata
+from .passes import make_conditioning, sample_pass
 
 
 @dataclass
@@ -45,6 +46,7 @@ class Source:
     hard_mask: Optional[Image.Image] = None  # un-feathered, for the colour fill
     original: Optional[Image.Image] = None  # "only masked": the full-size input the result is pasted back into
     box: Optional[tuple[int, int, int, int]] = None  # "only masked": where `image` came from in `original`
+    full_mask: Optional[Image.Image] = None  # the mask in output coordinates (limits the detailer)
 
 
 def prepare_source(job, width: int, height: int) -> Source:
@@ -66,13 +68,14 @@ def prepare_source(job, width: int, height: int) -> Source:
             hard_mask=mask.crop(box).resize((width, height), Image.BILINEAR),
             original=init,
             box=box,
+            full_mask=mask,
         )
 
     image = images.resize(init, width, height, job.resize_mode)
     if mask is None:
         return Source(image=image)
     hard = images.resize(mask, width, height, job.resize_mode)
-    return Source(image=image, mask=images.blur_mask(hard, job.mask_blur), hard_mask=hard)
+    return Source(image=image, mask=images.blur_mask(hard, job.mask_blur), hard_mask=hard, full_mask=hard)
 
 
 def finish(src: Optional[Source], generated: Image.Image, size: tuple[int, int]) -> Image.Image:
@@ -91,17 +94,32 @@ def finish(src: Optional[Source], generated: Image.Image, size: tuple[int, int])
     return out if out.size == size else out.resize(size, Image.LANCZOS)
 
 
-def region_mask(job, src: Optional[Source], data: str, width: int, height: int):
-    """A region mask in the coordinates of the job's input (or output, for text to image) → (H, W) tensor."""
-    mask = images.load_mask(data)
+def fit_to_source(job, src: Optional[Source], img: Image.Image, width: int, height: int) -> Image.Image:
+    """An image given in the coordinates of the job's input (or output, for text to image) → processing size."""
+    resample = Image.BILINEAR if img.mode == "L" else Image.LANCZOS
     if src is not None and src.box is not None:
-        mask = mask.resize(src.original.size, Image.BILINEAR).crop(src.box)
-        mask = mask.resize((width, height), Image.BILINEAR)
-    elif src is not None:
-        mask = images.resize(mask, width, height, job.resize_mode)
-    else:
-        mask = mask.resize((width, height), Image.BILINEAR)
-    return images.to_tensor(mask)[0]
+        return img.resize(src.original.size, resample).crop(src.box).resize((width, height), resample)
+    if src is not None:
+        return images.resize(img, width, height, job.resize_mode)
+    return img.resize((width, height), resample)
+
+
+def region_mask(job, src: Optional[Source], data: str, width: int, height: int):
+    """A region mask → (H, W) tensor at processing size."""
+    return images.to_tensor(fit_to_source(job, src, images.load_mask(data), width, height))[0]
+
+
+def make_guides(engine, job, src: Optional[Source], width: int, height: int):
+    if not job.guides:
+        return None
+    known = guides.models()
+    items = []
+    for g in job.guides:
+        if g.model not in known:
+            raise ValueError(f'Guide model "{g.model}" not found')
+        image = fit_to_source(job, src, images.load_rgb(g.image), width, height)
+        items.append(guides.Guide(known[g.model], image, g.weight, g.start, g.end))
+    return guides.GuideSet(engine, items)
 
 
 def run(job, progress: Progress) -> Result:
@@ -139,6 +157,9 @@ def run(job, progress: Progress) -> Result:
     steps_run = sampling.run_steps(job.steps, denoise if src is not None else 1.0)
     cond = make_conditioning(engine, job, steps_run, W, H, tensors)
     regional = make_regional(engine, job, src, steps_run, W, H, cond)
+
+    guide_set = make_guides(engine, job, src, W, H)
+    guide_mask = src.hard_mask if src is not None and src.mask is not None else None
 
     hires = job.hires if job.mode == "txt2img" else None
     if hires is not None:
@@ -187,6 +208,16 @@ def run(job, progress: Progress) -> Result:
             params["Region end"] = job.region_end
         for k, r in enumerate(job.regions, start=1):
             params[f"Region {k}"] = r.prompt
+    for k, g in enumerate(job.guides, start=1):
+        params[f"Guide {k}"] = f"{g.model}, weight {g.weight:g}, steps {g.start:g}-{g.end:g}"
+    units = [d for d in job.detailer if d.model and d.model != "None"]
+    for k, unit in enumerate(units):
+        suffix = "" if k == 0 else f" {k + 1}{['nd', 'rd'][k - 1] if k < 3 else 'th'}"
+        params[f"ADetailer model{suffix}"] = unit.model
+        params[f"ADetailer confidence{suffix}"] = unit.confidence
+        params[f"ADetailer denoising strength{suffix}"] = unit.denoise
+        if unit.prompt.strip():
+            params[f"ADetailer prompt{suffix}"] = unit.prompt
     for k, m in enumerate(manager.info.get("modules", []), start=1):
         params[f"Module {k}"] = m.rsplit(".", 1)[0]
     params["Version"] = metadata.VERSION
@@ -215,7 +246,7 @@ def run(job, progress: Progress) -> Result:
                 engine, job, progress, seeds, shape, cond, regional,
                 steps=job.steps, cfg=job.cfg, init_latent=init_latent, denoise=denoise,
                 inpaint=sampling.Inpaint(latent_mask, differential=job.soft_inpaint, keep=keep_latent) if latent_mask is not None else None,
-                on_step=stepper(0),
+                on_step=stepper(0), guides=guide_set, guide_mask=guide_mask,
             )
             if hires is not None:
                 latents = upscale_latents(engine, latents, hires.upscaler, TW, TH)
@@ -223,7 +254,7 @@ def run(job, progress: Progress) -> Result:
                 latents = sample_pass(
                     engine, job, progress, seeds, vae.latent_shape(engine, TW, TH), cond2, regional2,
                     steps=hires_steps, cfg=hires.cfg or job.cfg, init_latent=latents, denoise=hires.denoise,
-                    on_step=stepper(steps_run),
+                    on_step=stepper(steps_run), guides=guide_set,
                 )
         except sampling.Cancelled:
             result.cancelled = True
@@ -231,6 +262,12 @@ def run(job, progress: Progress) -> Result:
 
         for seed, generated in zip(seeds, vae.decode(engine, latents)):
             image = finish(src, generated, out_size)
+            if units:
+                try:
+                    image, _ = detail.run(engine, job, progress, image, seed, units, job_loras=loras, cache=tensors, limit_mask=src.full_mask if src is not None else None)
+                except sampling.Cancelled:
+                    result.cancelled = True
+                    return result
             info = metadata.infotext(metadata.with_lora_tags(job.prompt, loras), job.negative, {**params, "Seed": seed})
             if job.save:
                 metadata.save(image, info, job.mode, seed)
@@ -243,13 +280,6 @@ def run(job, progress: Progress) -> Result:
 # ---------------------------------------------------------------- passes
 
 
-def make_conditioning(engine, job, steps_run: int, width: int, height: int, cache: dict, *, prompt: str | None = None, negative: str | None = None):
-    """Prompt plans (scheduling / AND / switch prompt) over the steps a pass samples, encoded via the shared cache."""
-    positive = prompts.PromptPlan(steps_run, job.prompt if prompt is None else prompt, switch=job.switch_prompt or None, switch_at=job.switch_at)
-    neg = prompts.PromptPlan(steps_run, job.negative if negative is None else negative, allow_and=False)
-    return conditioning.PromptConditioning(engine, positive, neg, width=width, height=height, cache=cache)
-
-
 def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int, height: int, cond):
     if not job.regions:
         return None
@@ -260,28 +290,6 @@ def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int
         contexts = {t: cond.tensor(engine, t, False, width, height) for t in texts}
         region_list.append(regions.Region(plan=plan, contexts=contexts, mask=region_mask(job, src, r.mask, width, height), strength=r.strength))
     return regions.RegionalAttention(region_list, base_strength=job.region_base)
-
-
-def sample_pass(engine, job, progress, seeds, shape, cond, regional, *, steps, cfg, init_latent=None, denoise=1.0, inpaint=None, on_step):
-    return sampling.sample(
-        sampling.SampleRequest(
-            engine=engine,
-            noise=rng.ImageNoise(seeds, shape),
-            conditioning=cond,
-            cfg=cfg,
-            sampler=job.sampler,
-            scheduler=job.scheduler,
-            steps=steps,
-            seeds=seeds,
-            init_latent=init_latent,
-            denoise=denoise,
-            inpaint=inpaint,
-            regional=regional,
-            regional_end=job.region_end,
-            on_step=on_step,
-            is_cancelled=progress.is_cancelled,
-        )
-    )
 
 
 def hires_size(job) -> tuple[int, int]:

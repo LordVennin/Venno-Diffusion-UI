@@ -114,7 +114,7 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 
 **Phase 1: Venno engine, text to image** ✅ done
 - `venno/engine/` (ModelManager, conditioning, sampling, schedulers, rng, VAE, preview) and `venno/pipeline/txt2img`, behind `--engine venno` (Forge path stays default).
-- Jobs the Venno engine can't run yet (guides, hires, detailer) fall back to Forge automatically; a job that sets `"engine": "venno"` gets an error instead.
+- Jobs the Venno engine can't run (since Phase 3 only unknown samplers / schedulers / upscalers) fall back to Forge automatically; a job that sets `"engine": "venno"` gets an error instead.
 - Both paths share one loaded model: the Venno engine adopts Forge's model when it was loaded from the same files, and starts every job from the unpatched objects, so Forge LoRAs/scripts don't carry over (checked: same image before and after a Forge LoRA job).
 - Parity check vs Forge at 256², 4 steps, same seed. Mean abs. pixel difference (0–255): Euler CFG 1 0.49, Euler CFG 4 0.32, ER SDE + Beta 0.48, DPM++ 2M Karras batch 2 0.50/0.50, Euler a batch 2 0.48/0.49. Visually identical. The noise matches too, so seeds carry over between the engines.
 
@@ -138,8 +138,12 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 - Load Qwen3.5 4B as a second text encoder and implement the 3.8B conditioning path (from the 3.8B model card and the companion Forge extension).
 - Variant-aware presets for 2B / 2.9B / 3.8B.
 
-**Phase 3: hires fix, upscalers, guides, detailer, saving** (4–6 days)
-- Spandrel upscalers, latent upscale, ControlLLLite port, YOLO/mediapipe detailer, PNG metadata, output folders.
+**Phase 3: hires fix, upscalers, guides, detailer, saving** ✅ done
+- ✅ Upscalers (`venno/engine/upscale.py`): Spandrel models with feathered tiles (tiled = untiled to 0.09/255), chained for bigger targets, Lanczos/Nearest, latent resize.
+- ✅ Hires fix: a second pass of the same pipeline (`venno/pipeline/passes.py`). LoRAs, regions, scheduling and the switch prompt carry over (prompt plans re-made for the second pass's steps); shift is recomputed for the new size. Faster than Forge on CPU with pixel upscalers (29 s vs 43 s).
+- ✅ Detailer (`venno/engine/detect.py`, `venno/pipeline/detail.py`), replacing ADetailer: YOLO (boxes / segmentation) and mediapipe; crops sized to the object (~4× up to the job's pixel count) instead of always the full job size; overlapping detections merged into one crop; crops of the same size refined in one batched pass; differential soft inpainting; with an inpaint mask only objects inside it are touched; `<lora:…>` in a detailer prompt applies to that pass only; `[PROMPT]` placeholder.
+- ✅ Guides (`venno/engine/guides.py`, kohya's Anima LLLite vendored as `lllite_anima.py`): step range from the denoiser's real step (Forge counted model calls), guide image fitted to every pass (so hires is guided too), inpaint-LLLite gets the job mask, patches always removed after sampling. Same output as Forge where their step counting agrees (0.50/255).
+- ✅ PNG metadata and output folders (since Phase 1). With Phase 3 the whole default Studio flow (canvas with guides + ADetailer) runs on the Venno engine.
 
 **Phase 4: switch over and delete** (2–3 days)
 - `--engine venno` becomes the default.
