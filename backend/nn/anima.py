@@ -345,9 +345,13 @@ class Block(nn.Module):
 
         def _x_fn(_x_B_T_H_W_D: torch.Tensor, layer_norm_cross_attn: Callable, _scale_cross_attn_B_T_1_1_D: torch.Tensor, _shift_cross_attn_B_T_1_1_D: torch.Tensor, transformer_options: Optional[dict] = {}) -> torch.Tensor:
             _normalized_x_B_T_H_W_D = _fn(_x_B_T_H_W_D, layer_norm_cross_attn, _scale_cross_attn_B_T_1_1_D, _shift_cross_attn_B_T_1_1_D)
+            _tokens = rearrange(_normalized_x_B_T_H_W_D.to(compute_dtype), "b t h w d -> b (t h w) d")
+            _regional = transformer_options.get("venno_regional")  # Venno: per-region prompts (venno/engine/regions.py)
             _result_B_T_H_W_D = rearrange(
-                self.cross_attn(
-                    rearrange(_normalized_x_B_T_H_W_D.to(compute_dtype), "b t h w d -> b (t h w) d"),
+                _regional(self.cross_attn, _tokens, crossattn_emb, (T, H, W), transformer_options)
+                if _regional is not None
+                else self.cross_attn(
+                    _tokens,
                     crossattn_emb,
                     rope_emb=rope_emb_L_1_1_D,
                     transformer_options=transformer_options,

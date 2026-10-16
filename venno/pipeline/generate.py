@@ -9,7 +9,7 @@ from typing import Callable, Optional
 
 from PIL import Image
 
-from venno.engine import conditioning, images, lora, rng, sampling, vae
+from venno.engine import conditioning, images, lora, regions, rng, sampling, vae
 from venno.engine.models import manager
 
 from . import metadata
@@ -89,6 +89,19 @@ def finish(src: Optional[Source], generated: Image.Image, size: tuple[int, int])
     return out if out.size == size else out.resize(size, Image.LANCZOS)
 
 
+def region_mask(job, src: Optional[Source], data: str, width: int, height: int):
+    """A region mask in the coordinates of the job's input (or output, for text to image) → (H, W) tensor."""
+    mask = images.load_mask(data)
+    if src is not None and src.box is not None:
+        mask = mask.resize(src.original.size, Image.BILINEAR).crop(src.box)
+        mask = mask.resize((width, height), Image.BILINEAR)
+    elif src is not None:
+        mask = images.resize(mask, width, height, job.resize_mode)
+    else:
+        mask = mask.resize((width, height), Image.BILINEAR)
+    return images.to_tensor(mask)[0]
+
+
 def run(job, progress: Progress) -> Result:
     W, H = images.snap(job.width), images.snap(job.height)
     engine = manager.get(job.model.checkpoint, [job.model.text_encoder, job.model.vae])
@@ -123,6 +136,20 @@ def run(job, progress: Progress) -> Result:
         denoise = 1.0 if latent_mask is not None and job.fill == "latent_noise" else job.strength
     out_size = src.original.size if src is not None and src.box is not None else (job.width, job.height)
 
+    regional = None
+    if job.regions:
+        regional = regions.RegionalAttention(
+            [
+                regions.Region(
+                    context=conditioning.encode(engine, r.prompt, 1, negative=False, width=W, height=H),
+                    mask=region_mask(job, src, r.mask, W, H),
+                    strength=r.strength,
+                )
+                for r in job.regions
+            ],
+            base_strength=job.region_base,
+        )
+
     params = {
         "Steps": job.steps,
         "Sampler": job.sampler,
@@ -140,6 +167,13 @@ def run(job, progress: Progress) -> Result:
             params["Masked content"] = job.fill
             params["Inpaint area"] = "Only masked" if src.box else "Whole picture"
             params["Soft inpainting"] = job.soft_inpaint
+    if regional is not None:
+        params["Regions"] = len(job.regions)
+        params["Region base"] = job.region_base
+        if job.region_end < 1.0:
+            params["Region end"] = job.region_end
+        for k, r in enumerate(job.regions, start=1):
+            params[f"Region {k}"] = r.prompt
     for k, m in enumerate(manager.info.get("modules", []), start=1):
         params[f"Module {k}"] = m.rsplit(".", 1)[0]
     params["Version"] = metadata.VERSION
@@ -174,6 +208,8 @@ def run(job, progress: Progress) -> Result:
                     init_latent=init_latent,
                     denoise=denoise,
                     inpaint=sampling.Inpaint(latent_mask, differential=job.soft_inpaint, keep=keep_latent) if latent_mask is not None else None,
+                    regional=regional,
+                    regional_end=job.region_end,
                     on_step=on_step,
                     is_cancelled=progress.is_cancelled,
                 )

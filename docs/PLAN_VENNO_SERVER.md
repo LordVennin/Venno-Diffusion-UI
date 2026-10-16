@@ -114,7 +114,7 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 
 **Phase 1: Venno engine, text to image** ✅ done
 - `venno/engine/` (ModelManager, conditioning, sampling, schedulers, rng, VAE, preview) and `venno/pipeline/txt2img`, behind `--engine venno` (Forge path stays default).
-- Jobs the Venno engine can't run yet (prompt scheduling / AND, regions, guides, hires, detailer) fall back to Forge automatically; a job that sets `"engine": "venno"` gets an error instead.
+- Jobs the Venno engine can't run yet (prompt scheduling / AND, guides, hires, detailer) fall back to Forge automatically; a job that sets `"engine": "venno"` gets an error instead.
 - Both paths share one loaded model: the Venno engine adopts Forge's model when it was loaded from the same files, and starts every job from the unpatched objects, so Forge LoRAs/scripts don't carry over (checked: same image before and after a Forge LoRA job).
 - Parity check vs Forge at 256², 4 steps, same seed. Mean abs. pixel difference (0–255): Euler CFG 1 0.49, Euler CFG 4 0.32, ER SDE + Beta 0.48, DPM++ 2M Karras batch 2 0.50/0.50, Euler a batch 2 0.48/0.49. Visually identical. The noise matches too, so seeds carry over between the engines.
 
@@ -127,7 +127,7 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
   - "Fill" fills the masked area with a push-pull colour fill from its surroundings; "latent noise" regenerates the masked area over the full schedule (a partial schedule can't resolve pure noise); "latent nothing" starts it blank; the unmasked area is always held to the real input.
   - Results are composited in pixel space with the feathered mask, so untouched pixels stay byte-identical (no VAE round trip).
   - Only masked: crop around the mask (+padding, grown to the output aspect), generate at full resolution, paste back into the input at its native size.
-- Regional prompting.
+- ✅ Regional prompting (`venno/engine/regions.py`) by cross-attention blending instead of latent couple: each Anima block runs its text cross-attention for the main prompt and for every region prompt (each with its own normal 512-token context), then blends the outputs per image token with the region masks (same weights as before: base strength, per-region strength, end-at). Self-attention and the MLP run once on the shared image, so regions stay coherent and a step costs one model pass: 2 regions at 512×320 took 41 s vs 94 s on Forge (CPU). The hook is a few lines in `backend/nn/anima.py` (`transformer_options["venno_regional"]`). Works with image to image, inpainting and CFG > 1 (regions only touch the positive prompt).
 - Prompt scheduling / `AND` (ported parser) incl. inside region prompts; syntax hint in Studio.
 
 **Phase 2b: Anima 3.8B** (3–5 days)

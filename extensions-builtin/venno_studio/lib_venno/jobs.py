@@ -333,15 +333,13 @@ def venno_unsupported(job: Job) -> Optional[str]:
 
     if job.mode == "img2img" and not job.init_image:
         return "image to image without an input image"
-    if job.regions:
-        return "regional prompts (Phase 2)"
     if job.guides:
         return "guides (Phase 3)"
     if job.hires:
         return "hires fix (Phase 3)"
     if any(d.model and d.model != "None" for d in job.detailer):
         return "detailer (Phase 3)"
-    for text in (job.prompt, job.negative):
+    for text in (job.prompt, job.negative, *(r.prompt for r in job.regions)):
         if why := conditioning.unsupported_syntax(text):
             return f"{why} (Phase 2)"
     if job.sampler not in sampling.SAMPLERS:

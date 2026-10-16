@@ -75,6 +75,8 @@ class SampleRequest:
     init_latent: Optional[torch.Tensor] = None  # img2img: (1, C, 1, h, w) encoded input
     denoise: float = 1.0
     inpaint: Optional[Inpaint] = None  # needs init_latent
+    regional: Optional[object] = None  # regions.RegionalAttention
+    regional_end: float = 1.0  # stop regional prompts after this fraction of the full schedule
     on_step: Callable[[int, int, torch.Tensor], None] = lambda i, n, denoised: None
     is_cancelled: Callable[[], bool] = lambda: False
     extra_model_options: dict = field(default_factory=dict)
@@ -88,6 +90,7 @@ class Denoiser:
         self.inner_model = linker  # samplers read inner_model.predictor (flow / const checks)
         self.predictor = linker.predictor
         self.noise, self.latent = noise, latent  # inpainting: initial noise and the input latent (on the device)
+        self.regional_sigma_end = float(self.predictor.percent_to_sigma(req.regional_end)) if req.regional is not None and req.regional_end < 1.0 else -1.0
         if req.inpaint is not None:
             self.mask = req.inpaint.mask.to(latent)
             positive = sigmas[sigmas > 0]
@@ -100,6 +103,10 @@ class Denoiser:
         if self.req.is_cancelled():
             raise Cancelled
         model_options = utils.join_dicts(self.unet.model_options, self.req.extra_model_options)
+        if self.req.regional is not None and float(sigma.max()) >= self.regional_sigma_end:
+            transformer_options = dict(model_options.get("transformer_options", {}))
+            transformer_options["venno_regional"] = self.req.regional  # read by the Anima blocks' cross-attention
+            model_options = {**model_options, "transformer_options": transformer_options}
         cond, uncond = self.cond, self.uncond
         mask = None
         if self.req.inpaint is not None:
