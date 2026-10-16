@@ -331,8 +331,8 @@ def venno_unsupported(job: Job) -> Optional[str]:
     """Why the Venno engine can't run this job yet (None = it can). Grows smaller each phase."""
     from venno.engine import conditioning, sampling, schedulers
 
-    if job.mode != "txt2img":
-        return "image to image (Phase 2)"
+    if job.mode == "img2img" and not job.init_image:
+        return "image to image without an input image"
     if job.regions:
         return "regional prompts (Phase 2)"
     if job.guides:
@@ -369,7 +369,7 @@ def _choose_engine(rec: JobRecord) -> str:
 
 
 def _run_venno(rec: JobRecord) -> bool:
-    from venno.pipeline import txt2img
+    from venno.pipeline import generate
 
     total_runs = rec.job.count
 
@@ -380,9 +380,9 @@ def _run_venno(rec: JobRecord) -> bool:
         rec.eta = elapsed / rec.progress - elapsed if rec.progress > 0.01 else 0.0
         rec.version += 1
 
-    progress = txt2img.Progress(on_step=on_step, on_preview=rec.set_preview, is_cancelled=rec.cancel_event.is_set)
+    progress = generate.Progress(on_step=on_step, on_preview=rec.set_preview, is_cancelled=rec.cancel_event.is_set)
     rec.job_count = total_runs
-    result = txt2img.run(rec.job, progress)
+    result = generate.run(rec.job, progress)
     rec.images, rec.seeds, rec.infotexts, rec.warnings = result.images, result.seeds, result.infotexts, result.warnings
     return result.cancelled
 

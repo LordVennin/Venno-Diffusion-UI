@@ -37,11 +37,14 @@ def decode(engine, latents: torch.Tensor) -> list[Image.Image]:
 
 
 @torch.inference_mode()
-def encode(engine, images: list[Image.Image]) -> torch.Tensor:
-    """PIL images → latents (img2img, Phase 2)."""
-    arr = np.stack([np.asarray(im.convert("RGB"), dtype=np.float32) / 127.5 - 1.0 for im in images])
-    x = torch.from_numpy(arr).permute(0, 3, 1, 2)
-    return engine.encode_first_stage(x)
+def encode(engine, image: Image.Image) -> torch.Tensor:
+    """PIL image → one latent, (1, C, 1, H/8, W/8) for Anima's Wan VAE."""
+    vae = engine.forge_objects.vae
+    x = torch.from_numpy(np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0)[None]  # (1, H, W, 3) in [0, 1]
+    latent = vae.first_stage_model.process_in(vae.encode(x))
+    if torch.isnan(latent).any():
+        raise RuntimeError("The VAE produced NaNs while encoding the input image")
+    return latent.float().cpu()
 
 
 @torch.inference_mode()

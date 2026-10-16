@@ -48,6 +48,20 @@ class Cancelled(Exception):
 
 
 @dataclass
+class Inpaint:
+    """Keep the unmasked area of the init latent; regenerate the rest.
+
+    mask: (1, 1, 1, h, w) in [0, 1], 1 = regenerate. With `differential`, the mask acts as a per-pixel
+    denoising strength (differential diffusion): a pixel joins the generation once the remaining noise
+    level drops below its mask value, so feathered edges blend in gradually instead of as a seam.
+    """
+
+    mask: torch.Tensor
+    differential: bool = True
+    keep: Optional[torch.Tensor] = None  # latent the unmasked area is held to (default: init_latent)
+
+
+@dataclass
 class SampleRequest:
     engine: object  # backend ForgeDiffusionEngine
     noise: rng.ImageNoise
@@ -58,8 +72,9 @@ class SampleRequest:
     scheduler: str
     steps: int
     seeds: list[int]
-    init_latent: Optional[torch.Tensor] = None  # img2img (Phase 2)
+    init_latent: Optional[torch.Tensor] = None  # img2img: (1, C, 1, h, w) encoded input
     denoise: float = 1.0
+    inpaint: Optional[Inpaint] = None  # needs init_latent
     on_step: Callable[[int, int, torch.Tensor], None] = lambda i, n, denoised: None
     is_cancelled: Callable[[], bool] = lambda: False
     extra_model_options: dict = field(default_factory=dict)
@@ -68,9 +83,15 @@ class SampleRequest:
 class Denoiser:
     """k-diffusion model wrapper: CFG over the engine's conditioning pipeline."""
 
-    def __init__(self, req: SampleRequest, linker):
+    def __init__(self, req: SampleRequest, linker, *, sigmas=None, noise=None, latent=None):
         self.req = req
         self.inner_model = linker  # samplers read inner_model.predictor (flow / const checks)
+        self.predictor = linker.predictor
+        self.noise, self.latent = noise, latent  # inpainting: initial noise and the input latent (on the device)
+        if req.inpaint is not None:
+            self.mask = req.inpaint.mask.to(latent)
+            positive = sigmas[sigmas > 0]
+            self.sigma_from, self.sigma_to = float(sigmas[0]), float(positive.min()) if len(positive) else 0.0
         self.unet = req.engine.forge_objects.unet
         self.cond = compile_conditions(req.cond)
         self.uncond = compile_conditions(req.uncond)
@@ -80,10 +101,24 @@ class Denoiser:
             raise Cancelled
         model_options = utils.join_dicts(self.unet.model_options, self.req.extra_model_options)
         cond, uncond = self.cond, self.uncond
+        mask = None
+        if self.req.inpaint is not None:
+            mask = self.mask_at(sigma)
+            known = self.predictor.noise_scaling(sigma, self.noise, self.latent, max_denoise=False)  # input, noised to this step
+            x = x * mask + known * (1 - mask)
         for modifier in model_options.get("conditioning_modifiers", []):  # e.g. regional prompting / guides
             _, x, sigma, uncond, cond, _, model_options, _ = modifier(self.unet.model, x, sigma, uncond, cond, self.req.cfg, model_options, self.req.seeds[0])
         denoised = sampling_function_inner(self.unet.model, x, sigma, uncond, cond, self.req.cfg, model_options, self.req.seeds[0])
+        if mask is not None:
+            denoised = denoised * mask + self.latent * (1 - mask)
         return denoised
+
+    def mask_at(self, sigma) -> torch.Tensor:
+        if not self.req.inpaint.differential:
+            return self.mask
+        span = max(self.sigma_from - self.sigma_to, 1e-6)
+        threshold = (float(sigma.reshape(-1)[0]) - self.sigma_to) / span  # 1 at the first step → 0 at the last
+        return (self.mask >= threshold).to(self.mask)
 
 
 def sample(req: SampleRequest) -> torch.Tensor:
@@ -100,14 +135,21 @@ def sample(req: SampleRequest) -> torch.Tensor:
     if req.init_latent is None:
         x = predictor.noise_scaling(sigmas[0], noise, torch.zeros_like(noise), max_denoise=False)
     else:
-        t_enc = int(min(req.denoise, 0.999) * req.steps)  # same as Forge's setup_img2img_steps
-        sigmas = sigmas[req.steps - t_enc - 1 :]
+        # the last `denoise` part of the full schedule: strength 0.5 at 20 steps runs the final 10 steps,
+        # strength 1.0 runs all of them (from pure noise)
+        run = max(1, min(req.steps, round(req.steps * req.denoise)))
+        sigmas = sigmas[len(sigmas) - 1 - run :]
         x = predictor.noise_scaling(sigmas[0], noise, req.init_latent.to(noise), max_denoise=False)
 
     sampling_prepare(unet, x=x)
     device = unet.load_device
     x = x.to(device)
     sigmas = sigmas.to(device)
+    extra = {}
+    if req.inpaint is not None:
+        if req.init_latent is None:
+            raise ValueError("inpainting needs an init latent")
+        extra = dict(sigmas=sigmas, noise=noise.to(device=device, dtype=x.dtype), latent=(req.inpaint.keep if req.inpaint.keep is not None else req.init_latent).to(device=device, dtype=x.dtype))
     unet.model_options.setdefault("transformer_options", {})["sampling_sigmas"] = sigmas
 
     func = getattr(kd, spec.func)
@@ -126,7 +168,7 @@ def sample(req: SampleRequest) -> torch.Tensor:
     kd.torch = rng.TorchProxy(req.noise)  # ancestral / SDE noise from the job's seeded generators
     try:
         with torch.inference_mode():
-            return func(Denoiser(req, linker), x, sigmas, extra_args={}, callback=callback, disable=True, **kwargs)
+            return func(Denoiser(req, linker, **extra), x, sigmas, extra_args={}, callback=callback, disable=True, **kwargs)
     finally:
         kd.torch = previous_torch
         sampling_cleanup(unet)

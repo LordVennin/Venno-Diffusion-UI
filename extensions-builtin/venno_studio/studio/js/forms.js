@@ -110,7 +110,7 @@ export class GenForm {
         <details class="card" open>
           <summary>Inpainting</summary>
           <div class="grid2">
-            <label>Masked content <select class="f-fill">${FILL_MODES.map((m, i) => `<option value="${i}">${m}</option>`).join("")}</select></label>
+            <label title="What the masked area starts from. Original: the input (use any strength). Fill: colours from the surroundings (needs high strength). Latent noise: regenerate from scratch (strength is ignored). Latent nothing: blank.">Masked content <select class="f-fill">${FILL_MODES.map((m, i) => `<option value="${i}">${m}</option>`).join("")}</select></label>
             <label>Inpaint area <select class="f-only-masked"><option value="0">Whole picture</option><option value="1">Only masked</option></select></label>
             <label>Mask blur <input type="number" class="f-mask-blur" min="0" max="64"></label>
             <label>Only-masked padding <input type="number" class="f-padding" min="0" max="256"></label>
