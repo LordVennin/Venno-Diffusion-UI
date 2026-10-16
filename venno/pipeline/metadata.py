@@ -47,7 +47,8 @@ def outputs_root() -> str:
 
 
 def save(image: Image.Image, info: str, mode: str, seed: int) -> str:
-    folder = os.path.join(outputs_root(), f"{mode}-images", datetime.date.today().isoformat())
+    """mode: txt2img / img2img → outputs/<mode>-images/<date>/; txt2img-grids → outputs/txt2img-grids/<date>/"""
+    folder = os.path.join(outputs_root(), mode if mode.endswith("-grids") else f"{mode}-images", datetime.date.today().isoformat())
     os.makedirs(folder, exist_ok=True)
     pnginfo = PngImagePlugin.PngInfo()
     pnginfo.add_text("parameters", info)

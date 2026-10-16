@@ -12,11 +12,12 @@ import base64
 import binascii
 import io
 import json
+import random
 import threading
 import time
 import uuid
 from collections import OrderedDict
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -72,6 +73,23 @@ class Detailer(BaseModel):
     padding: int = 32
 
 
+class GridAxis(BaseModel):
+    type: str = "none"  # see venno/pipeline/grid.py AXES
+    values: Union[str, list] = ""  # "1-5", "1-10 (+2)", "a, b, \"c, d\"" or a list
+    target: str = ""  # lora_weight: the LoRA name
+
+
+class Grid(BaseModel):
+    x: Optional[GridAxis] = None
+    y: Optional[GridAxis] = None
+    z: Optional[GridAxis] = None
+    include_cells: bool = False  # also return / save each image
+
+
+class ImageRequest(BaseModel):
+    image: str  # data URL or base64
+
+
 class ScheduleRequest(BaseModel):
     prompt: str = ""
     switch_prompt: str = ""
@@ -115,6 +133,7 @@ class Job(BaseModel):
     guides: list[Guide] = []
     hires: Optional[Hires] = None
     detailer: list[Detailer] = []
+    grid: Optional[Grid] = None  # comparison grid (X/Y/Z plot): runs every combination
     save: bool = True
     tag: str = ""  # free-form client label (e.g. "live")
     engine: Literal["default", "venno", "forge"] = "default"  # Phases 1-3: pick the pipeline (parity testing)
@@ -190,7 +209,7 @@ def _lift_lora_tags(job: Job):
     have = {lr.name for lr in job.loras}
 
     def lift(text: str) -> str:
-        text, found = extract_lora_tags(text)
+        text, found = extract_lora_tags(text, keep_random=True)  # LoRAs inside {a|b} choices are picked per image
         for name, weight in found:
             if name not in have:
                 have.add(name)
@@ -358,10 +377,12 @@ def venno_unsupported(job: Job) -> Optional[str]:
 
 def _choose_engine(rec: JobRecord) -> str:
     wanted = rec.job.engine if rec.job.engine != "default" else default_engine()
+    if rec.job.grid is not None:
+        wanted = "venno"  # only the Venno pipeline runs comparison grids
     if wanted == "venno":
         why = venno_unsupported(rec.job)
         if why is not None:
-            if rec.job.engine == "venno":  # explicitly requested: fail loudly
+            if rec.job.engine == "venno" or rec.job.grid is not None:  # explicitly requested / grids: fail loudly
                 raise ValueError(f"The Venno engine does not support {why} yet")
             print(f"[Venno] job {rec.id}: {why} not on the Venno engine yet, using Forge")
             wanted = "forge"
@@ -415,6 +436,11 @@ def _forge_switch(job: Job) -> str:
 
 
 def _forge_payload(job: Job) -> dict:
+    from venno.engine import wildcards
+
+    if any(wildcards.has_syntax(t) for t in (job.prompt, job.negative, job.switch_prompt)):  # Forge has no wildcards: pick once
+        seed = job.seed if job.seed >= 0 else random.randrange(2**31)
+        job = job.model_copy(update={k: wildcards.for_seed(getattr(job, k), seed, k) for k in ("prompt", "negative", "switch_prompt")})
     prompt = _forge_switch(job)
     if job.loras:
         prompt += "".join(f" <lora:{lr.name}:{lr.weight:g}>" for lr in job.loras)

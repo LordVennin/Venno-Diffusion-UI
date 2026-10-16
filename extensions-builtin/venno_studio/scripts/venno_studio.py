@@ -75,9 +75,32 @@ def _info() -> dict:
         "controlnets": _controlnets(),
         "upscalers": _upscalers(),
         "adetailer_models": _adetailer_models(),
+        "wildcards": _wildcards(),
+        "engine_samplers": _engine_list("samplers"),
+        "engine_schedulers": _engine_list("schedulers"),
         "presets": PRESETS,
         "prompt_defaults": PROMPT_DEFAULTS,
     }
+
+
+def _engine_list(kind: str) -> list[str]:
+    """Samplers / schedulers the Venno engine runs (Forge's lists are longer until Phase 4)."""
+    try:
+        from venno.engine import sampling, schedulers
+
+        return list(sampling.SAMPLERS) if kind == "samplers" else list(schedulers.SCHEDULERS)
+    except Exception:
+        return []
+
+
+def _wildcards() -> list[str]:
+    try:
+        from venno.engine import wildcards
+
+        return wildcards.files()
+    except Exception as e:
+        print(f"[Venno] could not list wildcards: {e}")
+        return []
 
 
 def _upscalers() -> list[str]:
@@ -169,6 +192,47 @@ def on_app_started(_demo, app: FastAPI):
         return {"segments": segments, "constructs": constructs, "changes": len(segments) > 1 or any(len(sg["parts"]) > 1 or sg["parts"][0]["weight"] != 1.0 for sg in segments)}
 
     app.add_api_route(f"{V}/prompt/schedule", prompt_schedule, methods=["POST"])
+
+    def image_params(req: jobs.ImageRequest):
+        """Generation settings stored in an image (A1111 / Forge / Venno), for "use settings from image"."""
+        from venno.pipeline import infotext
+
+        data = req.image.split(",", 1)[1] if req.image.lstrip().startswith("data:") else req.image
+        try:
+            text, note = infotext.read_text(base64.b64decode(data))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Not a readable image: {e}")
+        if not text:
+            return {"found": False, "note": note}
+        return {"found": True, "text": text, "settings": infotext.settings(text)}
+
+    app.add_api_route(f"{V}/image/params", image_params, methods=["POST"])
+
+    def tag_search(q: str = "", limit: int = 12):
+        """Danbooru tags for autocomplete, in Anima's format (spaces, @artist, escaped parentheses)."""
+        from venno.engine import tags
+
+        return tags.search(q, max(1, min(limit, 50)))
+
+    app.add_api_route(f"{V}/tags", tag_search, methods=["GET"])
+
+    def grid_check(req: jobs.Grid):
+        """Parse grid axes for Studio's preview ("3 × 4 = 12 images") without running anything."""
+        from venno.pipeline import grid
+
+        try:
+            axes = grid.resolve_axes(req)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "axes": [{"title": a.title, "values": [a.label(v) for v in a.values]} for a in axes], "cells": __import__("math").prod(len(a.values) for a in axes)}
+
+    def grid_axes():
+        from venno.pipeline import grid
+
+        return [{"key": a.key, "label": a.label, "kind": a.kind} for a in grid.AXES.values()]
+
+    app.add_api_route(f"{V}/grid/check", grid_check, methods=["POST"])
+    app.add_api_route(f"{V}/grid/axes", grid_axes, methods=["GET"])
     app.add_api_route(f"{V}/jobs", submit_job, methods=["POST"])
     app.add_api_route(f"{V}/jobs", list_jobs, methods=["GET"])
     app.add_api_route(f"{V}/jobs/{{job_id}}", get_job, methods=["GET"])

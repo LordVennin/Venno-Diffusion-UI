@@ -6,6 +6,8 @@ import {
 import { cancelJob, jobModel, jobProgress, runJob } from "./jobs.js";
 import { jobLoras, LoraChips } from "./loras.js";
 import { runSteps, SchedulePreview } from "./schedule.js";
+import { describeSettings, hasQualityTags, offerSettings, readImageSettings } from "./params.js";
+import { GRID_DEFAULT, GridCard } from "./gridui.js";
 
 const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768]];
 const RESIZE_MODES = ["Just resize", "Crop and resize", "Resize and fill"];
@@ -22,6 +24,7 @@ const DEFAULTS = {
   denoise: 0.6, resizeMode: 0, scaleBy: 1, maskBlur: 8, fill: 1, onlyMasked: false, onlyMaskedPadding: 64, softInpaint: true,
   saveImages: true,
   adetailer: ADETAILER_DEFAULT,
+  grid: GRID_DEFAULT,
 };
 
 export class GenForm {
@@ -32,6 +35,7 @@ export class GenForm {
     this.key = `venno-form-${mode}`;
     this.s = loadStore(this.key, structuredClone(DEFAULTS));
     this.s.adetailer = { ...structuredClone(ADETAILER_DEFAULT), ...(this.s.adetailer || {}) };
+    this.s.grid = { ...structuredClone(GRID_DEFAULT), ...(this.s.grid || {}) };
     this.results = []; // [{src, seed, info}]
     this.current = -1;
     this.busy = false;
@@ -60,6 +64,7 @@ export class GenForm {
           <div class="row">
             <select class="f-lora"></select>
             <label class="check"><input type="checkbox" class="f-quality"> Anima quality tags</label>
+            <button class="f-load-settings" title="Load prompt and settings from an image made with Venno, Forge or A1111 (you can also drop the image onto this panel)">From image…</button>
           </div>
           <div class="row buttons">
             <button class="primary big f-generate">Generate</button>
@@ -156,6 +161,8 @@ export class GenForm {
           </div>`).join("")}
         </details>
 
+        <details class="card f-grid-card grid-card"></details>
+
         <label class="check save"><input type="checkbox" class="f-save"> Save results to outputs folder</label>
       </div>
 
@@ -165,6 +172,7 @@ export class GenForm {
         <div class="row r-actions">
           <button class="r-to-canvas" disabled>Open in Canvas</button>
           ${i2i ? `<button class="r-to-input" disabled>Use as input</button>` : `<button class="r-to-i2i" disabled>Send to Image to Image</button>`}
+          <button class="r-use-settings" disabled title="Load this image's prompt and settings into the form">Use settings</button>
           <button class="r-download" disabled>Download</button>
         </div>
         <pre class="r-info"></pre>
@@ -177,19 +185,21 @@ export class GenForm {
   bind() {
     const s = this.s;
     const i2i = this.mode === "img2img";
+    this.syncs = []; // re-apply state to the inputs (after loading settings from an image)
+    const sync = (fn) => { fn(); this.syncs.push(fn); };
     const num = (sel, key, onChange) => {
       const el = this.q(sel);
-      el.value = s[key];
+      sync(() => (el.value = s[key]));
       el.onchange = () => { s[key] = Number(el.value); this.persist(); onChange && onChange(); };
     };
     const txt = (sel, key) => {
       const el = this.q(sel);
-      el.value = s[key];
+      sync(() => (el.value = s[key]));
       el.oninput = () => { s[key] = el.value; this.persist(); };
     };
     const chk = (sel, key, onChange) => {
       const el = this.q(sel);
-      el.checked = s[key];
+      sync(() => (el.checked = s[key]));
       el.onchange = () => { s[key] = el.checked; this.persist(); onChange && onChange(); };
     };
 
@@ -207,6 +217,11 @@ export class GenForm {
     num(".f-seed", "seed");
     this.q(".f-sampler").onchange = (e) => { s.sampler = e.target.value; this.persist(); };
     this.q(".f-scheduler").onchange = (e) => { s.scheduler = e.target.value; this.persist(); };
+    this.syncs.push(() => {
+      this.q(".f-sampler").value = s.sampler;
+      this.q(".f-scheduler").value = s.scheduler;
+      this.q(".f-preset").value = s.preset || "";
+    });
     this.q(".f-preset").onchange = (e) => this.applyPreset(e.target.value);
     this.q(".f-seed-random").onclick = () => { s.seed = -1; this.q(".f-seed").value = -1; this.persist(); };
     this.q(".f-seed-reuse").onclick = () => {
@@ -217,7 +232,7 @@ export class GenForm {
     this.q(".f-swap").onclick = () => this.setSize(s.height, s.width);
     this.q(".f-generate").onclick = () => this.generate();
     this.q(".f-cancel").onclick = () => this.jobId && cancelJob(this.jobId);
-    this.loras = new LoraChips(this.q(".f-lora-chips"), { get: () => s.loras, set: (list) => { s.loras = list; this.persist(); } });
+    this.loras = new LoraChips(this.q(".f-lora-chips"), { get: () => s.loras, set: (list) => { s.loras = list; this.persist(); this.gridCard?.render(); } });
     this.q(".f-lora").onchange = (e) => {
       if (e.target.value) this.loras.add(e.target.value);
       e.target.value = "";
@@ -233,7 +248,13 @@ export class GenForm {
       num(".f-mask-blur", "maskBlur");
       num(".f-padding", "onlyMaskedPadding");
       chk(".f-soft", "softInpaint");
-      this.q(".f-fill").value = s.fill;
+      sync(() => {
+        this.q(".f-fill").value = s.fill;
+        this.q(".f-only-masked").value = s.onlyMasked ? "1" : "0";
+        this.q(".f-resize-mode").value = s.resizeMode;
+        this.q(".f-denoise").value = Math.round(s.denoise * 100);
+        this.q(".f-denoise").nextElementSibling.textContent = s.denoise;
+      });
       this.q(".f-fill").onchange = (e) => { s.fill = Number(e.target.value); this.persist(); };
       this.q(".f-only-masked").value = s.onlyMasked ? "1" : "0";
       this.q(".f-only-masked").onchange = (e) => { s.onlyMasked = e.target.value === "1"; this.persist(); };
@@ -256,21 +277,22 @@ export class GenForm {
       num(".f-hr-cfg", "hrCfg");
       num(".f-hr-shift", "hrShift");
       this.q(".f-hr-upscaler").onchange = (e) => { s.hrUpscaler = e.target.value; this.persist(); };
+      this.syncs.push(() => { this.q(".f-hr-upscaler").value = s.hrUpscaler; if (s.hr) this.q(".f-hr-card").open = true; });
       this.updateHrInfo();
     }
 
     // ADetailer
-    const ad = s.adetailer;
+
     const adChk = this.q(".f-ad");
-    adChk.checked = ad.enabled;
+    sync(() => (adChk.checked = s.adetailer.enabled));
     adChk.onclick = (e) => e.stopPropagation();
-    adChk.onchange = () => { ad.enabled = adChk.checked; this.persist(); };
+    adChk.onchange = () => { s.adetailer.enabled = adChk.checked; this.persist(); };
     $$(".ad-unit", this.root).forEach((el) => {
-      const u = ad.units[Number(el.dataset.unit)];
+      const u = () => s.adetailer.units[Number(el.dataset.unit)];
       const bindU = (sel, key, isNum = true) => {
         const f = $(sel, el);
-        f.value = u[key];
-        f.onchange = () => { u[key] = isNum ? Number(f.value) : f.value; this.persist(); };
+        sync(() => (f.value = u()[key]));
+        f.onchange = () => { u()[key] = isNum ? Number(f.value) : f.value; this.persist(); };
       };
       bindU(".ad-model", "model", false);
       bindU(".ad-denoise", "denoise");
@@ -279,15 +301,83 @@ export class GenForm {
       bindU(".ad-dilate", "dilate");
       bindU(".ad-padding", "padding");
       const p = $(".ad-prompt", el);
-      p.value = u.prompt;
-      p.oninput = () => { u.prompt = p.value; this.persist(); };
+      sync(() => (p.value = u().prompt));
+      p.oninput = () => { u().prompt = p.value; this.persist(); };
     });
+
+    // comparison grid
+    this.gridCard = new GridCard(this.q(".f-grid-card"), { state: () => s.grid, persist: () => this.persist(), info: () => this.ctx.state.info, loras: () => s.loras });
+    this.syncs.push(() => this.gridCard.render());
 
     // results
     this.q(".r-to-canvas").onclick = () => this.withCurrent((r) => this.ctx.onSendToCanvas(r.src));
     const toI2I = this.q(".r-to-i2i") || this.q(".r-to-input");
     toI2I.onclick = () => this.withCurrent((r) => this.ctx.onSendToImg2Img(r.src));
     this.q(".r-download").onclick = () => this.withCurrent((r) => downloadDataURL(r.src, `venno-${r.seed}.png`));
+    this.q(".r-use-settings").onclick = () => this.withCurrent((r) => this.loadSettingsFrom(r.src));
+
+    // settings from an image: button, or drop an image anywhere on the form column (not the input-image box)
+    const picker = document.createElement("input");
+    picker.type = "file";
+    picker.accept = "image/png,image/jpeg,image/webp";
+    picker.onchange = () => { if (picker.files[0]) this.loadSettingsFrom(picker.files[0]); picker.value = ""; };
+    this.q(".f-load-settings").onclick = () => picker.click();
+    const col = this.q(".form-col");
+    col.addEventListener("dragover", (e) => { if (!e.target.closest(".i2i-drop")) e.preventDefault(); });
+    col.addEventListener("drop", (e) => {
+      if (e.target.closest(".i2i-drop")) return;
+      const f = [...(e.dataTransfer?.files || [])].find((x) => x.type.startsWith("image/"));
+      if (!f) return;
+      e.preventDefault();
+      this.loadSettingsFrom(f);
+    });
+  }
+
+  async loadSettingsFrom(source) {
+    const res = await readImageSettings(source);
+    if (!res.found) return toast(res.note || "No generation settings found in this image.", "info");
+    this.applySettings(res.settings);
+  }
+
+  /** Apply settings read from an image (see params.js). Missing fields keep their current values. */
+  applySettings(x) {
+    const s = this.s;
+    const set = (key, v) => { if (v !== undefined && v !== null && v !== "") s[key] = v; };
+    s.prompt = x.prompt ?? s.prompt;
+    s.negative = x.negative ?? s.negative;
+    s.loras = x.loras || [];
+    if (hasQualityTags(s.prompt)) s.qualityPrefix = false; // the prompt brings its own
+    set("steps", x.steps); set("cfg", x.cfg); set("shift", x.shift); set("seed", x.seed);
+    const info = this.ctx.state.info || {};
+    if (x.sampler && info.samplers?.includes(x.sampler)) s.sampler = x.sampler;
+    if (x.scheduler && info.schedulers?.includes(x.scheduler)) s.scheduler = x.scheduler;
+    s.preset = "";
+    if (this.mode === "txt2img" || !this.inputImage) { set("width", x.width); set("height", x.height); }
+    if (this.mode === "img2img") set("denoise", x.denoise);
+    s.switchPrompt = x.switch_prompt || "";
+    set("switchAt", x.switch_at);
+    if (this.mode === "txt2img") {
+      const h = x.hires;
+      s.hr = !!h;
+      if (h) {
+        s.hrUpscaler = info.upscalers?.includes(h.upscaler) ? h.upscaler : s.hrUpscaler;
+        Object.assign(s, { hrScale: h.scale || s.hrScale, hrResizeX: h.resize_x || 0, hrResizeY: h.resize_y || 0, hrSteps: h.steps || 0, hrDenoise: h.denoise, hrCfg: h.cfg || 0, hrShift: h.shift || 0 });
+      }
+    }
+    if (x.detailer) {
+      s.adetailer.enabled = x.detailer.length > 0;
+      x.detailer.slice(0, s.adetailer.units.length).forEach((d, i) => Object.assign(s.adetailer.units[i], { model: d.model, confidence: d.confidence, denoise: d.denoise, prompt: d.prompt || "" }));
+    }
+    this.persist();
+    this.syncs.forEach((fn) => fn());
+    this.loras.render();
+    this.schedule.refresh();
+    this.updateHrInfo();
+    if (x.checkpoint) this.ctx.selectCheckpoint?.(x.checkpoint);
+    const notes = [];
+    if (x.regions?.length) notes.push(`${x.regions.length} region prompt(s) are only usable on the Canvas`);
+    if (x.template) notes.push("wildcard template restored as the resolved prompt");
+    toast(`Loaded: ${describeSettings(x)}${notes.length ? ` (${notes.join("; ")})` : ""}`, "info");
   }
 
   withCurrent(fn) {
@@ -349,7 +439,7 @@ export class GenForm {
     const file = document.createElement("input");
     file.type = "file";
     file.accept = "image/*";
-    file.onchange = () => { if (file.files[0]) this.setInputImage(URL.createObjectURL(file.files[0])); file.value = ""; };
+    file.onchange = () => { if (file.files[0]) this.setInputImage(URL.createObjectURL(file.files[0]), { offer: true }); file.value = ""; };
     this.q(".f-open").onclick = () => file.click();
     drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("dragging"); });
     drop.addEventListener("dragleave", () => drop.classList.remove("dragging"));
@@ -357,7 +447,7 @@ export class GenForm {
       e.preventDefault();
       drop.classList.remove("dragging");
       const f = [...e.dataTransfer.files].find((x) => x.type.startsWith("image/"));
-      if (f) this.setInputImage(URL.createObjectURL(f));
+      if (f) this.setInputImage(URL.createObjectURL(f), { offer: true });
     });
 
     const mc = this.q(".i2i-mask");
@@ -389,7 +479,7 @@ export class GenForm {
     mc.addEventListener("pointerup", () => { drawing = false; last = null; });
   }
 
-  async setInputImage(src) {
+  async setInputImage(src, { offer = false } = {}) {
     if (!src) {
       this.inputImage = null;
       this.q(".i2i-stage").hidden = true;
@@ -402,6 +492,7 @@ export class GenForm {
     await img.decode();
     this.inputImage = img;
     this.q(".i2i-img").src = src;
+    if (offer) offerSettings(src, (st) => this.applySettings(st));
     const mc = this.q(".i2i-mask");
     mc.width = img.naturalWidth;
     mc.height = img.naturalHeight;
@@ -552,6 +643,8 @@ export class GenForm {
         });
       }
     }
+    const grid = this.gridCard.job();
+    if (grid) job.grid = grid;
     job.detailer = !s.adetailer.enabled ? [] : s.adetailer.units
       .filter((u) => u.model && u.model !== "None")
       .map((u) => ({ model: u.model, prompt: u.prompt || "", negative: u.negative || "", confidence: u.confidence, denoise: u.denoise, mask_blur: u.maskBlur, dilate: u.dilate, padding: u.padding }));

@@ -11,11 +11,28 @@ import torch
 _LORA = re.compile(r"<lora:([^>:]+)(?::([^>:]*))?(?::[^>]*)?>", re.I)
 
 
-def extract_lora_tags(prompt: str) -> tuple[str, list[tuple[str, float]]]:
-    """'a cat <lora:x:0.6>' → ('a cat', [('x', 0.6)])"""
+def _brace_spans(text: str) -> list[tuple[int, int]]:
+    spans, depth, start = [], 0, 0
+    for i, ch in enumerate(text):
+        if ch == "{" and (i == 0 or text[i - 1] != "\\"):
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth and text[i - 1] != "\\":
+            depth -= 1
+            if depth == 0:
+                spans.append((start, i))
+    return spans
+
+
+def extract_lora_tags(prompt: str, *, keep_random: bool = False) -> tuple[str, list[tuple[str, float]]]:
+    """'a cat <lora:x:0.6>' → ('a cat', [('x', 0.6)]). keep_random: leave tags inside {…} wildcard choices alone."""
     found: list[tuple[str, float]] = []
+    spans = _brace_spans(prompt) if keep_random else []
 
     def take(m):
+        if any(a < m.start() < b for a, b in spans):
+            return m.group(0)
         try:
             weight = float(m.group(2)) if m.group(2) not in (None, "") else 1.0
         except ValueError:

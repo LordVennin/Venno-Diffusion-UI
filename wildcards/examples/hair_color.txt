@@ -1,0 +1,11 @@
+# hair colours
+black hair
+brown hair
+blonde hair
+red hair
+pink hair
+silver hair
+blue hair
+green hair
+purple hair
+white hair

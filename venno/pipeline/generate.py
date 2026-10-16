@@ -11,7 +11,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from venno.engine import conditioning, guides, images, lora, prompts, regions, rng, sampling, upscale, vae
+from venno.engine import conditioning, guides, images, lora, prompts, regions, rng, sampling, upscale, vae, wildcards
 from venno.engine.models import manager
 
 from . import detail, metadata
@@ -122,7 +122,64 @@ def make_guides(engine, job, src: Optional[Source], width: int, height: int):
     return guides.GuideSet(engine, items)
 
 
-def run(job, progress: Progress) -> Result:
+def uses_wildcards(job) -> bool:
+    texts = [job.prompt, job.negative, job.switch_prompt, *(r.prompt for r in job.regions), *(d.prompt for d in job.detailer), *(d.negative for d in job.detailer)]
+    return any(wildcards.has_syntax(t) for t in texts)
+
+
+def run_each(job, progress: Progress) -> Result:
+    """Wildcard jobs: every image gets its own random choices (from its own seed), so images run one by one."""
+    base_seed = rng.resolve_seed(job.seed)
+    total = job.count * job.batch
+    result = Result()
+    for k in range(total):
+        seed = base_seed + k
+        pick = lambda text, salt: wildcards.for_seed(text, seed, salt) if text else text
+        prompt, picked_loras = conditioning.extract_lora_tags(pick(job.prompt, "prompt"))
+        negative, picked_neg = conditioning.extract_lora_tags(pick(job.negative, "negative"))
+        have = {lr.name for lr in job.loras}
+        lora_ref = type(job).model_fields["loras"].annotation.__args__[0]  # the job schema's LoRA entry type
+        extra_loras = [lora_ref(name=n, weight=w) for n, w in picked_loras + picked_neg if n not in have]
+        sub = job.model_copy(
+            update=dict(
+                prompt=prompt,
+                negative=negative,
+                loras=list(job.loras) + extra_loras,
+                switch_prompt=pick(job.switch_prompt, "switch"),
+                regions=[r.model_copy(update={"prompt": pick(r.prompt, f"region{i}")}) for i, r in enumerate(job.regions)],
+                detailer=[d.model_copy(update={"prompt": pick(d.prompt, f"detail{i}"), "negative": pick(d.negative, f"detail{i}n")}) for i, d in enumerate(job.detailer)],
+                seed=seed,
+                batch=1,
+                count=1,
+            )
+        )
+        sub_progress = Progress(
+            on_step=lambda step, steps, run, runs, k=k: progress.on_step(step, steps, k, total),
+            on_preview=progress.on_preview,
+            is_cancelled=progress.is_cancelled,
+            preview_every=progress.preview_every,
+        )
+        extra = {"Template": job.prompt} if wildcards.has_syntax(job.prompt) else {}
+        if wildcards.has_syntax(job.negative):
+            extra["Negative Template"] = job.negative
+        part = run(sub, sub_progress, extra_params=extra)
+        result.images += part.images
+        result.seeds += part.seeds
+        result.infotexts += part.infotexts
+        result.warnings += [w for w in part.warnings if w not in result.warnings]
+        if part.cancelled:
+            result.cancelled = True
+            break
+    return result
+
+
+def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
+    if getattr(job, "grid", None) is not None:
+        from . import grid
+
+        return grid.run(job, progress, run)
+    if uses_wildcards(job):
+        return run_each(job, progress)
     W, H = images.snap(job.width), images.snap(job.height)
     engine = manager.get(job.model.checkpoint, [job.model.text_encoder, job.model.vae])
     engine.set_shift(shift=job.shift, width=W, height=H)
@@ -220,6 +277,7 @@ def run(job, progress: Progress) -> Result:
             params[f"ADetailer prompt{suffix}"] = unit.prompt
     for k, m in enumerate(manager.info.get("modules", []), start=1):
         params[f"Module {k}"] = m.rsplit(".", 1)[0]
+    params.update(extra_params or {})
     params["Version"] = metadata.VERSION
 
     for run_index in range(job.count):

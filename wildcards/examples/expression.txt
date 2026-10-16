@@ -1,0 +1,11 @@
+# expressions
+smile
+open mouth, smile
+closed eyes, smile
+blush
+embarrassed, blush
+pout
+surprised
+light smile
+smug
+sad

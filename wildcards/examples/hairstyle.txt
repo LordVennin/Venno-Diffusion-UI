@@ -1,0 +1,11 @@
+# hairstyles
+long hair
+short hair
+medium hair
+ponytail
+twintails
+braid
+side ponytail
+bob cut
+hair bun
+{long|short} hair, ahoge

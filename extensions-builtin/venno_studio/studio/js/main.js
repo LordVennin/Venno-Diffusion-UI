@@ -6,6 +6,10 @@ import { GenForm } from "./forms.js";
 import { api, presetForCheckpoint } from "./common.js";
 import { ModelsPage } from "./models.js";
 import { LoraChips } from "./loras.js";
+import { describeSettings, hasQualityTags, offerSettings } from "./params.js";
+import { enableAutocomplete, setWildcards } from "./autocomplete.js";
+
+enableAutocomplete();
 import { runSteps, SchedulePreview } from "./schedule.js";
 
 const $ = (s) => document.querySelector(s);
@@ -60,6 +64,7 @@ const formCtx = {
   state,
   onSendToCanvas: async (src) => { showTab("canvas"); await addImageAsLayer(src, "From gallery"); },
   onSendToImg2Img: (src) => { showTab("img2img"); img2imgForm.setInputImage(src); },
+  selectCheckpoint: (name) => selectCheckpoint(name),
 };
 const txt2imgForm = new GenForm($("#page-txt2img"), "txt2img", formCtx);
 const img2imgForm = new GenForm($("#page-img2img"), "img2img", formCtx);
@@ -628,6 +633,7 @@ async function loadInfo(refresh = false) {
     const loraSel = $("#sel-lora");
     loraSel.innerHTML = `<option value="">+ LoRA… (${info.loras.length})</option>` + info.loras.map((l) => `<option value="${escapeHtml(l.name)}">${escapeHtml(l.name)}</option>`).join("");
     loraChips.setAvailable(info.loras.map((l) => l.name));
+    setWildcards(info.wildcards);
     if (!g.negative && info.prompt_defaults?.negative) { g.negative = info.prompt_defaults.negative; negative.value = g.negative; }
     if (!g.preset) applyPreset(presetForCheckpoint(state.model.checkpoint));
     persist();
@@ -649,6 +655,40 @@ $("#sel-checkpoint").onchange = (e) => {
   persist();
 };
 $("#sel-te").onchange = (e) => { state.model.textEncoder = e.target.value; persist(); };
+
+/** Select a checkpoint by name (from loaded settings) without switching presets. */
+function selectCheckpoint(name) {
+  const stem = (v) => v.replace(/\.[^.]+$/, "").replace(/\s*\[[0-9a-f]+\]$/i, "").toLowerCase();
+  const opt = [...$("#sel-checkpoint").options].find((o) => stem(o.value) === stem(name) || stem(o.text) === stem(name));
+  if (!opt) { toast(`Model "${name}" is not installed; keeping ${$("#sel-checkpoint").value || "the current model"}`, "info"); return false; }
+  $("#sel-checkpoint").value = opt.value;
+  state.model.checkpoint = opt.value;
+  persist();
+  return true;
+}
+
+/** Canvas: apply settings read from an image. */
+function applyCanvasSettings(x) {
+  if (x.prompt != null) g.prompt = prompt_.value = x.prompt;
+  if (x.negative != null) g.negative = negative.value = x.negative;
+  g.loras = x.loras || [];
+  loraChips.render();
+  if (hasQualityTags(g.prompt)) { g.qualityPrefix = false; $("#quality-prefix").checked = false; }
+  for (const k of ["steps", "cfg", "shift", "seed"]) if (x[k] != null) { g[k] = x[k]; $(`#${k}`).value = x[k]; }
+  if (x.seed != null) { g.seedLocked = true; $("#seed-lock").checked = true; }
+  if (x.sampler && state.info?.samplers?.includes(x.sampler)) { g.sampler = x.sampler; $("#sampler").value = x.sampler; }
+  if (x.scheduler && state.info?.schedulers?.includes(x.scheduler)) { g.scheduler = x.scheduler; $("#scheduler").value = x.scheduler; }
+  g.preset = ""; $("#preset").value = "";
+  g.switchPrompt = switchTa.value = x.switch_prompt || "";
+  if (x.switch_at != null) { g.switchAt = x.switch_at; switchAt.value = Math.round(x.switch_at * 100); }
+  $("#switch-box").open = !!g.switchPrompt;
+  showSwitch();
+  if (x.detailer) { g.adetailer = x.detailer.length > 0; $("#canvas-adetailer").checked = g.adetailer; }
+  if (x.checkpoint) selectCheckpoint(x.checkpoint);
+  persist();
+  promptSchedule.refresh();
+  toast(`Loaded: ${describeSettings(x)}${x.regions?.length ? " (region prompts need their region layers, which images don't store)" : ""}`, "info");
+}
 $("#sel-vae").onchange = (e) => { state.model.vae = e.target.value; persist(); };
 $("#btn-refresh").onclick = () => loadInfo(true);
 
@@ -675,7 +715,7 @@ function isBlankDoc() {
 $("#file-open").onchange = async (e) => {
   const f = e.target.files[0];
   e.target.value = "";
-  if (f) addImageAsLayer(URL.createObjectURL(f), f.name.replace(/\.[^.]+$/, ""));
+  if (f) { addImageAsLayer(URL.createObjectURL(f), f.name.replace(/\.[^.]+$/, "")); offerSettings(f, applyCanvasSettings); }
 };
 
 const vp = $("#viewport");
@@ -685,16 +725,17 @@ vp.addEventListener("drop", (e) => {
   e.preventDefault();
   vp.classList.remove("dragging");
   const f = [...e.dataTransfer.files].find((x) => x.type.startsWith("image/"));
-  if (f) addImageAsLayer(URL.createObjectURL(f), f.name.replace(/\.[^.]+$/, ""));
+  if (f) { addImageAsLayer(URL.createObjectURL(f), f.name.replace(/\.[^.]+$/, "")); offerSettings(f, applyCanvasSettings); }
 });
 document.addEventListener("paste", (e) => {
   if (e.target.closest("textarea, input")) return;
   const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith("image/"));
   if (!item) return;
   e.preventDefault();
-  const src = URL.createObjectURL(item.getAsFile());
-  if (activeTab === "img2img") img2imgForm.setInputImage(src);
-  else if (activeTab === "canvas") addImageAsLayer(src, "Pasted");
+  const file = item.getAsFile();
+  const src = URL.createObjectURL(file);
+  if (activeTab === "img2img") img2imgForm.setInputImage(src, { offer: true });
+  else if (activeTab === "canvas") { addImageAsLayer(src, "Pasted"); offerSettings(file, applyCanvasSettings); }
 });
 
 function exportPNG() {
