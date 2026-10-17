@@ -81,6 +81,22 @@ export function downloadDataURL(src, name) {
   a.click();
 }
 
+/** Full-window image viewer (comparison grids on the Canvas, which can't be applied as a layer). */
+export function showLightbox(src, name = "venno-grid.png") {
+  let box = document.getElementById("lightbox");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "lightbox";
+    box.innerHTML = `<img alt=""><div class="row"><button class="lb-download">Download</button><button class="lb-close primary">Close</button></div>`;
+    document.body.appendChild(box);
+    box.onclick = (e) => { if (e.target === box || e.target.classList.contains("lb-close")) box.hidden = true; };
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !box.hidden) { e.stopPropagation(); box.hidden = true; } }, true);
+  }
+  box.querySelector("img").src = src;
+  box.querySelector(".lb-download").onclick = () => downloadDataURL(src, name);
+  box.hidden = false;
+}
+
 // Recommended preset for a checkpoint (by file name; Phase 2b detects the variant server-side)
 export function presetForCheckpoint(name = "") {
   if (/turbo/i.test(name)) return "turbo";

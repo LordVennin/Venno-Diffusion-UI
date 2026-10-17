@@ -3,7 +3,9 @@ import { Generator } from "./generate.js";
 import { jobProgress } from "./jobs.js";
 import { TOOLS, View } from "./view.js";
 import { GenForm } from "./forms.js";
-import { api, presetForCheckpoint } from "./common.js";
+import { ADETAILER_DEFAULT, api, presetForCheckpoint, showLightbox } from "./common.js";
+import { DetailerCard, HIRES_DEFAULT, HiresCard } from "./cards.js";
+import { GRID_DEFAULT, GridCard } from "./gridui.js";
 import { ModelsPage } from "./models.js";
 import { InfoPage } from "./info.js";
 import { LoraChips } from "./loras.js";
@@ -26,7 +28,7 @@ const state = {
   gen: {
     prompt: "", negative: "", loras: [], switchPrompt: "", switchAt: 0.4, strength: 1, batch: 2, steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple",
     seed: 0, seedLocked: false, resolution: 1024, context: 0.5, feather: 12, qualityPrefix: true, saveImages: true, softInpaint: true,
-    regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, regionOverlap: "top", preset: "", adetailer: true,
+    regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, regionOverlap: "top", regionSeparation: 0.7, preset: "", ...HIRES_DEFAULT,
     ...(saved.gen || {}),
   },
   showProgressPreview: saved.showProgressPreview ?? true,
@@ -553,6 +555,10 @@ function updateUndoButtons() {
 
 // ---------------- generate panel ----------------
 const g = state.gen;
+// ADetailer / grid settings like the other tabs (older saves had a single "ADetailer (faces)" switch)
+g.detailer = { ...structuredClone(ADETAILER_DEFAULT), ...(g.detailer || {}), ...(g.detailer ? {} : { enabled: g.adetailer !== false }) };
+delete g.adetailer;
+g.grid = { ...structuredClone(GRID_DEFAULT), ...(g.grid || {}) };
 const prompt_ = $("#prompt");
 const negative = $("#negative");
 prompt_.value = g.prompt;
@@ -613,10 +619,19 @@ bindRange("context", () => Math.round(g.context * 100), (v) => (g.context = v / 
 bindRange("feather", () => g.feather, (v) => (g.feather = v));
 bindRange("region-base", () => Math.round(g.regionBase * 100), (v) => (g.regionBase = v / 100), (v) => `${v}%`);
 bindRange("region-end", () => Math.round(g.regionEnd * 100), (v) => (g.regionEnd = v / 100), (v) => `${v}%`);
+bindRange("region-sep", () => Math.round(g.regionSeparation * 100), (v) => (g.regionSeparation = v / 100), (v) => `${v}%`);
+const hrCard = new HiresCard($("#canvas-hr-card"), {
+  state: () => g, persist, size: () => { const p = gen.plan(); return [p.gw, p.gh]; },
+  note: "Canvas: used when generating a new picture (no selection, Strength 100% or an empty canvas); the result is scaled to the canvas. Not in live mode.",
+});
+const adCard = new DetailerCard($("#canvas-ad-card"), { state: () => g.detailer, persist, note: "Not used in live mode." });
+const gridCard = new GridCard($("#canvas-grid-card"), { state: () => g.grid, persist, info: () => state.info, loras: () => g.loras });
+$("#resolution").addEventListener("change", () => hrCard.updateInfo());
+doc.on((what) => { if (what === "reset") hrCard.updateInfo(); });
 $("#region-overlap").value = g.regionOverlap;
 view.regionOverlap = g.regionOverlap;
 $("#region-overlap").onchange = (e) => { g.regionOverlap = view.regionOverlap = e.target.value; persist(); view.render(); gen.scheduleLive(); };
-for (const [id, key] of [["quality-prefix", "qualityPrefix"], ["save-images", "saveImages"], ["soft-inpaint", "softInpaint"], ["region-append", "regionAppendRoot"], ["canvas-adetailer", "adetailer"]]) {
+for (const [id, key] of [["quality-prefix", "qualityPrefix"], ["save-images", "saveImages"], ["soft-inpaint", "softInpaint"], ["region-append", "regionAppendRoot"]]) {
   $(`#${id}`).checked = g[key];
   $(`#${id}`).onchange = (e) => { g[key] = e.target.checked; persist(); };
 }
@@ -685,6 +700,8 @@ gen.on((what, data) => {
     $$("#thumbs img").forEach((img) => img.classList.toggle("on", gen.selected && img._r === gen.selected.result && img._i === gen.selected.index));
   } else if (what === "live-result") {
     $("#live-img").src = data.images[0].src;
+  } else if (what === "grid") {
+    showLightbox(data);
   } else if (what === "error") {
     toast(data);
   }
@@ -707,9 +724,15 @@ function renderThumbs() {
       img.src = im.src;
       img._r = r;
       img._i = i;
-      img.title = `Seed ${r.seeds?.[i] ?? "?"} — click to preview, double-click to apply`;
-      img.onclick = () => gen.preview(r, i);
-      img.ondblclick = () => gen.apply(r, i);
+      if (r.grid?.[i]) {
+        img.title = "Comparison grid — click to view";
+        img.classList.add("grid");
+        img.onclick = () => showLightbox(im.src);
+      } else {
+        img.title = `Seed ${r.seeds?.[i] ?? "?"} — click to preview, double-click to apply`;
+        img.onclick = () => gen.preview(r, i);
+        img.ondblclick = () => gen.apply(r, i);
+      }
       grp.appendChild(img);
     });
     box.appendChild(grp);
@@ -757,6 +780,9 @@ async function loadInfo(refresh = false) {
     persist();
     renderLayerProps();
     for (const f of Object.values(forms)) f.setInfo(info);
+    hrCard.setInfo(info);
+    adCard.setInfo(info);
+    gridCard.render();
     if (!ckpts.length && !refresh) showTab("models");
     setStatus(ckpts.length ? `${ckpts.length} model(s) · ${info.loras.length} LoRA(s) · ${info.controlnets.length} guide model(s)` : "No Anima checkpoint yet — download one in the Models tab");
   } catch (e) {
@@ -800,7 +826,18 @@ function applyCanvasSettings(x) {
   if (x.switch_at != null) { g.switchAt = x.switch_at; switchAt.value = Math.round(x.switch_at * 100); }
   $("#switch-box").open = !!g.switchPrompt;
   showSwitch();
-  if (x.detailer) { g.adetailer = x.detailer.length > 0; $("#canvas-adetailer").checked = g.adetailer; }
+  if (x.detailer) {
+    g.detailer.enabled = x.detailer.length > 0;
+    x.detailer.slice(0, g.detailer.units.length).forEach((d, i) => Object.assign(g.detailer.units[i], { model: d.model, confidence: d.confidence, denoise: d.denoise, prompt: d.prompt || "" }));
+    adCard.render();
+  }
+  g.hr = !!x.hires;
+  if (x.hires) {
+    const h = x.hires;
+    if (state.info?.upscalers?.includes(h.upscaler)) g.hrUpscaler = h.upscaler;
+    Object.assign(g, { hrScale: h.scale || g.hrScale, hrResizeX: h.resize_x || 0, hrResizeY: h.resize_y || 0, hrSteps: h.steps || 0, hrDenoise: h.denoise ?? g.hrDenoise, hrCfg: h.cfg || 0, hrShift: h.shift || 0 });
+  }
+  hrCard.render();
   if (x.checkpoint) selectCheckpoint(x.checkpoint);
   persist();
   promptSchedule.refresh();
@@ -932,4 +969,4 @@ renderRegions();
 updateModeLabel();
 updateUndoButtons();
 loadInfo();
-window.venno = { doc, view, gen, state }; // handy for debugging from the console
+window.venno = { doc, view, gen, state, forms }; // handy for debugging from the console

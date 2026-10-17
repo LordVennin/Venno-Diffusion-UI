@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -261,6 +262,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
     if regional is not None:
         params["Regions"] = len(job.regions)
         params["Region base"] = job.region_base
+        if job.region_separation > 0:
+            params["Region separation"] = job.region_separation
         if job.region_end < 1.0:
             params["Region end"] = job.region_end
         for k, r in enumerate(job.regions, start=1):
@@ -354,7 +357,12 @@ def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int
             texts = {t for step in range(1, steps_run + 1) for t, _ in region.negative_plan.parts(step)}
             region.negative_contexts = {t: cond.tensor(engine, t, True, width, height) for t in texts}
         region_list.append(region)
-    return regions.RegionalAttention(region_list, base_strength=job.region_base)
+    return regions.RegionalAttention(
+        region_list, base_strength=job.region_base,
+        separation=job.region_separation,
+        separate_from=max(2, math.floor(steps_run * job.region_end * 0.25) + 1),  # layout first, as one picture
+        separate_until=math.ceil(steps_run * job.region_end * 0.6),
+    )
 
 
 def hires_size(job) -> tuple[int, int]:

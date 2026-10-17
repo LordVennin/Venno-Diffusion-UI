@@ -1,9 +1,16 @@
 // Turns the canvas state into Venno jobs and manages results / live mode.
 
 import { LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, alphaToMask, ctx2d, hasContentIn, loadImage, makeCanvas, regionMasks, strokeRegionMask } from "./doc.js";
-import { ADETAILER_DEFAULT, withQualityPrefix } from "./common.js";
+import { withQualityPrefix } from "./common.js";
+import { detailerJob, hiresJob } from "./cards.js";
+import { gridJob } from "./gridui.js";
 import { cancelJob, jobModel, runJob } from "./jobs.js";
 import { jobLoras } from "./loras.js";
+
+// Count / group tags describe the whole picture, not one region: "4girls" in every region prompt makes
+// each region draw a group. They are left out when the main prompt is added to region prompts.
+const COUNT_TAG = /^\s*(([2-9]|\d{2,})\+?\s*(girls|boys|others|people|persons|women|men)|multiple (girls|boys|others|people|views)|group( photo| shot)?|crowd|everyone)\s*$/i;
+export const withoutCountTags = (prompt) => prompt.split(",").filter((t) => !COUNT_TAG.test(t)).join(",").replace(/^[\s,]+|[\s,]+$/g, "");
 
 // Choose a model resolution for a canvas area: ~targetPixels, multiples of 64, Anima-friendly bounds.
 export function fitResolution(w, h, targetPixels) {
@@ -112,13 +119,15 @@ export class Generator {
     for (const { layer: l, mask: source } of regionMasks(doc, { mode: g.regionOverlap || "top" })) {
       if (!hasContentIn(source, rect)) continue;
       let rp = l.prompt.trim();
-      if (g.regionAppendRoot && g.prompt.trim()) rp = `${rp}, ${g.prompt.trim()}`;
+      const shared = withoutCountTags(g.prompt.trim());
+      if (g.regionAppendRoot && shared) rp = `${rp}, ${shared}`;
       let rn = (l.negative || "").trim();
       if (rn && g.regionAppendRoot && g.negative.trim()) rn = `${rn}, ${g.negative.trim()}`;
       job.regions.push({ prompt: rp, negative: rn, mask: doc.crop(source, rect, gw, gh).toDataURL("image/png"), strength: l.regionStrength });
     }
     job.region_base = g.regionBase;
     job.region_end = g.regionEnd;
+    job.region_separation = g.regionSeparation ?? 0.7;
 
     // sketch guides (ControlNet / ControlLLLite)
     job.guides = [];
@@ -138,13 +147,13 @@ export class Generator {
       job.guides.push({ model: l.controlModel, image: img.toDataURL("image/png"), weight: l.controlWeight, start: l.controlStart, end: l.controlEnd });
     }
 
-    // detailer: re-render detected faces (skipped in live mode to keep it fast)
-    const adModels = st.info?.adetailer_models || [];
-    job.detailer = [];
-    if (g.adetailer && !plan.live && adModels.length) {
-      const face = adModels.includes("face_yolov8n.pt") ? "face_yolov8n.pt" : adModels.find((m) => /face/i.test(m));
-      const u = ADETAILER_DEFAULT.units[0];
-      if (face) job.detailer.push({ model: face, confidence: u.confidence, denoise: u.denoise, mask_blur: u.maskBlur, dilate: u.dilate, padding: u.padding });
+    // hires fix (new images only), detailer and comparison grid: skipped in live mode to keep it fast
+    if (!plan.live) {
+      job.detailer = detailerJob(g.detailer);
+      const hires = txt2img ? hiresJob(g) : null;
+      if (hires) job.hires = hires;
+      const grid = gridJob(g.grid);
+      if (grid) job.grid = grid;
     }
 
     return job;
@@ -201,6 +210,7 @@ export class Generator {
       const images = await Promise.all(done.images.map((url) => loadImage(url)));
       if (!images.length) throw new Error("No image returned");
       const result = { id: this._resultId++, images, rect: plan.rect, mask, seeds: done.seeds, infotexts: done.infotexts, prompt: job.prompt, txt2img: plan.txt2img };
+      result.grid = images.map((_, i) => /, Grid: "/.test(done.infotexts?.[i] || "")); // comparison grids: viewed, not applied
       if (live) {
         this.live.result = result;
         this.emit("live-result", result);
@@ -209,7 +219,9 @@ export class Generator {
         this.results.unshift(result);
         if (this.results.length > 40) this.results.pop();
         this.emit("results");
-        this.preview(result, 0);
+        const first = result.grid.indexOf(false);
+        if (first >= 0) this.preview(result, first);
+        if (result.grid[0]) this.emit("grid", result.images[0].src);
       }
     } catch (e) {
       if (e.message !== "Cancelled") this.emit("error", e.message);

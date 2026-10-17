@@ -132,6 +132,7 @@ class Job(BaseModel):
     regions: list[Region] = []
     region_base: float = 0.25
     region_end: float = 1.0
+    region_separation: float = 0.0  # 0..1: keep regions apart in self-attention during the early steps (Venno engine)
     guides: list[Guide] = []
     hires: Optional[Hires] = None
     detailer: list[Detailer] = []

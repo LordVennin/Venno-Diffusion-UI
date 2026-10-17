@@ -13,6 +13,15 @@ Weights per token (same rule as Venno's Forge-side script):
 
 A region with its own negative prompt gets the same blend on the negative (CFG) rows; regions without one
 use the main negative there. Without a negative pass (CFG 1) region negatives have no effect.
+
+Separation: cross-attention alone tells each area what to be, but self-attention still mixes every image
+token with every other, so with many regions the characters average out (hair colours, outfits, faces
+swap or blend). In the middle of the steps, `separation` damps self-attention between tokens of
+different regions (by up to 1000×), so each character's look forms from its own prompt. The first steps
+run unmasked so the picture's layout forms as one image (separating from step 1 makes every region
+compose its own little picture, e.g. a group of people per region), and the last steps run unmasked to
+blend lighting and style. Regions whose box spans most of the picture count as background
+and are never separated from the others (a background region behind characters stays shared).
 """
 
 from __future__ import annotations
@@ -42,9 +51,49 @@ class Region:
 class RegionalAttention:
     regions: list[Region]
     base_strength: float = 0.25
+    separation: float = 0.0  # 0..1, how strongly regions are kept apart in self-attention
+    separate_from: int = 1  # first step (1-based) with separation
+    separate_until: int = 0  # last step (1-based) with separation
     step: int = 1  # set by the denoiser before each model call
     _contexts: dict = field(default_factory=dict, repr=False)
     _weights: dict = field(default_factory=dict, repr=False)
+    _bias: dict = field(default_factory=dict, repr=False)
+
+    MAX_DAMPING = -6.9  # log(1/1000): separation 1 damps attention between regions 1000×
+    BACKGROUND_BOX = 0.6  # a region whose bounding box covers more of the picture than this is background
+
+    def token_masks(self, h: int, w: int) -> torch.Tensor:
+        """(R, h, w) region masks at the block's token resolution."""
+        masks = []
+        for r in self.regions:
+            m = F.interpolate(r.mask[None, None].float(), size=(h, w), mode="area")
+            m = F.avg_pool2d(F.pad(m, (1, 1, 1, 1), mode="replicate"), kernel_size=3, stride=1)  # soften by one token
+            masks.append(m[0, 0])
+        return torch.stack(masks)
+
+    def self_bias(self, thw: tuple[int, int, int], like: torch.Tensor):
+        """Additive self-attention bias (1, 1, N, N) that keeps regions apart, or None when not separating now."""
+        if self.separation <= 0 or not self.separate_from <= self.step <= self.separate_until or thw[0] != 1:
+            return None
+        key = (thw, like.device, like.dtype)
+        if key not in self._bias:
+            _, h, w = thw
+            masks = self.token_masks(h, w)
+            keep = []
+            for k, r in enumerate(self.regions):
+                ys, xs = torch.nonzero(r.mask > 0.5, as_tuple=True)
+                box = 0.0 if not len(ys) else float((ys.max() - ys.min() + 1) * (xs.max() - xs.min() + 1)) / r.mask.numel()
+                if box <= self.BACKGROUND_BOX:
+                    keep.append(k)
+            if len(keep) < 2:
+                self._bias[key] = None
+            else:
+                m = masks[keep].reshape(len(keep), h * w).to(like.device, torch.float32)  # soft membership per token
+                any_ = m.sum(0)
+                cross = (any_[:, None] * any_[None, :] - m.T @ m).clamp_(0, 1)  # sum over a≠b of m_a(i)·m_b(j)
+                bias = cross * (self.MAX_DAMPING * self.separation)  # even steps: 0.5 → ~30×, 1 → 1000×
+                self._bias[key] = bias.to(like.dtype)[None, None]
+        return self._bias[key]
 
     def contexts(self, like: torch.Tensor, regions: list[Region] | None = None, negative: bool = False) -> torch.Tensor:
         """(R, L, D) region contexts, zero-padded to a common length (Anima pads prompts with zeros)."""
@@ -61,12 +110,7 @@ class RegionalAttention:
         key = (thw, like.device, like.dtype)
         if key not in self._weights:
             t, h, w = thw
-            masks = []
-            for r in self.regions:
-                m = F.interpolate(r.mask[None, None].float(), size=(h, w), mode="area")
-                m = F.avg_pool2d(F.pad(m, (1, 1, 1, 1), mode="replicate"), kernel_size=3, stride=1)  # soften by one token
-                masks.append(m[0, 0])
-            masks = torch.stack(masks)  # (R, h, w)
+            masks = self.token_masks(h, w)  # (R, h, w)
             coverage = masks.sum(0).clamp(max=1.0)
             base = 1.0 - coverage * (1.0 - self.base_strength)
             region = masks * torch.tensor([r.strength for r in self.regions])[:, None, None]

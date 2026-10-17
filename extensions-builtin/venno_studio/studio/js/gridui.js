@@ -20,6 +20,8 @@ export const AXES = [
   { key: "size", label: "Size", hint: "832x1216, 1024x1024, 1216x832" },
   { key: "switch_at", label: "Switch at", hint: "0.2, 0.4, 0.6 (needs a 'then switch to' prompt)" },
   { key: "detailer_denoise", label: "Detailer denoise", hint: "0.3, 0.4, 0.5" },
+  { key: "region_base", label: "Main prompt in regions", hint: "0, 0.25, 0.5 (Canvas regions)" },
+  { key: "region_separation", label: "Region separation", hint: "0, 0.5, 1 (Canvas regions)" },
 ];
 
 export const GRID_DEFAULT = {
@@ -35,6 +37,13 @@ const listValues = (info, list) => {
   return info[list] || [];
 };
 const quote = (v) => (/[,"]/.test(v) ? `"${v.replace(/"/g, '\\"')}"` : v);
+
+/** The job's `grid` field for a grid state, or null when off. */
+export function gridJob(g) {
+  if (!g?.enabled) return null;
+  const axis = (a) => (a.type === "none" ? null : { type: a.type, values: a.values, target: a.target || "" });
+  return { x: axis(g.axes[0]), y: axis(g.axes[1]), z: axis(g.axes[2]), include_cells: g.cells };
+}
 
 export class GridCard {
   /** opts: { state: () => gridState, persist, info: () => /info, loras: () => [{name}] } */
@@ -56,7 +65,7 @@ export class GridCard {
     const g = () => this.o.state();
     const on = this.el.querySelector(".g-on");
     on.onclick = (e) => e.stopPropagation();
-    on.onchange = () => { g().enabled = on.checked; this.save(); };
+    on.onchange = () => { g().enabled = on.checked; if (on.checked) this.el.open = true; this.save(); };
     this.el.querySelector(".g-cells").onchange = (e) => { g().cells = e.target.checked; this.save(); };
     this.el.querySelectorAll(".g-axis").forEach((row) => {
       const ax = () => g().axes[Number(row.dataset.i)];
@@ -113,12 +122,7 @@ export class GridCard {
   }
 
   /** The job's `grid` field, or null when off. */
-  job() {
-    const g = this.o.state();
-    if (!g.enabled) return null;
-    const axis = (a) => (a.type === "none" ? null : { type: a.type, values: a.values, target: a.target || "" });
-    return { x: axis(g.axes[0]), y: axis(g.axes[1]), z: axis(g.axes[2]), include_cells: g.cells };
-  }
+  job() { return gridJob(this.o.state()); }
 
   async check() {
     const g = this.o.state();

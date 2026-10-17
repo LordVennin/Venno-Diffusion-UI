@@ -329,13 +329,17 @@ class Block(nn.Module):
             scale_self_attn_B_T_1_1_D,
             shift_self_attn_B_T_1_1_D,
         )
+        _regional = transformer_options.get("venno_regional")  # Venno: keep regions apart early (venno/engine/regions.py)
+        _self_tokens = rearrange(normalized_x_B_T_H_W_D.to(compute_dtype), "b t h w d -> b (t h w) d")
+        _bias = _regional.self_bias((T, H, W), _self_tokens) if _regional is not None else None
+        if _bias is not None:
+            _q, _k, _v = self.self_attn.compute_qkv(_self_tokens, None, rope_emb=rope_emb_L_1_1_D)
+            _out = torch.nn.functional.scaled_dot_product_attention(_q.transpose(1, 2), _k.transpose(1, 2), _v.transpose(1, 2), attn_mask=_bias)
+            _self_out = self.self_attn.output_dropout(self.self_attn.output_proj(_out.transpose(1, 2).reshape(B, -1, _q.shape[2] * _q.shape[3])))
+        else:
+            _self_out = self.self_attn(_self_tokens, None, rope_emb=rope_emb_L_1_1_D, transformer_options=transformer_options)
         result_B_T_H_W_D = rearrange(
-            self.self_attn(
-                rearrange(normalized_x_B_T_H_W_D.to(compute_dtype), "b t h w d -> b (t h w) d"),
-                None,
-                rope_emb=rope_emb_L_1_1_D,
-                transformer_options=transformer_options,
-            ),
+            _self_out,
             "b (t h w) d -> b t h w d",
             t=T,
             h=H,

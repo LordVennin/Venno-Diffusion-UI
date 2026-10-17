@@ -371,7 +371,10 @@ details.card > summary > span { color: var(--text); }
 .regions-box .hint { font-size: 11px; margin: 0 0 4px; }
 /* the stage is sized in JS (fitStage) so the mask canvas always lines up with the image */
 .in-pane .i2i-stage img { width: 100%; height: 100%; max-width: none; max-height: none; }
-.out-pane .result-main img, .form-page .result-main img { width: 100%; height: 100%; object-fit: contain; }
+/* results always fit their area, whatever the image's size or shape (absolute: a % height never grows the box) */
+.form-page .result-main { position: relative; }
+.form-page .result-main img { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; object-fit: contain; }
+.r-thumbs img { flex: none; width: auto; object-fit: contain; background: #141518; }
 #region-list .r-side { display: grid; grid-template-columns: auto auto; gap: 4px; }
 #region-list .r-side .r-edit, #region-list .r-side label { grid-column: 1 / span 2; }
 #region-list .r-prompts { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -379,3 +382,20 @@ details.card > summary > span { color: var(--text); }
 #region-list .r-neg.set summary { color: var(--accent2); }
 #region-list .r-neg.set summary::after { content: " ●"; }
 #region-list .r-neg textarea, #layer-props textarea.neg { min-height: 26px; font-size: 12px; border-color: color-mix(in srgb, #d65a5a 45%, var(--line)); }
+/* Inpaint: mask and sketch layers over the image; the stage takes the pointer */
+.i2i-stage.paintable { cursor: none; touch-action: none; }
+.i2i-stage.paintable .i2i-mask { pointer-events: none; }
+.i2i-sketch { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.i2i-stage.sketching .i2i-mask { opacity: .3; }
+.f-guide-sum.warn { color: var(--accent2); }
+.row label.inline { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.row label.inline input { width: 70px; }
+/* Image to Image: outpaint frame (the new border shows as a checkerboard around the input) */
+.i2i-stage.outpainting { background: repeating-conic-gradient(#2a2d33 0 25%, #1d1f23 0 50%) 0 0 / 16px 16px; outline: 1px dashed var(--accent); }
+.i2i-stage img { -webkit-user-drag: none; user-select: none; }
+.hr-card summary .hr-sum { color: var(--accent2); font-size: 12px; margin-left: 4px; }
+.panel details.card > summary { cursor: pointer; font-weight: 600; }
+#thumbs img.grid { outline: 1px dashed var(--accent2); }
+#lightbox { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.86); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; }
+#lightbox[hidden] { display: none; }
+#lightbox img { max-width: 100%; max-height: calc(100% - 50px); object-fit: contain; }

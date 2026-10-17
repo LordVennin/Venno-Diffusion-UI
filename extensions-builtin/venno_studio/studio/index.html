@@ -152,16 +152,20 @@
         </div>
         <label class="check"><input type="checkbox" id="quality-prefix" checked> Add Anima quality tags</label>
         <label class="check" title="Blend inpainted areas step-by-step for invisible seams (Forge soft inpainting)"><input type="checkbox" id="soft-inpaint" checked> Seamless inpainting</label>
-        <label class="check" title="Detect faces in the result and re-render them at higher detail (not used in live mode)"><input type="checkbox" id="canvas-adetailer" checked> ADetailer (faces)</label>
         <label class="check"><input type="checkbox" id="save-images" checked> Save results to outputs folder</label>
         <label class="check"><input type="checkbox" id="progress-preview" checked> Show progress preview</label>
         <h4>Regional prompts</h4>
         <label title="How much the main prompt still applies inside regions">Main prompt inside regions <input type="range" id="region-base" min="0" max="100" value="25"><output id="out-region-base">25%</output></label>
         <label title="Stop regional guidance after this part of the steps (later steps refine details globally)">Region guidance until <input type="range" id="region-end" min="10" max="100" value="100"><output id="out-region-end">100%</output></label>
+        <label title="Keeps regions from blending into each other during the early steps (each character's look comes from its own prompt). Raise it when 3+ characters swap or mix features; regions spanning most of the picture (backgrounds) stay shared.">Keep regions apart <input type="range" id="region-sep" min="0" max="100" value="70"><output id="out-region-sep">70%</output></label>
         <label class="check" title="Region prompts get the main prompt added, and region negatives the main negative"><input type="checkbox" id="region-append" checked> Add the main prompts to region prompts</label>
         <label title="Where region layers overlap: the higher layer covers the lower one (e.g. a character over a background region), or both prompts mix">Overlapping regions <select id="region-overlap"><option value="top">Top layer wins</option><option value="blend">Blend prompts</option></select></label>
       </details>
     </section>
+
+    <details class="card" id="canvas-hr-card"></details>
+    <details class="card" id="canvas-ad-card"></details>
+    <details class="card grid-card" id="canvas-grid-card"></details>
 
     <section class="card layers">
       <header>

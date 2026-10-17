@@ -8,23 +8,29 @@ import { jobLoras, LoraChips } from "./loras.js";
 import { runSteps, SchedulePreview } from "./schedule.js";
 import { describeSettings, hasQualityTags, offerSettings, readImageSettings } from "./params.js";
 import { GRID_DEFAULT, GridCard } from "./gridui.js";
+import { strokeRegionMask } from "./doc.js";
+import { DetailerCard, HIRES_DEFAULT, HiresCard } from "./cards.js";
 
 const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768]];
 const RESIZE_MODES = ["Just resize", "Crop and resize", "Resize and fill"];
 const FILL_MODES = ["Fill", "Original", "Latent noise", "Latent nothing"];
 const FILL_KEYS = ["fill", "original", "latent_noise", "latent_nothing"];
 const MASK_COLOR = "#ff8a3d";
+const SKETCH_COLOR = "#2fd5f5"; // shown in a colour that stands out; sent to the guide model as dark lines on white
 
 const DEFAULTS = {
   prompt: "", negative: "", loras: [], switchPrompt: "", switchAt: 0.4, qualityPrefix: true, width: 1024, height: 1024, batchSize: 1, batchCount: 1,
   steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple", seed: -1, preset: "",
-  // hires fix (txt2img)
-  hr: false, hrUpscaler: "Latent", hrScale: 1.5, hrResizeX: 0, hrResizeY: 0, hrSteps: 0, hrDenoise: 0.5, hrCfg: 0, hrShift: 0,
+  ...HIRES_DEFAULT, // hires fix (txt2img)
   // img2img
   denoise: 0.6, resizeMode: 0, resizeBy: "by", scaleBy: 1, maskBlur: 8, fill: 1, onlyMasked: false, onlyMaskedPadding: 64, softInpaint: true,
   saveImages: true,
   adetailer: ADETAILER_DEFAULT,
   grid: GRID_DEFAULT,
+  // inpaint: sketch guide (ControlNet / ControlLLLite) drawn over the image
+  guide: { model: "", weight: 0.8, start: 0, end: 0.8, invert: "auto" }, sketchPad: 48,
+  // img2img: outpaint (extend the image)
+  outpaint: { enabled: false, left: 0, right: 0, top: 0, bottom: 0, overlap: 32, denoise: 1 },
 };
 
 export class GenForm {
@@ -36,6 +42,8 @@ export class GenForm {
     this.s = loadStore(this.key, structuredClone(DEFAULTS));
     this.s.adetailer = { ...structuredClone(ADETAILER_DEFAULT), ...(this.s.adetailer || {}) };
     this.s.grid = { ...structuredClone(GRID_DEFAULT), ...(this.s.grid || {}) };
+    this.s.guide = { ...structuredClone(DEFAULTS.guide), ...(this.s.guide || {}) };
+    this.s.outpaint = { ...structuredClone(DEFAULTS.outpaint), ...(this.s.outpaint || {}) };
     this.results = []; // [{src, seed, info}]
     this.current = -1;
     this.busy = false;
@@ -119,38 +127,39 @@ export class GenForm {
             <label>Only-masked padding <input type="number" class="f-padding" min="0" max="256"></label>
           </div>
           <label class="check"><input type="checkbox" class="f-soft"> Seamless (soft) inpainting</label>
-        </details>` : i2i ? "" : `
-        <details class="card f-hr-card">
-          <summary><input type="checkbox" class="f-hr" title="Use hires fix"> <span>Hires. fix</span></summary>
-          <div class="grid2">
-            <label>Upscaler <select class="f-hr-upscaler"></select></label>
-            <label>Hires steps <input type="number" class="f-hr-steps" min="0" max="150" title="0 = same as first pass"></label>
-            <label>Upscale by <input type="number" class="f-hr-scale" min="1" max="4" step="0.05"></label>
-            <label>Denoising <input type="number" class="f-hr-denoise" min="0" max="1" step="0.05"></label>
-            <label>Resize width to <input type="number" class="f-hr-x" min="0" max="4096" step="64" title="0 = use Upscale by"></label>
-            <label>Resize height to <input type="number" class="f-hr-y" min="0" max="4096" step="64" title="0 = use Upscale by"></label>
-            <label>Hires CFG <input type="number" class="f-hr-cfg" min="0" max="30" step="0.1" title="0 = same as first pass"></label>
-            <label>Hires shift <input type="number" class="f-hr-shift" min="0" max="20" step="0.1" title="0 = same as first pass"></label>
-          </div>
-          <div class="hint f-hr-info"></div>
-        </details>`}
-
-        <details class="card f-ad-card">
-          <summary><input type="checkbox" class="f-ad" title="Use ADetailer"> <span>ADetailer</span></summary>
-          ${[0, 1].map((n) => `
-          <div class="ad-unit" data-unit="${n}">
-            <h4>${n === 0 ? "1st" : "2nd"} detector</h4>
-            <div class="grid2">
-              <label>Model <select class="ad-model"></select></label>
-              <label>Denoising <input type="number" class="ad-denoise" min="0" max="1" step="0.05"></label>
-              <label>Confidence <input type="number" class="ad-confidence" min="0" max="1" step="0.05"></label>
-              <label>Mask blur <input type="number" class="ad-blur" min="0" max="64"></label>
-              <label>Dilate / erode <input type="number" class="ad-dilate" min="-64" max="64"></label>
-              <label>Padding <input type="number" class="ad-padding" min="0" max="256"></label>
-            </div>
-            <textarea class="ad-prompt" rows="1" placeholder="Detail prompt (empty = main prompt)"></textarea>
-          </div>`).join("")}
         </details>
+
+        <details class="card f-guide-card">
+          <summary><span>Sketch guide</span> <span class="f-guide-sum"></span></summary>
+          <div class="hint">Switch the image to <b>Sketch</b> and draw lines: a guide model (ControlNet / ControlLLLite) makes the new content follow them. Only the masked area changes; with no mask painted, the area around the sketch is masked for you. To draw something <b>new</b>, use Denoising 0.85–1 with Masked content <b>Fill</b>; lower values keep more of what is there.</div>
+          <label>Guide model <select class="f-guide-model"></select></label>
+          <div class="grid2">
+            <label>Strength <input type="number" class="f-guide-weight" min="0" max="2" step="0.05"></label>
+            <label>Lines sent as <select class="f-guide-invert"><option value="auto">Auto</option><option value="no">Dark on white</option><option value="yes">White on black</option></select></label>
+            <label>Guide from <input type="number" class="f-guide-start" min="0" max="1" step="0.05"></label>
+            <label>Guide until <input type="number" class="f-guide-end" min="0" max="1" step="0.05"></label>
+          </div>
+          <div class="row"><button class="f-mask-from-sketch" title="Add the area around the sketch to the mask">Mask around sketch</button><label class="inline">Padding <input type="number" class="f-sketch-pad" min="8" max="256" step="8"></label></div>
+        </details>` : i2i ? `
+        <details class="card f-op-card">
+          <summary><input type="checkbox" class="f-op" title="Use outpainting"> <span>Outpaint</span> <span class="f-op-sum"></span></summary>
+          <div class="hint">Extend the picture: the new border is generated to continue it, the original stays as it is.</div>
+          <div class="grid2">
+            <label>Left <input type="number" class="f-op-left" min="0" max="2048" step="64"></label>
+            <label>Right <input type="number" class="f-op-right" min="0" max="2048" step="64"></label>
+            <label>Top <input type="number" class="f-op-top" min="0" max="2048" step="64"></label>
+            <label>Bottom <input type="number" class="f-op-bottom" min="0" max="2048" step="64"></label>
+          </div>
+          <div class="sizes f-op-quick"><button data-op="all">All sides +128</button><button data-op="wide">Wider +256</button><button data-op="tall">Taller +256</button><button data-op="reset">Reset</button></div>
+          <div class="grid2">
+            <label title="How far into the original picture the new content may blend">Overlap <input type="number" class="f-op-overlap" min="0" max="256" step="8"></label>
+            <label title="For the new area (1 = generate it from scratch)">Denoising <input type="number" class="f-op-denoise" min="0.3" max="1" step="0.05"></label>
+          </div>
+          <div class="hint f-op-info"></div>
+        </details>` : `
+        <details class="card f-hr-card"></details>`}
+
+        <details class="card f-ad-card"></details>
 
         <details class="card f-grid-card grid-card"></details>
 
@@ -165,19 +174,20 @@ export class GenForm {
               <span class="pane-title">${inpaint ? "Image & mask" : "Input image"}</span>
               <div class="row mask-tools" hidden>
                 ${inpaint ? `
+                <div class="seg"><button class="f-layer-mask on" title="Paint the area to regenerate">Mask</button><button class="f-layer-sketch" title="Draw lines for the sketch guide">Sketch</button></div>
                 <div class="seg"><button class="f-mask-draw on">Paint</button><button class="f-mask-erase">Erase</button></div>
-                <label>Brush <input type="range" class="f-mask-size" min="4" max="300" value="48"></label>
+                <label>Brush <input type="range" class="f-mask-size" min="1" max="300" value="48"></label>
                 <button class="f-mask-invert">Invert</button>
-                <button class="f-mask-clear">Clear mask</button>` : ""}
+                <button class="f-mask-clear" title="Clear the mask (or the sketch, in Sketch mode)">Clear</button>` : ""}
                 <button class="f-open-again" title="Open another image">Open…</button>
                 <button class="f-image-clear" title="Remove image">✕</button>
               </div>
             </div>
             <div class="i2i-drop">
               <div class="i2i-empty">Drop, paste or <button class="f-open">open</button> an image<br><small>or use “Send to ${inpaint ? "Inpaint" : "Image to Image"}” from another tab</small></div>
-              <div class="i2i-stage" hidden><img class="i2i-img" alt="">${inpaint ? `<canvas class="i2i-mask"></canvas>` : ""}</div>
+              <div class="i2i-stage" hidden><img class="i2i-img" alt="" draggable="false">${inpaint ? `<canvas class="i2i-mask"></canvas><canvas class="i2i-sketch"></canvas>` : ""}</div>
             </div>
-            ${inpaint ? `<div class="hint">Paint over the area to regenerate. No mask = the whole image.</div>` : ""}
+            ${inpaint ? `<div class="hint f-pane-hint">Paint over the area to regenerate. No mask = the whole image. <b>Sketch</b> draws lines for the sketch guide.</div>` : ""}
           </div>
           <div class="pane out-pane">
             <div class="pane-head"><span class="pane-title">Result</span></div>
@@ -274,6 +284,52 @@ export class GenForm {
       });
       this.q(".f-fill").onchange = (e) => { s.fill = Number(e.target.value); this.persist(); };
       this.q(".f-only-masked").onchange = (e) => { s.onlyMasked = e.target.value === "1"; this.persist(); };
+      const gd = () => s.guide;
+      const gnum = (sel, key) => {
+        const el = this.q(sel);
+        sync(() => (el.value = gd()[key]));
+        el.onchange = () => { gd()[key] = Number(el.value); this.persist(); };
+      };
+      gnum(".f-guide-weight", "weight");
+      gnum(".f-guide-start", "start");
+      gnum(".f-guide-end", "end");
+      num(".f-sketch-pad", "sketchPad");
+      sync(() => { this.q(".f-guide-invert").value = gd().invert; this.q(".f-guide-model").value = gd().model; });
+      this.q(".f-guide-invert").onchange = (e) => { gd().invert = e.target.value; this.persist(); };
+      this.q(".f-guide-model").onchange = (e) => { gd().model = e.target.value; this.persist(); this.updateGuideSummary(); };
+      this.q(".f-mask-from-sketch").onclick = () => {
+        if (!this.sketchHasContent()) return toast("Draw a sketch first (switch the image to Sketch)", "info");
+        this.maskFromSketch();
+      };
+    }
+    if (this.mode === "img2img") {
+      const op = () => s.outpaint;
+      const changed = () => { this.persist(); this.fitStage(); this.showResize(); this.updateOutpaintInfo(); };
+      const opChk = this.q(".f-op");
+      sync(() => { opChk.checked = op().enabled; if (op().enabled) this.q(".f-op-card").open = true; });
+      opChk.onclick = (e) => e.stopPropagation();
+      opChk.onchange = () => { op().enabled = opChk.checked; if (op().enabled) this.q(".f-op-card").open = true; changed(); };
+      for (const key of ["left", "right", "top", "bottom", "overlap", "denoise"]) {
+        const el = this.q(`.f-op-${key}`);
+        sync(() => (el.value = op()[key]));
+        el.onchange = () => {
+          const v = Math.max(0, Number(el.value) || 0);
+          op()[key] = key === "denoise" ? Math.min(1, Math.max(0.3, v)) : v;
+          el.value = op()[key];
+          changed();
+        };
+      }
+      $$(".f-op-quick button", this.root).forEach((b) => (b.onclick = () => {
+        const o = op(), k = b.dataset.op;
+        if (k === "reset") Object.assign(o, { left: 0, right: 0, top: 0, bottom: 0 });
+        if (k === "all") for (const side of ["left", "right", "top", "bottom"]) o[side] += 128;
+        if (k === "wide") { o.left += 128; o.right += 128; }
+        if (k === "tall") { o.top += 128; o.bottom += 128; }
+        o.enabled = k !== "reset" || o.enabled;
+        this.syncs.forEach((fn) => fn());
+        changed();
+      }));
+      this.updateOutpaintInfo();
     }
     if (i2i) {
       sync(() => {
@@ -294,43 +350,13 @@ export class GenForm {
       this.q(".f-size-from-image").onclick = () => this.sizeFromImage();
       this.bindImageInput();
     } else {
-      chk(".f-hr", "hr", () => this.updateHrInfo());
-      this.q(".f-hr").onclick = (e) => e.stopPropagation(); // don't toggle the <details>
-      num(".f-hr-steps", "hrSteps");
-      num(".f-hr-scale", "hrScale", () => this.updateHrInfo());
-      num(".f-hr-denoise", "hrDenoise");
-      num(".f-hr-x", "hrResizeX", () => this.updateHrInfo());
-      num(".f-hr-y", "hrResizeY", () => this.updateHrInfo());
-      num(".f-hr-cfg", "hrCfg");
-      num(".f-hr-shift", "hrShift");
-      this.q(".f-hr-upscaler").onchange = (e) => { s.hrUpscaler = e.target.value; this.persist(); };
-      this.syncs.push(() => { this.q(".f-hr-upscaler").value = s.hrUpscaler; if (s.hr) this.q(".f-hr-card").open = true; });
-      this.updateHrInfo();
+      this.hrCard = new HiresCard(this.q(".f-hr-card"), { state: () => s, persist: () => this.persist(), size: () => [s.width, s.height] });
+      this.syncs.push(() => this.hrCard.render());
     }
 
     // ADetailer
-
-    const adChk = this.q(".f-ad");
-    sync(() => (adChk.checked = s.adetailer.enabled));
-    adChk.onclick = (e) => e.stopPropagation();
-    adChk.onchange = () => { s.adetailer.enabled = adChk.checked; this.persist(); };
-    $$(".ad-unit", this.root).forEach((el) => {
-      const u = () => s.adetailer.units[Number(el.dataset.unit)];
-      const bindU = (sel, key, isNum = true) => {
-        const f = $(sel, el);
-        sync(() => (f.value = u()[key]));
-        f.onchange = () => { u()[key] = isNum ? Number(f.value) : f.value; this.persist(); };
-      };
-      bindU(".ad-model", "model", false);
-      bindU(".ad-denoise", "denoise");
-      bindU(".ad-confidence", "confidence");
-      bindU(".ad-blur", "maskBlur");
-      bindU(".ad-dilate", "dilate");
-      bindU(".ad-padding", "padding");
-      const p = $(".ad-prompt", el);
-      sync(() => (p.value = u().prompt));
-      p.oninput = () => { u().prompt = p.value; this.persist(); };
-    });
+    this.adCard = new DetailerCard(this.q(".f-ad-card"), { state: () => s.adetailer, persist: () => this.persist() });
+    this.syncs.push(() => this.adCard.render());
 
     // comparison grid
     this.gridCard = new GridCard(this.q(".f-grid-card"), { state: () => s.grid, persist: () => this.persist(), info: () => this.ctx.state.info, loras: () => s.loras });
@@ -445,9 +471,15 @@ export class GenForm {
     fillSelect(this.q(".f-preset"), Object.entries(info.presets).map(([k, p]) => ({ value: k, label: p.label })), s.preset, { empty: "Custom" });
     this.q(".f-lora").innerHTML = `<option value="">+ LoRA… (${info.loras.length})</option>` + info.loras.map((l) => `<option value="${escapeHtml(l.name)}">${escapeHtml(l.name)}</option>`).join("");
     this.loras.setAvailable(info.loras.map((l) => l.name));
-    if (this.q(".f-hr-upscaler")) fillSelect(this.q(".f-hr-upscaler"), info.upscalers.map((x) => ({ value: x, label: x })), s.hrUpscaler);
-    const adModels = [{ value: "None", label: "None" }, ...info.adetailer_models.map((x) => ({ value: x, label: x }))];
-    $$(".ad-unit", this.root).forEach((el) => fillSelect($(".ad-model", el), adModels, s.adetailer.units[Number(el.dataset.unit)].model));
+    this.hrCard?.setInfo(info);
+    this.adCard.setInfo(info);
+    const gsel = this.q(".f-guide-model");
+    if (gsel) {
+      const models = info.controlnets || [];
+      if (!s.guide.model && models.length) s.guide.model = models[0];
+      fillSelect(gsel, models.map((x) => ({ value: x, label: x })), s.guide.model, { empty: models.length ? "— none —" : "— none: download one in Models —" });
+      this.updateGuideSummary();
+    }
     if (!s.negative && info.prompt_defaults?.negative) { s.negative = info.prompt_defaults.negative; this.q(".f-negative").value = s.negative; }
     if (!s.preset) this.applyPreset(presetForCheckpoint(this.ctx.state.model.checkpoint));
   }
@@ -474,27 +506,48 @@ export class GenForm {
     this.updateHrInfo();
   }
 
-  updateHrInfo() {
-    const el = this.q(".f-hr-info");
-    if (!el) return;
-    const s = this.s;
-    let w = s.hrResizeX || Math.round((s.width * s.hrScale) / 64) * 64;
-    let h = s.hrResizeY || Math.round((s.height * s.hrScale) / 64) * 64;
-    if (s.hrResizeX && !s.hrResizeY) h = Math.round((s.height * s.hrResizeX) / s.width / 64) * 64;
-    if (s.hrResizeY && !s.hrResizeX) w = Math.round((s.width * s.hrResizeY) / s.height / 64) * 64;
-    el.textContent = s.hr ? `${s.width}×${s.height} → ${w}×${h}` : "Generate at low resolution, then upscale and refine (like Forge's Hires. fix).";
-  }
+  updateHrInfo() { this.hrCard?.updateInfo(); }
 
   // ---------------- img2img input & mask ----------------
   /** Fit the input image (and its mask canvas) to the pane, scaling small images up too. */
   fitStage() {
     const img = this.inputImage, drop = this.q(".i2i-drop"), stage = this.q(".i2i-stage");
     if (!img || !drop || stage.hidden) return;
+    const op = this.outpaint();
+    const [W, H] = this.sourceSize();
     const r = drop.getBoundingClientRect();
-    const k = Math.min((r.width - 16) / img.naturalWidth, (r.height - 16) / img.naturalHeight);
+    const k = Math.min((r.width - 16) / W, (r.height - 16) / H);
     if (!(k > 0)) return;
-    stage.style.width = `${Math.floor(img.naturalWidth * k)}px`;
-    stage.style.height = `${Math.floor(img.naturalHeight * k)}px`;
+    stage.style.width = `${Math.floor(W * k)}px`;
+    stage.style.height = `${Math.floor(H * k)}px`;
+    stage.classList.toggle("outpainting", !!op);
+    const el = this.q(".i2i-img");
+    Object.assign(el.style, op
+      ? { position: "absolute", left: `${(op.left / W) * 100}%`, top: `${(op.top / H) * 100}%`, width: `${(img.naturalWidth / W) * 100}%`, height: `${(img.naturalHeight / H) * 100}%` }
+      : { position: "", left: "", top: "", width: "", height: "" });
+  }
+
+  /** Outpaint settings when outpainting is on and extends at least one side, else null. */
+  outpaint() {
+    const o = this.s.outpaint;
+    return this.mode === "img2img" && o?.enabled && o.left + o.right + o.top + o.bottom > 0 ? o : null;
+  }
+
+  /** Size of the picture sent to the engine: the input, plus the outpaint border. */
+  sourceSize() {
+    const img = this.inputImage;
+    if (!img) return [this.s.width, this.s.height];
+    const o = this.outpaint();
+    return o ? [img.naturalWidth + o.left + o.right, img.naturalHeight + o.top + o.bottom] : [img.naturalWidth, img.naturalHeight];
+  }
+
+  updateOutpaintInfo() {
+    const el = this.q(".f-op-info");
+    if (!el) return;
+    const o = this.outpaint(), img = this.inputImage;
+    const [W, H] = this.sourceSize();
+    this.q(".f-op-sum").textContent = o ? `(+${o.left + o.right}×${o.top + o.bottom})` : "";
+    el.textContent = !img ? "Add an input image first." : o ? `${img.naturalWidth}×${img.naturalHeight} → ${W}×${H} before resizing. The Denoising strength above is not used.` : "Set how many pixels to add on each side.";
   }
 
   bindImageInput() {
@@ -518,24 +571,42 @@ export class GenForm {
     this.q(".f-image-clear").onclick = () => this.setInputImage(null);
     const mc = this.q(".i2i-mask");
     if (!mc) return; // Image to Image: no mask
-    let erase = false, size = 48, drawing = false, last = null;
+    const sk = this.q(".i2i-sketch");
+    const stage = this.q(".i2i-stage");
+    stage.classList.add("paintable");
+    const tools = { mask: { erase: false, size: 48 }, sketch: { erase: false, size: 4 } };
+    this.layer = "mask";
+    const cur = () => tools[this.layer];
+    let drawing = false, last = null;
     const cursor = document.createElement("div");
     cursor.className = "mask-cursor";
-    this.q(".i2i-stage").appendChild(cursor);
-    this.q(".f-mask-draw").onclick = () => { erase = false; this.q(".f-mask-draw").classList.add("on"); this.q(".f-mask-erase").classList.remove("on"); };
-    this.q(".f-mask-erase").onclick = () => { erase = true; this.q(".f-mask-erase").classList.add("on"); this.q(".f-mask-draw").classList.remove("on"); };
-    this.q(".f-mask-size").oninput = (e) => (size = Number(e.target.value));
-    this.q(".f-mask-clear").onclick = () => this.clearMask();
+    stage.appendChild(cursor);
+    const showTool = () => {
+      this.q(".f-layer-mask").classList.toggle("on", this.layer === "mask");
+      this.q(".f-layer-sketch").classList.toggle("on", this.layer === "sketch");
+      this.q(".f-mask-draw").classList.toggle("on", !cur().erase);
+      this.q(".f-mask-erase").classList.toggle("on", cur().erase);
+      this.q(".f-mask-size").value = cur().size;
+      this.q(".f-mask-invert").hidden = this.layer !== "mask";
+      stage.classList.toggle("sketching", this.layer === "sketch");
+    };
+    this.setLayer = (name) => { this.layer = name; showTool(); };
+    this.q(".f-layer-mask").onclick = () => this.setLayer("mask");
+    this.q(".f-layer-sketch").onclick = () => this.setLayer("sketch");
+    this.q(".f-mask-draw").onclick = () => { cur().erase = false; showTool(); };
+    this.q(".f-mask-erase").onclick = () => { cur().erase = true; showTool(); };
+    this.q(".f-mask-size").oninput = (e) => (cur().size = Number(e.target.value));
+    this.q(".f-mask-clear").onclick = () => { if (this.layer === "mask") this.clearMask(); else this.clearSketch(); };
     this.q(".f-mask-invert").onclick = () => this.invertMask();
     const pos = (e) => {
       const r = mc.getBoundingClientRect();
       return { x: ((e.clientX - r.left) / r.width) * mc.width, y: ((e.clientY - r.top) / r.height) * mc.height, k: mc.width / r.width };
     };
     const paint = (p) => {
-      const c = mc.getContext("2d");
-      c.globalCompositeOperation = erase ? "destination-out" : "source-over";
-      c.strokeStyle = c.fillStyle = MASK_COLOR;
-      c.lineWidth = size * p.k;
+      const c = (this.layer === "mask" ? mc : sk).getContext("2d");
+      c.globalCompositeOperation = cur().erase ? "destination-out" : "source-over";
+      c.strokeStyle = c.fillStyle = this.layer === "mask" ? MASK_COLOR : SKETCH_COLOR;
+      c.lineWidth = cur().size * p.k;
       c.lineCap = c.lineJoin = "round";
       c.beginPath();
       c.moveTo((last || p).x, (last || p).y);
@@ -543,20 +614,23 @@ export class GenForm {
       c.stroke();
       last = p;
     };
-    mc.addEventListener("pointerdown", (e) => { mc.setPointerCapture(e.pointerId); drawing = true; last = null; paint(pos(e)); });
-    mc.addEventListener("pointermove", (e) => {
-      const r = mc.getBoundingClientRect();
-      Object.assign(cursor.style, { display: "block", width: `${size}px`, height: `${size}px`, left: `${e.clientX - r.left}px`, top: `${e.clientY - r.top}px` });
+    stage.addEventListener("pointerdown", (e) => { if (e.button !== 0) return; stage.setPointerCapture(e.pointerId); drawing = true; last = null; paint(pos(e)); });
+    stage.addEventListener("pointermove", (e) => {
+      const r = stage.getBoundingClientRect();
+      Object.assign(cursor.style, { display: "block", width: `${cur().size}px`, height: `${cur().size}px`, left: `${e.clientX - r.left}px`, top: `${e.clientY - r.top}px` });
       if (drawing) paint(pos(e));
     });
-    mc.addEventListener("pointerleave", () => (cursor.style.display = "none"));
-    mc.addEventListener("pointerup", () => { drawing = false; last = null; });
-    mc.addEventListener("wheel", (e) => {  // brush size with the wheel over the image
+    stage.addEventListener("pointerleave", () => (cursor.style.display = "none"));
+    const end = () => { if (!drawing) return; drawing = false; last = null; this.updateGuideSummary(); };
+    stage.addEventListener("pointerup", end);
+    stage.addEventListener("pointercancel", end);
+    stage.addEventListener("wheel", (e) => {  // brush size with the wheel over the image
       e.preventDefault();
-      size = Math.max(4, Math.min(300, size * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
-      this.q(".f-mask-size").value = size;
-      cursor.style.width = cursor.style.height = `${size}px`;
+      cur().size = Math.max(1, Math.min(300, cur().size * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+      this.q(".f-mask-size").value = cur().size;
+      cursor.style.width = cursor.style.height = `${cur().size}px`;
     }, { passive: false });
+    showTool();
   }
 
   async setInputImage(src, { offer = false } = {}) {
@@ -573,11 +647,13 @@ export class GenForm {
     this.inputImage = img;
     this.q(".i2i-img").src = src;
     if (offer) offerSettings(src, (st) => this.applySettings(st));
-    const mc = this.q(".i2i-mask");
-    if (mc) {
-      mc.width = img.naturalWidth;
-      mc.height = img.naturalHeight;
+    for (const c of [this.q(".i2i-mask"), this.q(".i2i-sketch")]) {
+      if (!c) continue;
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
     }
+    this.updateGuideSummary();
+    this.updateOutpaintInfo();
     this.q(".i2i-stage").hidden = false;
     this.q(".i2i-empty").hidden = true;
     this.q(".mask-tools").hidden = false;
@@ -591,7 +667,8 @@ export class GenForm {
     const s = this.s, img = this.inputImage;
     if (s.resizeBy === "by" && img) {
       const snap = (v) => Math.max(64, Math.round((v * s.scaleBy) / 8) * 8);
-      return [snap(img.naturalWidth), snap(img.naturalHeight)];
+      const [w, h] = this.sourceSize();
+      return [snap(w), snap(h)];
     }
     return [s.width, s.height];
   }
@@ -606,12 +683,13 @@ export class GenForm {
     this.q(".f-scale").nextElementSibling.textContent = `${Math.round(this.s.scaleBy * 100)}%`;
     const img = this.inputImage;
     const [w, h] = this.outputSize();
-    this.q(".f-scale-info").textContent = img ? `${img.naturalWidth}×${img.naturalHeight} → ${w}×${h}` : "Scales the input image (output = input size × scale).";
+    const [sw, sh] = this.sourceSize();
+    this.q(".f-scale-info").textContent = img ? `${sw}×${sh}${this.outpaint() ? " (outpainted)" : ""} → ${w}×${h}` : "Scales the input image (output = input size × scale).";
   }
 
   sizeFromImage() {
     if (!this.inputImage) return;
-    const { naturalWidth: w, naturalHeight: h } = this.inputImage;
+    const [w, h] = this.sourceSize();
     // keep the aspect ratio, ~1 megapixel for Anima, multiples of 64
     const scale = Math.sqrt((1024 * 1024) / (w * h));
     const snap = (v) => Math.max(256, Math.round((v * scale) / 64) * 64);
@@ -624,6 +702,64 @@ export class GenForm {
     const d = mc.getContext("2d").getImageData(0, 0, mc.width, mc.height).data;
     for (let i = 3; i < d.length; i += 16) if (d[i] > 0) return true;
     return false;
+  }
+
+  sketchHasContent() {
+    const sk = this.q(".i2i-sketch");
+    if (!sk || !this.inputImage) return false;
+    const d = sk.getContext("2d").getImageData(0, 0, sk.width, sk.height).data;
+    for (let i = 3; i < d.length; i += 16) if (d[i] > 0) return true;
+    return false;
+  }
+
+  clearSketch() {
+    const sk = this.q(".i2i-sketch");
+    sk.getContext("2d").clearRect(0, 0, sk.width, sk.height);
+    this.updateGuideSummary();
+  }
+
+  /** Add the area around the sketch strokes (closed shapes filled) to the mask. */
+  maskFromSketch() {
+    const area = strokeRegionMask(this.q(".i2i-sketch"), this.s.sketchPad, true);
+    const t = area.getContext("2d");
+    t.globalCompositeOperation = "source-in";
+    t.fillStyle = MASK_COLOR;
+    t.fillRect(0, 0, area.width, area.height);
+    this.q(".i2i-mask").getContext("2d").drawImage(area, 0, 0);
+  }
+
+  /** The sketch as the guide model expects it: dark lines on white (or inverted for scribble-type models). */
+  sketchGuideDataURL() {
+    const sk = this.q(".i2i-sketch"), g = this.s.guide;
+    const lines = document.createElement("canvas");
+    lines.width = sk.width;
+    lines.height = sk.height;
+    const lc = lines.getContext("2d");
+    lc.drawImage(sk, 0, 0);
+    lc.globalCompositeOperation = "source-in";
+    lc.fillStyle = "#000";
+    lc.fillRect(0, 0, lines.width, lines.height);
+    const out = document.createElement("canvas");
+    out.width = sk.width;
+    out.height = sk.height;
+    const c = out.getContext("2d");
+    c.fillStyle = "#fff";
+    c.fillRect(0, 0, out.width, out.height);
+    c.drawImage(lines, 0, 0);
+    if (g.invert === "yes" || (g.invert === "auto" && /scribble|hed|pidi/i.test(g.model))) {
+      c.globalCompositeOperation = "difference";
+      c.fillStyle = "#fff";
+      c.fillRect(0, 0, out.width, out.height);
+    }
+    return out.toDataURL("image/png");
+  }
+
+  updateGuideSummary() {
+    const el = this.q(".f-guide-sum");
+    if (!el) return;
+    const sketched = this.sketchHasContent();
+    el.textContent = sketched ? (this.s.guide.model ? "(sketch drawn)" : "(pick a guide model)") : "";
+    el.classList.toggle("warn", sketched && !this.s.guide.model);
   }
 
   clearMask() {
@@ -668,11 +804,29 @@ export class GenForm {
   }
 
   inputDataURL() {
-    const img = this.inputImage;
+    const img = this.inputImage, o = this.outpaint();
+    const [W, H] = this.sourceSize();
     const c = document.createElement("canvas");
-    c.width = img.naturalWidth;
-    c.height = img.naturalHeight;
-    c.getContext("2d").drawImage(img, 0, 0);
+    c.width = W;
+    c.height = H;
+    c.getContext("2d").drawImage(img, o ? o.left : 0, o ? o.top : 0);
+    return c.toDataURL("image/png");
+  }
+
+  /** Outpaint mask: the new border, reaching `overlap` px into the original on the extended sides. */
+  outpaintMaskDataURL() {
+    const img = this.inputImage, o = this.outpaint();
+    const [W, H] = this.sourceSize();
+    const c = document.createElement("canvas");
+    c.width = W;
+    c.height = H;
+    const x = c.getContext("2d");
+    x.fillStyle = "#fff";
+    x.fillRect(0, 0, W, H);
+    const ov = (side) => (o[side] > 0 ? o.overlap : 0);
+    const left = o.left + ov("left"), top = o.top + ov("top");
+    x.fillStyle = "#000";
+    x.fillRect(left, top, Math.max(0, img.naturalWidth - ov("left") - ov("right")), Math.max(0, img.naturalHeight - ov("top") - ov("bottom")));
     return c.toDataURL("image/png");
   }
 
@@ -725,19 +879,26 @@ export class GenForm {
       save: s.saveImages,
       tag: this.mode,
     };
-    if (this.mode === "txt2img" && s.hr) {
-      job.hires = {
-        upscaler: s.hrUpscaler,
-        scale: s.hrScale,
-        resize_x: s.hrResizeX,
-        resize_y: s.hrResizeY,
-        steps: s.hrSteps,
-        denoise: s.hrDenoise,
-        cfg: s.hrCfg || null,
-        shift: s.hrShift || null,
-      };
+    if (this.mode === "txt2img" && s.hr) job.hires = this.hrCard.job();
+    if (this.mode === "inpaint" && this.inputImage && this.sketchHasContent()) {
+      if (!s.guide.model) throw new Error("Pick a guide model under “Sketch guide” (or clear the sketch)");
+      if (!this.maskHasContent()) {
+        this.maskFromSketch();
+        toast("Masked the area around your sketch (switch to Mask to change it)", "info");
+      }
+      job.guides = [{ model: s.guide.model, image: this.sketchGuideDataURL(), weight: s.guide.weight, start: s.guide.start, end: s.guide.end }];
+      if (s.denoise < 0.75 && !this.lowDenoiseTipShown) {
+        this.lowDenoiseTipShown = true;
+        toast(`Tip: at denoising ${s.denoise} the sketch can only nudge what is there. To draw something new, use 0.85–1 with Masked content: Fill.`, "info");
+      }
     }
-    if (this.mode !== "txt2img") {
+    const op = this.outpaint();
+    if (op && this.inputImage) {
+      Object.assign(job, {
+        init_image: this.inputDataURL(), strength: op.denoise, resize_mode: 0,
+        mask: this.outpaintMaskDataURL(), mask_blur: Math.max(4, Math.round(op.overlap / 2)), fill: "fill", only_masked: false, soft_inpaint: true,
+      });
+    } else if (this.mode !== "txt2img") {
       if (!this.inputImage) throw new Error("Add an input image first");
       Object.assign(job, { init_image: this.inputDataURL(), strength: s.denoise, resize_mode: s.resizeMode });
       if (this.maskHasContent()) {
@@ -753,9 +914,7 @@ export class GenForm {
     }
     const grid = this.gridCard.job();
     if (grid) job.grid = grid;
-    job.detailer = !s.adetailer.enabled ? [] : s.adetailer.units
-      .filter((u) => u.model && u.model !== "None")
-      .map((u) => ({ model: u.model, prompt: u.prompt || "", negative: u.negative || "", confidence: u.confidence, denoise: u.denoise, mask_blur: u.maskBlur, dilate: u.dilate, padding: u.padding }));
+    job.detailer = this.adCard.job();
     return job;
   }
 
