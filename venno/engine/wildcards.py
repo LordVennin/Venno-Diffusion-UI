@@ -26,9 +26,9 @@ MAX_DEPTH = 20
 
 
 def folder() -> str:
-    from modules import paths  # Phase 4: Venno settings
+    from venno import config
 
-    path = os.path.join(paths.data_path, "wildcards")
+    path = os.path.join(config.data_path(), "wildcards")
     os.makedirs(path, exist_ok=True)
     return path
 

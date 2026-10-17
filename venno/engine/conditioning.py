@@ -47,9 +47,9 @@ def extract_lora_tags(prompt: str, *, keep_random: bool = False) -> tuple[str, l
 
 def encode(engine, prompt: str, batch: int, *, negative: bool, width: int, height: int) -> torch.Tensor:
     """(batch, L, D) conditioning for one prompt repeated over a batch."""
-    from modules.prompt_parser import SdConditioning  # list + flags; replaced by a Venno type in Phase 4
+    from backend.settings import Conditioning
 
-    conds = engine.get_learned_conditioning(SdConditioning([prompt], is_negative_prompt=negative, width=width, height=height))
+    conds = engine.get_learned_conditioning(Conditioning([prompt], is_negative_prompt=negative, width=width, height=height))
     c = conds[0] if isinstance(conds, (list, tuple)) else conds
     if isinstance(c, dict):
         c = c["crossattn"]

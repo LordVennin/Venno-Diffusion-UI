@@ -1,7 +1,8 @@
 import torch
 
 from backend import memory_management
-from modules.devices import device
+
+device = memory_management.get_torch_device()
 
 
 def stream_context():

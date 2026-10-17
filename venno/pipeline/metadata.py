@@ -41,9 +41,9 @@ def png_bytes(image: Image.Image, info: str) -> bytes:
 
 
 def outputs_root() -> str:
-    from modules import paths  # Phase 4: Venno settings
+    from venno import config
 
-    return os.path.join(paths.data_path, "outputs")
+    return config.outputs_path()
 
 
 def save(image: Image.Image, info: str, mode: str, seed: int) -> str:

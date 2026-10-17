@@ -19,7 +19,7 @@ from backend.sampling.condition import (
     compile_conditions,
     compile_weighted_conditions,
 )
-from modules import shared
+from backend import settings as shared
 
 
 def get_area_and_mult(conds, x_in, timestep_in):

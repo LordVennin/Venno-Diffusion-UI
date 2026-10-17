@@ -2,7 +2,7 @@
 
 A painting-first UI for the **[Anima](https://huggingface.co/circlestone-labs/Anima)** image model, in the spirit of Krita AI Diffusion. You sketch, select and paint on a layered canvas. The model then generates, refines or inpaints exactly the part you point it at.
 
-The generation engine is **[Stable Diffusion WebUI Forge – Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)** by Haoming02, cut down to Anima only. Its memory management, samplers, LoRA support and API are kept. Forge's Gradio interface is removed. Venno Studio is the only front end, with these tabs:
+Venno runs its own lean server and pipeline (`venno/`) on a forked copy of the **[Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)** engine (`backend/`, by Haoming02), cut down to Anima only: its model loading, memory management, attention and LoRA patching are kept; the A1111/Forge web UI layer, Gradio, extensions and the `/sdapi` API are gone. Venno Studio is the front end, with these tabs:
 
 - **Canvas**: the layered painting workspace.
 - **Text to Image**, **Image to Image** and **Inpaint**: classic form-style generation, with hires fix, ADetailer, comparison grids and a results gallery. Image to Image and Inpaint show the input (and mask) large, next to the result.
@@ -18,7 +18,7 @@ The generation engine is **[Stable Diffusion WebUI Forge – Neo](https://github
 | **Sketch → image** | Draw on any paint layer with pressure-sensitive brushes, fill and eraser, then **Refine** at 40–80 % strength. Composition and colours from the sketch are kept. |
 | **Sketch guides** | *Guide* layers steer generation through **Anima ControlLLLite** models (line art, scribble, depth, pose…) instead of being painted into the image, so loose line art shapes the result even at 100 % strength. Start/end are real steps, and guides also steer the hires pass. |
 | **Outpainting** | Image to Image: extend the picture by any number of pixels on each side; the new border is generated to continue the image and the original stays untouched. |
-| **Inpainting** | Select an area with the rectangle, lasso or selection brush and press **Generate**. Only the selection changes. Venno adds surrounding context automatically, feathers the edges, and uses Forge's soft inpainting for seamless blends. |
+| **Inpainting** | Select an area with the rectangle, lasso or selection brush and press **Generate**. Only the selection changes. Venno adds surrounding context automatically, feathers the edges, and uses soft (differential) inpainting for seamless blends. |
 | **Image to image** | Open, paste or drag in an image and refine the whole canvas or just a selection at any strength. |
 | **Regional prompting** | *Region* layers are painted masks, each with its own prompt (e.g. one character per region). Each region's prompt steers its own area inside the model's text attention at every step, alongside the main prompt, with any sampler or LoRA, at roughly the cost of a single prompt. Inpainting works with regions too. |
 | **Prompted sketch layers** | Give any paint or guide layer its own prompt and its strokes become a region. Venno grows the strokes and fills closed outlines, so sketching a figure on its own layer is enough to prompt it separately. |
@@ -36,14 +36,13 @@ The generation engine is **[Stable Diffusion WebUI Forge – Neo](https://github
 
 ## Install
 
-1. Install [git](https://git-scm.com/downloads) and [uv](https://github.com/astral-sh/uv#installation) (recommended) or Python 3.13.
-2. Clone and create a venv:
+1. Install [git](https://git-scm.com/downloads) and Python 3.10 or newer (3.12 / 3.13 recommended).
+2. Clone:
    ```bash
    git clone https://github.com/LordVennin/Venno-Diffusion-UI
    cd Venno-Diffusion-UI
-   uv venv venv --python 3.13 --seed
    ```
-3. Run `webui-user.bat` (Windows) or `./webui-user.sh` (Linux/macOS). The first start installs dependencies, then Studio opens at **http://127.0.0.1:7860/**.
+3. Run `venno.bat` (Windows) or `./venno.sh` (Linux/macOS). The first start creates `venv/` and installs PyTorch (CUDA 13 build; set `TORCH_INDEX_URL` / `TORCH_COMMAND` for other GPUs) and the requirements, then Studio runs at **http://127.0.0.1:7860/** (add `--autolaunch` to open the browser). Later starts only check that everything is in place.
 4. With no Anima checkpoint installed, Studio opens on the **Models** tab. Download *Anima Turbo* (or Aesthetic/Base), the *Qwen3 text encoder* and the *Qwen-Image VAE*, plus any guides and upscalers you want. *Download from URL* takes any Hugging Face / Civitai / direct link (LoRAs too). You can also place files manually:
 
    | File | Folder |
@@ -59,7 +58,14 @@ The text encoder and VAE are picked automatically in the top bar. Choosing a che
 
 Only Anima checkpoints are accepted. Loading any other architecture fails with a clear error.
 
-Forge's [command-line flags](docs/FORGE_NEO_README.md#commandline) still apply, e.g. `--uv`, `--sage`, `--listen`, `--port`, `--ckpt-dirs`. With `--listen`, downloading from custom URLs is disabled unless you add `--enable-insecure-extension-access`. Catalog downloads keep working.
+**Options** go after the launcher, e.g. `./venno.sh --listen --lowvram` (`--help` lists them all; options you always want can go in the `VENNO_ARGS` environment variable):
+
+- `--port 7860`, `--listen` (serve on the network), `--autolaunch`
+- `--models-dir PATH`: use an existing models folder, e.g. your Forge / A1111 `models` (same sub-folders: `Stable-diffusion`, `text_encoder`, `VAE`, `Lora`, `ControlNet`, `ESRGAN`, `adetailer`); `--data-dir`, `--outputs-dir`; extra folders with `--ckpt-dirs`, `--lora-dir`, `--controlnet-dir`, …
+- engine: `--lowvram` / `--novram` / `--highvram` / `--cpu`, precision (`--fp8_e4m3fn-unet`, `--bf16-vae`, …), attention (`--sage`, `--flash`, `--xformers` also install the package on first use), `--cuda-malloc`, …
+- `--skip-install`: don't check / install packages on start (you manage the environment yourself)
+
+With `--listen`, downloading from custom URLs is disabled unless you add `--allow-custom-downloads`. Catalog downloads keep working.
 
 ## Using the Studio
 
@@ -130,7 +136,7 @@ These are Forge-style form pages: prompt, negative, LoRA chips, preset/sampler/s
 
 ## API
 
-Studio talks to the server only through the Venno API under `/venno/v1`. Every generation mode uses one job format; see `Job` in [`lib_venno/jobs.py`](extensions-builtin/venno_studio/lib_venno/jobs.py).
+Studio talks to the server only through the Venno API under `/venno/v1`. Every generation mode uses one job format; see `Job` in [`venno/server/jobs.py`](venno/server/jobs.py) (interactive docs at `/venno/docs`).
 
 ```jsonc
 POST /venno/v1/jobs
@@ -153,23 +159,23 @@ POST /venno/v1/jobs
 - `GET /venno/v1/info`: models, modules, LoRAs, samplers, schedulers, upscalers, detectors, presets
 - `/venno/v1/models/catalog`, `/download`, `/jobs`, `/cancel`: model downloads
 
-The old A1111/Forge `/sdapi` endpoints are no longer supported and will be removed (see [`docs/PLAN_VENNO_SERVER.md`](docs/PLAN_VENNO_SERVER.md)).
+The old A1111/Forge `/sdapi` endpoints are gone (see [`docs/PLAN_VENNO_SERVER.md`](docs/PLAN_VENNO_SERVER.md)).
 
 ## Project layout
 
 | Path | |
 |---|---|
-| `extensions-builtin/venno_studio/studio/` | Studio front end (plain ES modules, no build step) |
-| `extensions-builtin/venno_studio/scripts/venno_studio.py` | Serves Studio, `/venno/api/*` |
-| `extensions-builtin/venno_studio/lib_venno/jobs.py` | Venno job API: schema, queue, engine adapter |
-| `extensions-builtin/venno_studio/lib_venno/downloads.py` | Model catalog and downloader |
-| `extensions-builtin/adetailer-neo/` | ADetailer-Neo (Haoming02, AGPL-3.0) |
-| `extensions-builtin/venno_studio/scripts/venno_regional.py` | Regional prompting (masked per-region conditioning) |
-| `backend/`, `modules/`, `modules_forge/` | Forge Neo engine (Anima only) |
+| `venno.sh`, `venno.bat` | Launchers (venv, install check, start) |
+| `studio/` | Studio front end (plain ES modules, no build step) |
+| `venno/__main__.py`, `venno/config.py`, `venno/install.py` | Server start-up, options and folders, package installer |
+| `venno/server/` | FastAPI app (`/venno/v1`, Studio files), job queue and schema, model downloader |
+| `venno/pipeline/` | Generation: passes, hires, region pass, detailer, grids, image metadata |
+| `venno/engine/` | Model manager, sampling, schedulers, prompts, regions, LoRA, guides, upscalers, detectors, tags, wildcards |
+| `backend/` | Diffusion engine forked from Forge Neo (Anima only); third-party code in `backend/vendor/` |
 
 ## Credits & licence
 
-- Engine: [Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo) by Haoming02, based on [Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) by lllyasviel and [Stable Diffusion WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) by AUTOMATIC1111. The upstream README is kept in [`docs/FORGE_NEO_README.md`](docs/FORGE_NEO_README.md).
+- Engine (`backend/`): forked from [Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo) by Haoming02, based on [Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) by lllyasviel and [Stable Diffusion WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) by AUTOMATIC1111. The upstream README is kept in [`docs/FORGE_NEO_README.md`](docs/FORGE_NEO_README.md).
 - Model: [Anima](https://huggingface.co/circlestone-labs/Anima) by CircleStone Labs & Comfy Org (non-commercial model licence; generated images may be used commercially).
 - Inspired by [Krita AI Diffusion](https://github.com/Acly/krita-ai-diffusion).
 

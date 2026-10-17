@@ -6,7 +6,7 @@ import torch
 
 from backend import memory_management, utils
 from backend.logging import setup_logger
-from modules_forge.packages.comfy.lora import (  # noqa
+from comfy.lora import (  # noqa
     load_lora,
     model_lora_keys_clip,
     model_lora_keys_unet,

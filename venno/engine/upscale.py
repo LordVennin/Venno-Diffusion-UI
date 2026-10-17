@@ -33,16 +33,9 @@ def latent_mode(name: str) -> str:
 
 
 def folders() -> list[str]:
-    from modules import paths, shared  # Phase 4: Venno settings
+    from venno import config
 
-    out = [getattr(shared.cmd_opts, "esrgan_models_path", None)]
-    out += [os.path.join(paths.models_path, d) for d in ("ESRGAN", "RealESRGAN", "DAT", "SwinIR", "HAT", "upscale_models")]
-    seen, result = set(), []
-    for d in out:
-        if d and os.path.isdir(d) and os.path.realpath(d) not in seen:
-            seen.add(os.path.realpath(d))
-            result.append(d)
-    return result
+    return config.model_folders("upscaler")
 
 
 def models() -> dict[str, str]:

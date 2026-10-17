@@ -1,6 +1,6 @@
 import torch
 
-from modules_forge.packages.huggingface_guess.latent import LatentFormat
+from huggingface_guess.latent import LatentFormat
 
 
 class ProcessLatent:

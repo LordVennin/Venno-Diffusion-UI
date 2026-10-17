@@ -28,7 +28,7 @@ from backend.utils import (
     load_torch_file,
     read_arbitrary_config,
 )
-from modules_forge.packages.comfy.utils import convert_diffusers_mmdit
+from comfy.utils import convert_diffusers_mmdit
 
 # Venno: Anima is the only supported architecture
 possible_models: tuple["ForgeDiffusionEngine"] = (Anima,)
@@ -233,7 +233,7 @@ def replace_state_dict(sd: dict[str, torch.Tensor], asd: dict[str, torch.Tensor]
 
     #   diffusers format
     if "decoder.up_blocks.0.resnets.0.norm1.weight" in asd:
-        from modules_forge.packages.huggingface_guess.diffusers_convert import (
+        from huggingface_guess.diffusers_convert import (
             convert_vae_state_dict,
         )
 

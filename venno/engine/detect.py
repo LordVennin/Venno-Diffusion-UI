@@ -23,9 +23,9 @@ class Detection:
 
 
 def folder() -> str:
-    from modules import paths  # Phase 4: Venno settings
+    from venno import config
 
-    return os.path.join(paths.models_path, "adetailer")
+    return os.path.join(config.models_path(), "adetailer")
 
 
 def models() -> dict[str, str]:

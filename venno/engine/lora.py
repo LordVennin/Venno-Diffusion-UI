@@ -28,10 +28,9 @@ CACHE_SIZE = 4
 
 
 def folders() -> list[str]:
-    from modules import shared  # Phase 4: Venno settings
+    from venno import config
 
-    opts = shared.cmd_opts
-    return [d for d in [getattr(opts, "lora_dir", None), *(getattr(opts, "lora_dirs", None) or [])] if d]
+    return config.model_folders("lora")
 
 
 def scan() -> dict[str, str]:

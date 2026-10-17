@@ -34,9 +34,9 @@ _aliases: list[tuple[str, int]] = []  # sorted (alias, tag index)
 
 
 def folder() -> str:
-    from modules import paths  # Phase 4: Venno settings
+    from venno import config
 
-    return os.path.join(paths.data_path, "tags")
+    return os.path.join(config.data_path(), "tags")
 
 
 def _read(stream) -> list[Tag]:

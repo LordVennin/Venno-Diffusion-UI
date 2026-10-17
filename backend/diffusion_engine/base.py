@@ -5,7 +5,7 @@ if TYPE_CHECKING:
     from backend.patcher.clip import CLIP
     from backend.patcher.unet import UnetPatcher
     from backend.patcher.vae import VAE
-    from modules_forge.packages.huggingface_guess.model_list import BASE
+    from huggingface_guess.model_list import BASE
 
 import torch
 from safetensors.torch import save_file

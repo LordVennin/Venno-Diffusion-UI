@@ -10,12 +10,12 @@ Keep Forge Neo's **engine** (`backend/`: Anima model, Qwen3 text encoder, Qwen-I
 - the extension script system
 - the `/sdapi` API
 
-## Where we are
+## Where we were (before Phase 4)
 
 | Layer | Python lines | Fate |
 |---|---|---|
 | `backend/` engine | ~14,100 | **keep** (synced with upstream Forge Neo where useful) |
-| `modules_forge/packages/` (k-diffusion samplers, comfy LoRA formats, GGUF, model detection) | ~11,500 | **keep**, moved to `venno/vendor/` |
+| `modules_forge/packages/` (k-diffusion samplers, comfy LoRA formats, GGUF, model detection) | ~11,500 | **keep**, moved to `backend/vendor/` |
 | `modules/` (A1111 pipeline, API, settings, scripts, Gradio helpers) | ~21,100 | **replace** |
 | `modules_forge/` glue | ~1,800 | **replace** |
 | extensions (ControlNet, ControlLLLite, LoRA, soft inpainting, ADetailer-Neo, Never OOM) | ~8,900 | **replace** (ControlLLLite's Anima module is ported as-is) |
@@ -145,11 +145,11 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 - ✅ Guides (`venno/engine/guides.py`, kohya's Anima LLLite vendored as `lllite_anima.py`): step range from the denoiser's real step (Forge counted model calls), guide image fitted to every pass (so hires is guided too), inpaint-LLLite gets the job mask, patches always removed after sampling. Same output as Forge where their step counting agrees (0.50/255).
 - ✅ PNG metadata and output folders (since Phase 1). With Phase 3 the whole default Studio flow (canvas with guides + ADetailer) runs on the Venno engine.
 
-**Phase 4: switch over and delete** (2–3 days)
-- `--engine venno` becomes the default.
-- Remove `modules/`, Forge extensions, Gradio, the scripts system, `webui.py` and `/sdapi` (no compatibility layer).
-- Move `modules_forge/packages` to `venno/vendor` and the Studio folder to `studio/`.
-- New launcher (`venno.bat` / `venno.sh`) plus requirements without Gradio.
+**Phase 4: switch over and delete** ✅ done
+- The Venno engine is the only engine; the Forge path, `modules/`, `modules_forge/`, every Forge extension (incl. ADetailer-Neo, ControlNet, LoRA, soft inpainting), Gradio, the scripts system, `webui.py`, `launch.py` and `/sdapi` are deleted (no compatibility layer). The old Docker files (which cloned Forge) went too.
+- `venno/server/` (FastAPI app factory, job queue, downloads) replaces the Studio extension; `python -m venno` starts it in a few seconds. `venno/config.py` holds options and folders (same `models/…` layout, `--models-dir` takes an existing Forge / A1111 folder); engine options (`backend/args.py`) are accepted on the same command line.
+- `modules_forge/packages` moved to `backend/vendor/` (put on `sys.path` by `backend/__init__.py`) rather than `venno/vendor`, so the engine stays self-contained. The engine's last ties to A1111 (`shared.opts`, `devices`, `SdConditioning`, tomesd, Anima "reference" mode) are replaced by `backend/settings.py` or dropped.
+- Studio moved to `studio/`. New launchers `venno.sh` / `venno.bat` (venv + `python -m venno.install`: PyTorch CUDA build, requirements, optional sage / flash / xformers), requirements without Gradio and other Forge-only packages.
 
 **Phase 5: hardening** (ongoing)
 - Unit tests for pure parts: schedulers, mask ops, region masks, job validation, metadata.

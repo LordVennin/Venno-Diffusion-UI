@@ -5,7 +5,7 @@ import torch
 from backend import memory_management
 from backend.args import dynamic_args
 from backend.text_processing import emphasis
-from modules.shared import opts
+from backend import settings
 
 from ._comfy import EMBEDDINGS, INF, SDClipModel, SDTokenizer
 
@@ -18,7 +18,7 @@ class Qwen06Engine:
 
     @property
     def emphasis(self) -> "emphasis.Emphasis":
-        return emphasis.get_current_option(opts.emphasis)()
+        return emphasis.get_current_option(settings.emphasis)()
 
     def tokenize(self, texts: str | list[str]) -> tuple[EMBEDDINGS, EMBEDDINGS] | tuple[list[EMBEDDINGS], list[EMBEDDINGS]]:
         return (

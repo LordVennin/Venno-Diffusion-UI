@@ -1,8 +1,3 @@
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from modules.prompt_parser import SdConditioning
-
 import torch
 from huggingface_guess import model_list
 
@@ -13,7 +8,6 @@ from backend.patcher.clip import CLIP
 from backend.patcher.unet import UnetPatcher
 from backend.patcher.vae import VAE
 from backend.text_processing.anima_engine import Qwen06Engine
-from modules.shared import opts
 
 
 class Anima(ForgeDiffusionEngine):
@@ -44,35 +38,14 @@ class Anima(ForgeDiffusionEngine):
         self.use_shift = True
 
     @torch.inference_mode()
-    def get_learned_conditioning(self, prompt: "SdConditioning"):
+    def get_learned_conditioning(self, prompt):
+        """prompt: backend.settings.Conditioning (a list of prompts)"""
         memory_management.load_model_gpu(self.forge_objects.clip.patcher)
-
         if not prompt.is_negative_prompt:
-            if not opts.anima_do_reference:
-                dynamic_args.ref_latents.clear()
-            else:
-                _references = [*self.ref_latents]
-                if self.ini_latent is not None:
-                    _references.insert(0, self.ini_latent)
-                    self.ini_latent = None
-                dynamic_args.ref_latents = _references.copy()
-
+            dynamic_args.ref_latents.clear()
         return self.text_processing_engine_qwen(prompt)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:
         token_count = len(self.text_processing_engine_qwen.tokenize(prompt)[0])
         return token_count, max(512, token_count)
-
-    @torch.inference_mode()
-    def encode_first_stage(self, x: torch.Tensor):
-        samples: torch.Tensor = super().encode_first_stage(x)
-
-        if opts.anima_do_reference:
-            sample = samples[0].detach().clone().unsqueeze(0).cpu()
-            if dynamic_args.is_referencing:
-                self.ref_latents.append(sample)
-            else:
-                self.ini_latent = sample
-
-        return samples

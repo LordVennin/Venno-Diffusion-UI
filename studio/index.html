@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Venno Studio</title>
+<link rel="stylesheet" href="/studio/assets/studio.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">Venno<span>Studio</span></div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="canvas" class="on">Canvas</button>
+    <button data-tab="txt2img">Text to Image</button>
+    <button data-tab="img2img">Image to Image</button>
+    <button data-tab="inpaint">Inpaint</button>
+    <button data-tab="info">Image Info</button>
+    <button data-tab="models">Models</button>
+  </nav>
+  <div class="menu canvas-only">
+    <button data-action="new" title="New canvas">New</button>
+    <button data-action="open" title="Open image as layer (also: drag &amp; drop, Ctrl+V)">Open</button>
+    <button data-action="export" title="Export visible image as PNG">Export</button>
+    <span class="sep"></span>
+    <button data-action="undo" title="Undo (Ctrl+Z)">Undo</button>
+    <button data-action="redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+  </div>
+  <div class="models">
+    <label title="Anima checkpoint">Model <select id="sel-checkpoint" title="Anima checkpoint"></select></label>
+    <label title="Text encoder">Text encoder <select id="sel-te" title="Text encoder"></select></label>
+    <label title="VAE">VAE <select id="sel-vae" title="VAE"></select></label>
+    <button id="btn-refresh" title="Rescan model folders">⟳</button>
+  </div>
+  <div class="status" id="status"></div>
+</header>
+
+<div class="page" id="page-canvas">
+<div class="toolopts" id="toolopts">
+  <div class="group" data-for="paint">
+    <label>Size <input type="range" id="opt-size" min="1" max="400" value="12"><output id="out-size">12</output></label>
+    <label>Opacity <input type="range" id="opt-opacity" min="1" max="100" value="100"><output id="out-opacity">100</output></label>
+    <label>Hardness <input type="range" id="opt-hardness" min="0" max="100" value="80"><output id="out-hardness">80</output></label>
+    <label class="check" title="Pen pressure controls size"><input type="checkbox" id="opt-psize" checked> Pressure</label>
+  </div>
+  <div class="group colors">
+    <input type="color" id="opt-color" value="#000000" title="Foreground color">
+    <button id="btn-swap" title="Swap foreground/background (X)">⇄</button>
+    <input type="color" id="opt-color2" value="#ffffff" title="Background color">
+    <div class="swatches" id="swatches"></div>
+  </div>
+  <div class="group" data-for="select">
+    <span class="lbl">Selection</span>
+    <div class="seg" id="opt-selmode">
+      <button data-mode="replace" class="on" title="Replace">New</button>
+      <button data-mode="add" title="Add (Shift)">Add</button>
+      <button data-mode="subtract" title="Subtract (Alt)">Sub</button>
+    </div>
+    <button data-action="select-all" title="Select all (Ctrl+A)">All</button>
+    <button data-action="deselect" title="Deselect (Ctrl+D)">None</button>
+    <button data-action="invert-selection" title="Invert (Ctrl+Shift+I)">Invert</button>
+    <button data-action="fill-selection" title="Fill selection with color (Alt+Backspace)">Fill</button>
+    <button data-action="clear-selection" title="Clear selected pixels on active layer (Delete)">Clear</button>
+  </div>
+  <div class="group" data-for="fill">
+    <label>Tolerance <input type="range" id="opt-tolerance" min="0" max="128" value="24"><output id="out-tolerance">24</output></label>
+  </div>
+  <div class="group right">
+    <label class="check" title="Show region layer overlays"><input type="checkbox" id="opt-showregions" checked> Regions</label>
+    <button data-action="fit" title="Fit to view (0)">Fit</button>
+    <span id="zoom-label">100%</span>
+  </div>
+</div>
+
+<main class="workspace">
+  <nav class="toolbar" id="toolbar"></nav>
+
+  <section class="center">
+    <div class="viewport" id="viewport">
+      <div class="progress" id="progress"><div class="bar"></div><span></span></div>
+      <div class="drop-hint">Drop image to add as layer</div>
+    </div>
+    <div class="results" id="results">
+      <div class="results-actions">
+        <button id="btn-apply" class="primary" disabled title="Apply as new layer (Enter)">Apply</button>
+        <button id="btn-discard" disabled title="Hide preview (Esc)">Discard</button>
+      </div>
+      <div class="thumbs" id="thumbs"><div class="empty">Results appear here</div></div>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <section class="card gen">
+      <textarea id="prompt" rows="4" placeholder="Describe the image… (Ctrl+Enter to generate)"></textarea>
+      <details class="neg">
+        <summary>Negative prompt</summary>
+        <textarea id="negative" rows="3"></textarea>
+      </details>
+      <div id="lora-chips"></div>
+      <div class="row lora">
+        <select id="sel-lora"><option value="">+ LoRA…</option></select>
+      </div>
+      <details class="regions-box" id="regions-box">
+        <summary>Regions <span id="regions-count"></span><button id="btn-add-region" title="A new region: drag rectangles (or paint) where its prompt applies">+ Region</button></summary>
+        <ul id="region-list"></ul>
+        <div class="hint">Drag rectangles with <b>U</b>, or paint with the brush. LoRAs apply to the whole image.</div>
+      </details>
+      <details class="switch-box" id="switch-box">
+        <summary>Then switch to… <span id="switch-state"></span></summary>
+        <textarea id="switch-prompt" rows="2" placeholder="Prompt for the later steps, e.g. the same scene with character or style details. Empty = off"></textarea>
+        <label class="slider" title="Composition is mostly decided early; details late.">Switch after <input type="range" id="switch-at" min="5" max="95" step="5"><output id="out-switch-at"></output></label>
+      </details>
+      <div id="prompt-schedule"></div>
+      <div class="strength">
+        <label>Strength <input type="range" id="strength" min="1" max="100" value="100"><output id="out-strength">100%</output></label>
+        <div class="mode" id="mode-label">Generate</div>
+      </div>
+      <div class="row buttons">
+        <button id="btn-generate" class="primary big">Generate</button>
+        <button id="btn-cancel" class="big" hidden>Cancel</button>
+        <label class="batch" title="Images per run">×<input type="number" id="batch" min="1" max="8" value="2"></label>
+      </div>
+      <div class="row">
+        <label class="check live" title="Re-generate automatically whenever you change the canvas"><input type="checkbox" id="live"> Live mode</label>
+        <label class="check" title="Show live result over the canvas"><input type="checkbox" id="live-oncanvas" checked> on canvas</label>
+      </div>
+      <div class="live-panel" id="live-panel" hidden>
+        <img id="live-img" alt="">
+        <div class="row">
+          <button id="btn-live-apply" class="primary">Apply live result</button>
+          <button id="btn-live-seed" title="New random seed">🎲 Seed</button>
+        </div>
+      </div>
+      <details class="adv" id="adv">
+        <summary>Settings</summary>
+        <div class="grid">
+          <label>Preset <select id="preset"></select></label>
+          <label>Sampler <select id="sampler"></select></label>
+          <label>Scheduler <select id="scheduler"></select></label>
+          <label>Steps <input type="number" id="steps" min="1" max="150"></label>
+          <label>CFG <input type="number" id="cfg" min="1" max="30" step="0.1"></label>
+          <label>Shift <input type="number" id="shift" min="0" max="20" step="0.1"></label>
+          <label>Seed <span class="seed"><input type="number" id="seed"><label class="check" title="Keep this seed"><input type="checkbox" id="seed-lock"> lock</label></span></label>
+          <label>Resolution <select id="resolution">
+            <option value="512">512² (draft)</option>
+            <option value="768">768² (fast)</option>
+            <option value="1024" selected>1024² (native)</option>
+            <option value="1280">1280²</option>
+            <option value="1536">1536² (max)</option>
+          </select></label>
+          <label title="Extra surrounding context included when generating inside a selection">Context <input type="range" id="context" min="0" max="150" value="50"><output id="out-context">50%</output></label>
+          <label title="Soft edge for inpainting / blending results">Feather <input type="range" id="feather" min="0" max="64" value="12"><output id="out-feather">12</output></label>
+        </div>
+        <label class="check"><input type="checkbox" id="quality-prefix" checked> Add Anima quality tags</label>
+        <label class="check" title="Blend inpainted areas step by step for invisible seams (soft inpainting)"><input type="checkbox" id="soft-inpaint" checked> Seamless inpainting</label>
+        <label class="check"><input type="checkbox" id="save-images" checked> Save results to outputs folder</label>
+        <label class="check"><input type="checkbox" id="progress-preview" checked> Show progress preview</label>
+        <h4>Regional prompts</h4>
+        <label title="How much the main prompt still applies inside regions">Main prompt inside regions <input type="range" id="region-base" min="0" max="100" value="25"><output id="out-region-base">25%</output></label>
+        <label title="Stop regional guidance after this part of the steps (later steps refine details globally)">Region guidance until <input type="range" id="region-end" min="10" max="100" value="100"><output id="out-region-end">100%</output></label>
+        <label title="Keeps regions from blending into each other during the early steps (each character's look comes from its own prompt). Raise it when 3+ characters swap or mix features; regions spanning most of the picture (backgrounds) stay shared.">Keep regions apart <input type="range" id="region-sep" min="0" max="100" value="70"><output id="out-region-sep">70%</output></label>
+        <label class="check" title="After generating, re-render each region on its own (cropped and upscaled, with only its prompt), like inpainting it again: sharper characters, less bleed. One extra partial pass per region; backgrounds are skipped. Not in live mode."><input type="checkbox" id="region-refine"> Region pass (refine each region)</label>
+        <label title="How much the region pass may change: ~0.35 sharpens and cleans up, 0.5+ can also fix wrong colours but may change poses">Region pass denoising <input type="range" id="region-refine-denoise" min="15" max="80" step="5" value="40"><output id="out-region-refine-denoise">40%</output></label>
+        <label class="check" title="Region prompts get the main prompt added, and region negatives the main negative"><input type="checkbox" id="region-append" checked> Add the main prompts to region prompts</label>
+        <label title="Where region layers overlap: the higher layer covers the lower one (e.g. a character over a background region), or both prompts mix">Overlapping regions <select id="region-overlap"><option value="top">Top layer wins</option><option value="blend">Blend prompts</option></select></label>
+      </details>
+    </section>
+
+    <details class="card" id="canvas-hr-card"></details>
+    <details class="card" id="canvas-ad-card"></details>
+    <details class="card grid-card" id="canvas-grid-card"></details>
+
+    <section class="card layers">
+      <header>
+        <h3>Layers</h3>
+        <div class="add">
+          <button data-action="add-paint" title="New paint layer">+ Paint</button>
+          <button data-action="add-region" title="New region: paint where a prompt applies">+ Region</button>
+          <button data-action="add-control" title="New sketch guide (ControlNet / ControlLLLite)">+ Guide</button>
+        </div>
+      </header>
+      <ul id="layer-list"></ul>
+      <div class="layer-actions">
+        <button data-action="layer-up" title="Move up">▲</button>
+        <button data-action="layer-down" title="Move down">▼</button>
+        <button data-action="layer-dup" title="Duplicate">Dup</button>
+        <button data-action="layer-merge" title="Merge down">Merge</button>
+        <button data-action="layer-clear" title="Clear layer">Clear</button>
+        <button data-action="layer-delete" title="Delete layer">Delete</button>
+      </div>
+      <div class="layer-props" id="layer-props"></div>
+    </section>
+  </aside>
+</main>
+</div>
+
+<div class="page form-page" id="page-txt2img" hidden></div>
+<div class="page form-page" id="page-img2img" hidden></div>
+<div class="page form-page" id="page-inpaint" hidden></div>
+<div class="page info-page" id="page-info" hidden></div>
+<div class="page" id="page-models" hidden></div>
+
+<div class="toast" id="toast"></div>
+
+<dialog id="dlg-new">
+  <form method="dialog">
+    <h3>New canvas</h3>
+    <div class="presets" id="size-presets"></div>
+    <div class="row">
+      <label>Width <input type="number" id="new-w" value="1024" min="64" max="4096" step="8"></label>
+      <label>Height <input type="number" id="new-h" value="1024" min="64" max="4096" step="8"></label>
+    </div>
+    <label class="check"><input type="checkbox" id="new-resize"> Resize current canvas instead (keep layers)</label>
+    <div class="row end">
+      <button value="cancel">Cancel</button>
+      <button value="ok" class="primary">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<input type="file" id="file-open" accept="image/*" hidden>
+<script type="module" src="/studio/assets/js/main.js"></script>
+</body>
+</html>

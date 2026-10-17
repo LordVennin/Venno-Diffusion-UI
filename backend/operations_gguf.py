@@ -1,6 +1,6 @@
 import torch
 
-from modules_forge.packages import gguf
+import gguf
 
 QUANTS_MAPPING: dict[gguf.constants.GGMLQuantizationType, gguf.quants.__Quant] = {
     gguf.GGMLQuantizationType.Q2_K: gguf.Q2_K,

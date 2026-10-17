@@ -25,16 +25,9 @@ _nets: dict = {}  # (path, id(diffusion model)) → ControlNetLLLiteDiT
 
 
 def folders() -> list[str]:
-    from modules import paths, shared  # Phase 4: Venno settings
+    from venno import config
 
-    opts = shared.cmd_opts
-    dirs = [getattr(opts, "controlnet_dir", None), *(getattr(opts, "controlnet_dirs", None) or []), os.path.join(paths.models_path, "ControlNet")]
-    seen, out = set(), []
-    for d in dirs:
-        if d and os.path.isdir(d) and os.path.realpath(d) not in seen:
-            seen.add(os.path.realpath(d))
-            out.append(d)
-    return out
+    return config.model_folders("controlnet")
 
 
 def models() -> dict[str, str]:

@@ -6,8 +6,6 @@ import gc
 import os
 import threading
 import time
-import types
-import weakref
 
 import torch
 
@@ -15,32 +13,65 @@ from backend import memory_management
 from backend.loader import forge_loader
 
 
+MODEL_EXTENSIONS = (".safetensors", ".sft", ".gguf", ".ckpt", ".pt", ".pth", ".bin")
+
+
+def _scan(kind: str) -> dict[str, str]:
+    """title (path relative to its folder, "/"-separated) → file, for every model file of a kind."""
+    from venno import config
+
+    found: dict[str, str] = {}
+    for root in config.model_folders(kind):
+        for dirpath, _, files in os.walk(root, followlinks=True):
+            for f in sorted(files):
+                if f.lower().endswith(MODEL_EXTENSIONS):
+                    path = os.path.join(dirpath, f)
+                    found.setdefault(os.path.relpath(path, root).replace(os.sep, "/"), path)
+    return dict(sorted(found.items(), key=lambda kv: kv[0].lower()))
+
+
+def checkpoints() -> dict[str, str]:
+    return _scan("checkpoint")
+
+
+def modules() -> dict[str, str]:
+    """Text encoders and VAEs by file name (what Studio's module pickers list)."""
+    out: dict[str, str] = {}
+    for kind in ("text_encoder", "vae"):
+        for title, path in _scan(kind).items():
+            out.setdefault(os.path.basename(title), path)
+    return out
+
+
+def checkpoint_name(title: str) -> str:
+    return os.path.splitext(title)[0]
+
+
 class ModelManager:
     def __init__(self):
-        self.engine = None  # backend ForgeDiffusionEngine (backend/diffusion_engine/anima.py)
+        self.engine = None  # backend diffusion engine (backend/diffusion_engine/anima.py)
         self.key: tuple | None = None
         self.info: dict = {}
         self.lock = threading.RLock()
 
-    # -- name resolution (Phase 1: reuse Forge's folder scan; replaced by Venno's own in Phase 4) --
     @staticmethod
     def resolve_checkpoint(name: str) -> tuple[str, str]:
-        from modules import sd_models
-
+        """A checkpoint title, file name or name (an "A1111 title" with a "[hash]" suffix works too) → (path, name)."""
         if os.path.isfile(name):
             return name, os.path.splitext(os.path.basename(name))[0]
-        info = sd_models.get_closet_checkpoint_match(name)
-        if info is None:
-            raise ValueError(f'Checkpoint "{name}" not found')
-        return info.filename, info.model_name
+        want = name.split(" [")[0].strip().replace(os.sep, "/").lower()
+        found = checkpoints()
+        for title, path in found.items():
+            t = title.lower()
+            if want in (t, checkpoint_name(t), os.path.basename(t), checkpoint_name(os.path.basename(t))):
+                return path, checkpoint_name(os.path.basename(title))
+        raise ValueError(f'Checkpoint "{name}" not found')
 
     @staticmethod
     def resolve_module(name: str) -> str:
-        from modules_forge.main_entry import module_list
-
         if os.path.isfile(name):
             return name
-        path = module_list.get(os.path.basename(name))
+        path = modules().get(os.path.basename(name))
         if path is None:
             raise ValueError(f'Text encoder / VAE "{name}" not found')
         return path
@@ -55,12 +86,6 @@ class ModelManager:
             if self.engine is not None and self.key == key:
                 return _clean(self.engine)
             self.unload()
-            adopted = _forge_model_for(ckpt_path, module_paths)
-            if adopted is not None:  # Forge already holds exactly this model: share it
-                self.engine, self.key = adopted, key
-                self.info = {"name": ckpt_name, "path": ckpt_path, "modules": [os.path.basename(m) for m in module_paths]}
-                return _clean(self.engine)
-            _release_forge_model()
             t0 = time.time()
             print(f"[Venno] loading {ckpt_name} + {[os.path.basename(m) for m in module_paths]}")
             self.engine = forge_loader(ckpt_path, additional_state_dicts=module_paths)
@@ -68,17 +93,6 @@ class ModelManager:
             self.info = {"name": ckpt_name, "path": ckpt_path, "modules": [os.path.basename(m) for m in module_paths]}
             print(f"[Venno] model ready in {time.time() - t0:.1f}s")
             return self.engine
-
-    @torch.inference_mode()
-    def release_for_forge(self):
-        """Before a Forge-path job: drop a Venno-only copy; keep one shared with Forge."""
-        with self.lock:
-            if self.engine is None:
-                return
-            from modules import sd_models
-
-            if self.engine is not sd_models.model_data.sd_model:
-                self.unload()
 
     @torch.inference_mode()
     def unload(self):
@@ -94,42 +108,9 @@ class ModelManager:
 
 
 def _clean(engine):
-    """Start from the unpatched objects: a Forge job may have left LoRA / script clones in forge_objects
-    (Forge re-applies its own from forge_objects_after_applying_lora on its next job)."""
+    """Start every job from the unpatched objects (a previous job's LoRA / guide clones are dropped)."""
     engine.forge_objects = engine.forge_objects_original.shallow_copy()
     return engine
-
-
-def _forge_model_for(ckpt_path: str, module_paths: list[str]):
-    """The model Forge currently holds, if it was loaded from the same files."""
-    try:
-        from modules import sd_models
-
-        data = sd_models.model_data
-        model = data.sd_model
-        if not data.forge_hash or getattr(model, "filename", None) is None:
-            return None
-        same = lambda a, b: sorted(map(os.path.realpath, a)) == sorted(map(os.path.realpath, b))
-        if os.path.realpath(model.filename) == os.path.realpath(ckpt_path) and same(data.forge_loading_parameters.get("additional_modules") or [], module_paths):
-            return model
-    except Exception as e:
-        print(f"[Venno] could not inspect the Forge model: {e}")
-    return None
-
-
-def _release_forge_model():
-    """While both pipelines exist (Phases 1-3), never hold two copies of the model in memory."""
-    try:
-        from modules import sd_models
-
-        if sd_models.model_data.sd_model is not None and sd_models.model_data.forge_hash:
-            ref = weakref.ref(sd_models.model_data.sd_model)
-            sd_models.unload_model_weights()
-            if ref() is not None:
-                holders = sorted({type(r).__name__ for r in gc.get_referrers(ref()) if not isinstance(r, types.FrameType)})
-                print(f"[Venno] warning: the Forge model is still referenced after unloading ({', '.join(holders)})")
-    except Exception as e:
-        print(f"[Venno] could not release the Forge model: {e}")
 
 
 manager = ModelManager()
