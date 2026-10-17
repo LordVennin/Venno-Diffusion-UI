@@ -93,6 +93,7 @@ AXES: dict[str, AxisType] = {a.key: a for a in [
     AxisType("switch_at", "Switch at", "float", lambda j, v, t: {"switch_at": v}),
     AxisType("region_base", "Region base", "float", lambda j, v, t: {"region_base": v}),
     AxisType("region_separation", "Region separation", "float", lambda j, v, t: {"region_separation": v}),
+    AxisType("region_refine", "Region pass", "float", lambda j, v, t: {"region_refine": v}),
     AxisType("detailer_denoise", "Detailer denoise", "float", _detailer_denoise),
 ]}
 

@@ -22,6 +22,7 @@ export const AXES = [
   { key: "detailer_denoise", label: "Detailer denoise", hint: "0.3, 0.4, 0.5" },
   { key: "region_base", label: "Main prompt in regions", hint: "0, 0.25, 0.5 (Canvas regions)" },
   { key: "region_separation", label: "Region separation", hint: "0, 0.5, 1 (Canvas regions)" },
+  { key: "region_refine", label: "Region pass", hint: "0, 0.35, 0.5 (denoising, 0 = off; Canvas regions)" },
 ];
 
 export const GRID_DEFAULT = {

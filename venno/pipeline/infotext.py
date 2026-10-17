@@ -132,4 +132,5 @@ def settings(text: str) -> dict:
     out["region_negatives"] = [prm.get(f"Region {k + 1} negative", "") for k in range(len(out["regions"]))]
     out["region_base"] = _num(prm.get("Region base"))
     out["region_separation"] = _num(prm.get("Region separation"))
+    out["region_refine"] = _num(prm.get("Region pass"))
     return {k: v for k, v in out.items() if v is not None}

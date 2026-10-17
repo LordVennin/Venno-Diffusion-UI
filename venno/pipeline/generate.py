@@ -15,7 +15,7 @@ from PIL import Image
 from venno.engine import conditioning, guides, images, lora, prompts, regions, rng, sampling, upscale, vae, wildcards
 from venno.engine.models import manager
 
-from . import detail, metadata
+from . import detail, metadata, region_pass
 from .passes import make_conditioning, sample_pass
 
 
@@ -264,6 +264,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
         params["Region base"] = job.region_base
         if job.region_separation > 0:
             params["Region separation"] = job.region_separation
+        if job.region_refine > 0:
+            params["Region pass"] = job.region_refine
         if job.region_end < 1.0:
             params["Region end"] = job.region_end
         for k, r in enumerate(job.regions, start=1):
@@ -325,6 +327,12 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
 
         for seed, generated in zip(seeds, vae.decode(engine, latents)):
             image = finish(src, generated, out_size)
+            if job.region_refine > 0 and job.regions:
+                try:
+                    image, _ = region_pass.run(engine, job, progress, image, seed, src=src, cache=tensors, limit_mask=src.full_mask if src is not None else None)
+                except sampling.Cancelled:
+                    result.cancelled = True
+                    return result
             if units:
                 try:
                     image, _ = detail.run(engine, job, progress, image, seed, units, job_loras=loras, cache=tensors, limit_mask=src.full_mask if src is not None else None)
