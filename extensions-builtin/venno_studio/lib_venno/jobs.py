@@ -42,6 +42,7 @@ class Region(BaseModel):
     prompt: str
     mask: str  # PNG (data URL or base64); white / opaque = region
     strength: float = 1.0
+    negative: str = ""  # the region's own negative prompt ("" = the main negative); Venno engine only
 
 
 class Guide(BaseModel):
@@ -221,6 +222,7 @@ def _lift_lora_tags(job: Job):
     job.negative = lift(job.negative)
     for region in job.regions:
         region.prompt = lift(region.prompt)
+        region.negative = lift(region.negative)
 
 
 def submit(job: Job) -> JobRecord:

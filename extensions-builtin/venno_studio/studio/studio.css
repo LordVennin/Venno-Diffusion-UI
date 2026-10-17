@@ -374,3 +374,8 @@ details.card > summary > span { color: var(--text); }
 .out-pane .result-main img, .form-page .result-main img { width: 100%; height: 100%; object-fit: contain; }
 #region-list .r-side { display: grid; grid-template-columns: auto auto; gap: 4px; }
 #region-list .r-side .r-edit, #region-list .r-side label { grid-column: 1 / span 2; }
+#region-list .r-prompts { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+#region-list .r-neg summary { font-size: 11.5px; color: var(--muted); cursor: pointer; user-select: none; }
+#region-list .r-neg.set summary { color: var(--accent2); }
+#region-list .r-neg.set summary::after { content: " ●"; }
+#region-list .r-neg textarea, #layer-props textarea.neg { min-height: 26px; font-size: 12px; border-color: color-mix(in srgb, #d65a5a 45%, var(--line)); }

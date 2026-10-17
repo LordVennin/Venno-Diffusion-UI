@@ -10,6 +10,9 @@ Weights per token (same rule as Venno's Forge-side script):
     base   = 1 - coverage * (1 - base_strength)          coverage = min(1, sum of region masks)
     region = mask * strength
     out    = (base * main + sum(region * region_out)) / (base + sum(region))
+
+A region with its own negative prompt gets the same blend on the negative (CFG) rows; regions without one
+use the main negative there. Without a negative pass (CFG 1) region negatives have no effect.
 """
 
 from __future__ import annotations
@@ -26,8 +29,12 @@ class Region:
     contexts: dict  # text → (1, L, D) encoded, for every text the plan uses
     mask: torch.Tensor  # (H, W) float 0..1 at image resolution
     strength: float = 1.0
+    negative_plan: object = None  # PromptPlan of the region's own negative, None = the main negative
+    negative_contexts: dict = field(default_factory=dict)
 
-    def context(self, step: int) -> torch.Tensor:
+    def context(self, step: int, negative: bool = False) -> torch.Tensor:
+        if negative:
+            return self.negative_contexts[self.negative_plan.parts(step)[0][0]]
         return self.contexts[self.plan.parts(step)[0][0]]
 
 
@@ -39,9 +46,9 @@ class RegionalAttention:
     _contexts: dict = field(default_factory=dict, repr=False)
     _weights: dict = field(default_factory=dict, repr=False)
 
-    def contexts(self, like: torch.Tensor) -> torch.Tensor:
+    def contexts(self, like: torch.Tensor, regions: list[Region] | None = None, negative: bool = False) -> torch.Tensor:
         """(R, L, D) region contexts, zero-padded to a common length (Anima pads prompts with zeros)."""
-        current = [r.context(self.step) for r in self.regions]
+        current = [r.context(self.step, negative) for r in (self.regions if regions is None else regions)]
         key = (like.device, like.dtype, tuple(id(c) for c in current))
         if key not in self._contexts:
             length = max(max(c.shape[1] for c in current), like.shape[1])
@@ -73,20 +80,32 @@ class RegionalAttention:
 
     def __call__(self, attn, tokens: torch.Tensor, context: torch.Tensor, thw, transformer_options: dict) -> torch.Tensor:
         out = attn(tokens, context, transformer_options=transformer_options)
-        rows = transformer_options.get("cond_indices") or []
+        w_base, w_region = self.weights(thw, out)  # (N, 1), (R, N, 1)
+        out = self._blend(attn, tokens, context, out, transformer_options.get("cond_indices") or [], self.regions, False, w_base, w_region, transformer_options)
+        negative = [k for k, r in enumerate(self.regions) if r.negative_plan is not None]
+        if negative:  # the main negative's output stands in for regions without their own
+            out = self._blend(attn, tokens, context, out, transformer_options.get("uncond_indices") or [], [self.regions[k] for k in negative], True, w_base, w_region, transformer_options, negative)
+        return out
+
+    def _blend(self, attn, tokens, context, out, rows, regions, negative, w_base, w_region, transformer_options, only=None):
+        """Replace `rows` of `out` by the weighted mix of the main output and each region's attention output."""
         if not rows:
             return out
-
         rows_t = torch.tensor(rows, device=tokens.device)
-        x = tokens.index_select(0, rows_t)  # (n, N, D) positive-prompt rows only; the negative stays global
-        n, R = x.shape[0], len(self.regions)
-        ctx = self.contexts(context)  # (R, L, D)
+        x = tokens.index_select(0, rows_t)  # (n, N, D)
+        main = out.index_select(0, rows_t)
+        n, R = x.shape[0], len(regions)
+        ctx = self.contexts(context, regions, negative)  # (R, L, D)
         region_out = attn(
             x.repeat(R, 1, 1),  # region-major: [r0 rows…, r1 rows…]
             ctx.repeat_interleave(n, dim=0),
             transformer_options=transformer_options,
         ).reshape(R, n, *out.shape[1:])
-
-        w_base, w_region = self.weights(thw, out)  # (N, 1), (R, N, 1)
-        blended = out.index_select(0, rows_t) * w_base + (region_out * w_region[:, None]).sum(0)
+        if only is None:
+            blended = main * w_base + (region_out * w_region[:, None]).sum(0)
+        else:
+            idx = torch.tensor(only, device=w_region.device)
+            w_own = w_region.index_select(0, idx)  # regions with their own negative
+            w_main = w_base + w_region.sum(0) - w_own.sum(0)  # everything else keeps the main negative
+            blended = main * w_main + (region_out * w_own[:, None]).sum(0)
         return out.index_copy(0, rows_t, blended)

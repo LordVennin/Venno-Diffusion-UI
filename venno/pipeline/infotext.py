@@ -129,5 +129,6 @@ def settings(text: str) -> dict:
             })
     out["detailer"] = detailer
     out["regions"] = [prm[k] for k in sorted((k for k in prm if re.fullmatch(r"Region \d+", k)), key=lambda k: int(k.split()[1]))]
+    out["region_negatives"] = [prm.get(f"Region {k + 1} negative", "") for k in range(len(out["regions"]))]
     out["region_base"] = _num(prm.get("Region base"))
     return {k: v for k, v in out.items() if v is not None}

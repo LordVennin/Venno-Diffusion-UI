@@ -310,6 +310,7 @@ function renderLayerProps() {
     lab.appendChild(ta);
     box.appendChild(lab);
     new SchedulePreview(ta, { getSteps: () => runSteps(g.steps, g.strength), allowAnd: false });
+    box.appendChild(regionNegativeField(l));
     const color = document.createElement("label");
     color.textContent = "Overlay color";
     const ci = document.createElement("input");
@@ -371,6 +372,7 @@ function layerPromptBlock(box, l) {
   const renderExtra = () => {
     extra.innerHTML = "";
     if (!l.prompt.trim()) { if (regionPreviewLayer === l) setRegionPreview(null); return; }
+    extra.appendChild(regionNegativeField(l));
     extra.appendChild(rangeField("Region spread", l.regionSpread, 8, 256, (v) => { l.regionSpread = v; refreshRegionPreview(); }, "px"));
     const fill = document.createElement("label");
     fill.className = "check";
@@ -456,6 +458,21 @@ function updateRegionCount() {
   $("#regions-count").textContent = items.length ? `(${active} active)` : "";
 }
 
+/** "Region negative" textarea for the layer panel (the Regions list has its own). */
+function regionNegativeField(l) {
+  const lab = document.createElement("label");
+  lab.textContent = "Region negative";
+  lab.title = "Negative prompt for this region only (empty = the main negative). Needs CFG above 1.";
+  const ta = document.createElement("textarea");
+  ta.rows = 1;
+  ta.className = "neg";
+  ta.value = l.negative;
+  ta.placeholder = "optional, e.g. hat, black hair";
+  ta.oninput = () => { l.negative = ta.value; doc.emit("region-prompt"); };
+  lab.appendChild(ta);
+  return lab;
+}
+
 function renderRegions() {
   const list = $("#region-list");
   const items = doc.layers.filter((l) => l.type === LAYER_REGION || (l.prompt && l.prompt.trim())).reverse();
@@ -471,7 +488,10 @@ function renderRegions() {
     const painted = hasContentIn(l.canvas, { x: 0, y: 0, w: doc.width, h: doc.height });
     li.innerHTML = `
       <span class="dot" style="background:${color}" title="${l.type === LAYER_REGION ? "Region layer" : "Sketch layer with a prompt"}"></span>
-      <textarea rows="2" placeholder="Prompt for this region, e.g. 1girl, silver hair, blue kimono"></textarea>
+      <div class="r-prompts">
+        <textarea rows="2" placeholder="Prompt for this region, e.g. 1girl, silver hair, blue kimono"></textarea>
+        <details class="r-neg"><summary>Negative</summary><textarea class="neg" rows="1" placeholder="Only for this region, e.g. hat, black hair (the main negative is added)"></textarea></details>
+      </div>
       <div class="r-side">
         <button class="r-edit" title="Edit its area (selects the layer and the rectangle tool)">${painted ? "Area" : "Draw area"}</button>
         <label title="Region strength">×<input type="number" class="r-str" min="0.1" max="2" step="0.1"></label>
@@ -479,6 +499,13 @@ function renderRegions() {
         ${l.type === LAYER_REGION ? `<button class="r-del" title="Delete region">✕</button>` : ""}
       </div>`;
     const ta = li.querySelector("textarea");
+    const neg = li.querySelector(".r-neg");
+    const nta = neg.querySelector("textarea");
+    nta.value = l.negative;
+    neg.open = !!l.negative.trim();
+    neg.classList.toggle("set", !!l.negative.trim());
+    nta.oninput = () => { l.negative = nta.value; neg.classList.toggle("set", !!nta.value.trim()); doc.emit("region-prompt"); };
+    nta.onfocus = () => { if (doc.activeId !== l.id) { doc.activeId = l.id; doc.emit("active"); } };
     ta.value = l.prompt;
     ta.oninput = () => { l.prompt = ta.value; doc.emit("region-prompt"); updateLayerThumbLabel(); };
     ta.onfocus = () => { if (doc.activeId !== l.id) { doc.activeId = l.id; doc.emit("active"); } };
@@ -496,8 +523,9 @@ let layersTimer = 0;
 doc.on((what) => {
   if (["layers", "reset", "layer-props"].includes(what)) renderRegions();
   if (what === "region-prompt") $$("#region-list li").forEach((li) => {  // edited in the layer panel: mirror here
-    const l = doc.layers.find((x) => String(x.id) === li.dataset.id), ta = li.querySelector("textarea");
+    const l = doc.layers.find((x) => String(x.id) === li.dataset.id), ta = li.querySelector("textarea"), nta = li.querySelector(".r-neg textarea");
     if (l && ta && document.activeElement !== ta) ta.value = l.prompt;
+    if (l && nta && document.activeElement !== nta) { nta.value = l.negative; li.querySelector(".r-neg").classList.toggle("set", !!l.negative.trim()); }
   });
   if (what === "region-prompt") {  // a sketch layer gained or lost its prompt: it joins / leaves the list
     const listed = new Set($$("#region-list li[data-id]").map((li) => li.dataset.id));

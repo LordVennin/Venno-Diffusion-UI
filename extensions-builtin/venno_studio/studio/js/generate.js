@@ -113,7 +113,9 @@ export class Generator {
       if (!hasContentIn(source, rect)) continue;
       let rp = l.prompt.trim();
       if (g.regionAppendRoot && g.prompt.trim()) rp = `${rp}, ${g.prompt.trim()}`;
-      job.regions.push({ prompt: rp, mask: doc.crop(source, rect, gw, gh).toDataURL("image/png"), strength: l.regionStrength });
+      let rn = (l.negative || "").trim();
+      if (rn && g.regionAppendRoot && g.negative.trim()) rn = `${rn}, ${g.negative.trim()}`;
+      job.regions.push({ prompt: rp, negative: rn, mask: doc.crop(source, rect, gw, gh).toDataURL("image/png"), strength: l.regionStrength });
     }
     job.region_base = g.regionBase;
     job.region_end = g.regionEnd;

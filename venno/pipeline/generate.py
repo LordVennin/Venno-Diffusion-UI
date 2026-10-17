@@ -123,7 +123,7 @@ def make_guides(engine, job, src: Optional[Source], width: int, height: int):
 
 
 def uses_wildcards(job) -> bool:
-    texts = [job.prompt, job.negative, job.switch_prompt, *(r.prompt for r in job.regions), *(d.prompt for d in job.detailer), *(d.negative for d in job.detailer)]
+    texts = [job.prompt, job.negative, job.switch_prompt, *(r.prompt for r in job.regions), *(r.negative for r in job.regions), *(d.prompt for d in job.detailer), *(d.negative for d in job.detailer)]
     return any(wildcards.has_syntax(t) for t in texts)
 
 
@@ -146,7 +146,7 @@ def run_each(job, progress: Progress) -> Result:
                 negative=negative,
                 loras=list(job.loras) + extra_loras,
                 switch_prompt=pick(job.switch_prompt, "switch"),
-                regions=[r.model_copy(update={"prompt": pick(r.prompt, f"region{i}")}) for i, r in enumerate(job.regions)],
+                regions=[r.model_copy(update={"prompt": pick(r.prompt, f"region{i}"), "negative": pick(r.negative, f"region{i}n")}) for i, r in enumerate(job.regions)],
                 detailer=[d.model_copy(update={"prompt": pick(d.prompt, f"detail{i}"), "negative": pick(d.negative, f"detail{i}n")}) for i, d in enumerate(job.detailer)],
                 seed=seed,
                 batch=1,
@@ -265,6 +265,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
             params["Region end"] = job.region_end
         for k, r in enumerate(job.regions, start=1):
             params[f"Region {k}"] = r.prompt
+            if r.negative.strip():
+                params[f"Region {k} negative"] = r.negative
     for k, g in enumerate(job.guides, start=1):
         params[f"Guide {k}"] = f"{g.model}, weight {g.weight:g}, steps {g.start:g}-{g.end:g}"
     units = [d for d in job.detailer if d.model and d.model != "None"]
@@ -346,7 +348,12 @@ def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int
         plan = prompts.PromptPlan(steps_run, r.prompt, allow_and=False)
         texts = {t for step in range(1, steps_run + 1) for t, _ in plan.parts(step)}
         contexts = {t: cond.tensor(engine, t, False, width, height) for t in texts}
-        region_list.append(regions.Region(plan=plan, contexts=contexts, mask=region_mask(job, src, r.mask, width, height), strength=r.strength))
+        region = regions.Region(plan=plan, contexts=contexts, mask=region_mask(job, src, r.mask, width, height), strength=r.strength)
+        if r.negative.strip():
+            region.negative_plan = prompts.PromptPlan(steps_run, r.negative, allow_and=False)
+            texts = {t for step in range(1, steps_run + 1) for t, _ in region.negative_plan.parts(step)}
+            region.negative_contexts = {t: cond.tensor(engine, t, True, width, height) for t in texts}
+        region_list.append(region)
     return regions.RegionalAttention(region_list, base_strength=job.region_base)
 
 

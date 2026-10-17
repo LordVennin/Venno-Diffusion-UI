@@ -33,7 +33,7 @@ def _prompt_sr(job, value, target, *, search):
     rep = lambda t: t.replace(search, value) if t else t
     return {
         "prompt": rep(job.prompt), "negative": rep(job.negative), "switch_prompt": rep(job.switch_prompt),
-        "regions": [r.model_copy(update={"prompt": rep(r.prompt)}) for r in job.regions],
+        "regions": [r.model_copy(update={"prompt": rep(r.prompt), "negative": rep(r.negative)}) for r in job.regions],
     }
 
 

@@ -79,6 +79,8 @@ The **Regions** list under the prompt shows every region with its prompt. *+ Reg
 
 Where regions overlap, the **higher layer wins** by default: a region covers the ones below it, with a soft edge. So a background region filling the whole canvas with a character region on a layer above gives the character's prompt the character's area, and the background prompt everywhere else. The *Regions* overlay shows exactly this. Set *Overlapping regions* (in the region settings) to *Blend prompts* to mix overlapping prompts instead, for example to add a detail on top of a character.
 
+Each region can also have its own **negative prompt**: open *Negative* under its prompt (or use *Region negative* in the layer panel). It applies only inside that region, and the main negative is added to it, so it only needs what is specific to that area: `blonde hair` for the black-haired character so colours don't bleed, `hat` for one character only, or `1girl, people` on a background region to keep extra figures out of the scenery. Regions without one use the main negative. Region negatives need a negative pass: they do nothing at CFG 1 (e.g. turbo settings), and only the Venno engine uses them.
+
 ### Prompting sketch layers
 
 Write a prompt in a paint or guide layer's *Layer prompt* field. That layer's strokes then act as a region, which is handy for "sketch each character on its own layer". *Region spread* sets how far around the strokes the prompt reaches. *Fill enclosed shapes* makes a closed outline count as its whole interior. Tick *Show region* to see the area that will be used. Paint layers stay part of the image. Guide layers with a prompt both steer the lines and prompt the area.
@@ -107,7 +109,7 @@ Add a **Guide** layer, pick a model (Venno prefers `any-test-like` / `lineart` m
 - Danbooru-style tags, natural language, or both. Prefix artists with `@`.
 - *Add Anima quality tags* prepends `masterpiece, best quality, score_7, safe, `. Turn it off for Anima-Aesthetic, whose model card advises against `score_*` tags.
 - Prompt weights need to be stronger than on SDXL, e.g. `(chibi:2)`.
-- Regions: describe each character fully in its region prompt. The main prompt is appended to each region by default; *Main prompt inside regions* controls how much the main prompt still shapes the regions.
+- Regions: describe each character fully in its region prompt. The main prompt is appended to each region (and the main negative to each region negative) by default; *Main prompt inside regions* controls how much the main prompt still shapes the regions.
 
 ## Text to Image / Image to Image
 
@@ -131,7 +133,7 @@ POST /venno/v1/jobs
   "prompt": "masterpiece, best quality, safe, 1girl, …", "negative": "…",
   "width": 1024, "height": 1024, "batch": 2, "seed": -1,
   "sampler": "Euler", "scheduler": "Simple", "steps": 10, "cfg": 1.0, "shift": 3.0,
-  "regions":  [{ "prompt": "…", "mask": "<png>" }],
+  "regions":  [{ "prompt": "…", "negative": "", "mask": "<png>" }],
   "guides":   [{ "model": "anima-lllite-any-test-like-v2", "image": "<png>", "weight": 0.8 }],
   "hires":    { "upscaler": "Latent", "scale": 1.5, "denoise": 0.5 },
   "detailer": [{ "model": "face_yolov8n.pt", "denoise": 0.4 }]

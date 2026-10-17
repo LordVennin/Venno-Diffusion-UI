@@ -158,7 +158,7 @@
         <h4>Regional prompts</h4>
         <label title="How much the main prompt still applies inside regions">Main prompt inside regions <input type="range" id="region-base" min="0" max="100" value="25"><output id="out-region-base">25%</output></label>
         <label title="Stop regional guidance after this part of the steps (later steps refine details globally)">Region guidance until <input type="range" id="region-end" min="10" max="100" value="100"><output id="out-region-end">100%</output></label>
-        <label class="check"><input type="checkbox" id="region-append" checked> Append main prompt to region prompts</label>
+        <label class="check" title="Region prompts get the main prompt added, and region negatives the main negative"><input type="checkbox" id="region-append" checked> Add the main prompts to region prompts</label>
         <label title="Where region layers overlap: the higher layer covers the lower one (e.g. a character over a background region), or both prompts mix">Overlapping regions <select id="region-overlap"><option value="top">Top layer wins</option><option value="blend">Blend prompts</option></select></label>
       </details>
     </section>

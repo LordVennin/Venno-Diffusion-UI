@@ -29,6 +29,7 @@ export class Layer {
     this.name = name || defaultName(type, this.id);
     // region layers
     this.prompt = "";
+    this.negative = ""; // the region's own negative prompt ("" = the main negative)
     this.color = REGION_COLORS[(doc.layers.filter((l) => l.type === LAYER_REGION).length) % REGION_COLORS.length];
     this.regionStrength = 1;
     // control layers
@@ -158,7 +159,7 @@ export class Doc {
     const c = makeCanvas(this.width, this.height);
     ctx2d(c).drawImage(layer.canvas, 0, 0);
     const copy = this.addLayer(layer.type, { name: `${layer.name} copy`, canvas: c, above: layer });
-    Object.assign(copy, { prompt: layer.prompt, opacity: layer.opacity, controlModel: layer.controlModel, controlWeight: layer.controlWeight, controlStart: layer.controlStart, controlEnd: layer.controlEnd, controlInvert: layer.controlInvert, regionSpread: layer.regionSpread, regionFill: layer.regionFill, regionStrength: layer.regionStrength });
+    Object.assign(copy, { prompt: layer.prompt, negative: layer.negative, opacity: layer.opacity, controlModel: layer.controlModel, controlWeight: layer.controlWeight, controlStart: layer.controlStart, controlEnd: layer.controlEnd, controlInvert: layer.controlInvert, regionSpread: layer.regionSpread, regionFill: layer.regionFill, regionStrength: layer.regionStrength });
     return copy;
   }
 
