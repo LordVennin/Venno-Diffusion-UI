@@ -29,6 +29,7 @@ export class View {
     this.panY = 0;
     this.tool = "brush";
     this.showRegions = true;
+    this.regionOverlap = "top"; // how overlapping region layers are drawn (and generated): "top" | "blend"
     this.pointer = null; // last pointer pos in screen px
     this.spaceDown = false;
     this.overlay = null; // {canvas, rect} result / progress preview
@@ -153,10 +154,26 @@ export class View {
     ctx.globalAlpha = 1;
 
     if (this.showRegions && !this.overlay) {
-      for (const l of doc.layers) {
-        if (!l.visible || l.type !== LAYER_REGION) continue;
-        ctx.globalAlpha = l.id === doc.activeId ? 0.55 : 0.35;
-        ctx.drawImage(this.layerWithStroke(l), 0, 0);
+      // "top": draw top-first underneath what is already there, so a higher region hides lower ones, as generated
+      const regions = doc.layers.filter((l) => l.visible && l.type === LAYER_REGION);
+      if (this.regionOverlap === "top") {
+        const tint = this.tintCanvas && this.tintCanvas.width === doc.width && this.tintCanvas.height === doc.height ? this.tintCanvas : (this.tintCanvas = makeCanvas(doc.width, doc.height));
+        const tc = ctx2d(tint);
+        tc.clearRect(0, 0, tint.width, tint.height);
+        tc.globalCompositeOperation = "destination-over";
+        for (const l of [...regions].reverse()) {
+          tc.globalAlpha = l.id === doc.activeId ? 1 : 0.65;
+          tc.drawImage(this.layerWithStroke(l), 0, 0);
+        }
+        tc.globalCompositeOperation = "source-over";
+        tc.globalAlpha = 1;
+        ctx.globalAlpha = 0.5;
+        ctx.drawImage(tint, 0, 0);
+      } else {
+        for (const l of regions) {
+          ctx.globalAlpha = l.id === doc.activeId ? 0.55 : 0.35;
+          ctx.drawImage(this.layerWithStroke(l), 0, 0);
+        }
       }
       ctx.globalAlpha = 1;
     }

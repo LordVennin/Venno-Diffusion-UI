@@ -390,6 +390,37 @@ export function loadImage(src) {
 
 // Region mask (alpha canvas, doc size) derived from a sketch layer's strokes:
 // strokes are grown by `spread` px, closed outlines are optionally filled, edges are softened.
+/**
+ * Region masks for generation, bottom → top like doc.layers: region layers, plus paint / guide layers with a prompt.
+ * mode "top": a region on a higher layer covers lower ones where they overlap (feathered, so edges blend);
+ * mode "blend": overlapping regions mix their prompts.
+ */
+export function regionMasks(doc, { mode = "top", feather = null } = {}) {
+  const W = doc.width, H = doc.height;
+  const fb = feather ?? Math.max(2, Math.round(Math.max(W, H) / 128));
+  const covered = makeCanvas(W, H);
+  const cc = ctx2d(covered);
+  const out = [];
+  for (const l of [...doc.layers].reverse()) {  // top first
+    if (!l.visible || !l.prompt.trim()) continue;
+    const source = l.type === LAYER_REGION ? l.canvas : strokeRegionMask(l.canvas, l.regionSpread, l.regionFill);
+    let mask = source;
+    if (mode === "top" && out.length) {
+      mask = makeCanvas(W, H);
+      const c = ctx2d(mask);
+      c.drawImage(source, 0, 0);
+      c.globalCompositeOperation = "destination-out";
+      c.filter = `blur(${fb}px)`;
+      c.drawImage(covered, 0, 0);
+      c.filter = "none";
+      c.globalCompositeOperation = "source-over";
+    }
+    out.push({ layer: l, mask });
+    cc.drawImage(source, 0, 0);
+  }
+  return out.reverse();
+}
+
 export function strokeRegionMask(canvas, spread = 48, fillEnclosed = true) {
   const W = canvas.width, H = canvas.height;
   const cell = Math.max(2, Math.round(spread / 2));

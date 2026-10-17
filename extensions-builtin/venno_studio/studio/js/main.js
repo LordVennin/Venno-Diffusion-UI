@@ -26,7 +26,7 @@ const state = {
   gen: {
     prompt: "", negative: "", loras: [], switchPrompt: "", switchAt: 0.4, strength: 1, batch: 2, steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple",
     seed: 0, seedLocked: false, resolution: 1024, context: 0.5, feather: 12, qualityPrefix: true, saveImages: true, softInpaint: true,
-    regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, preset: "", adetailer: true,
+    regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, regionOverlap: "top", preset: "", adetailer: true,
     ...(saved.gen || {}),
   },
   showProgressPreview: saved.showProgressPreview ?? true,
@@ -585,6 +585,9 @@ bindRange("context", () => Math.round(g.context * 100), (v) => (g.context = v / 
 bindRange("feather", () => g.feather, (v) => (g.feather = v));
 bindRange("region-base", () => Math.round(g.regionBase * 100), (v) => (g.regionBase = v / 100), (v) => `${v}%`);
 bindRange("region-end", () => Math.round(g.regionEnd * 100), (v) => (g.regionEnd = v / 100), (v) => `${v}%`);
+$("#region-overlap").value = g.regionOverlap;
+view.regionOverlap = g.regionOverlap;
+$("#region-overlap").onchange = (e) => { g.regionOverlap = view.regionOverlap = e.target.value; persist(); view.render(); gen.scheduleLive(); };
 for (const [id, key] of [["quality-prefix", "qualityPrefix"], ["save-images", "saveImages"], ["soft-inpaint", "softInpaint"], ["region-append", "regionAppendRoot"], ["canvas-adetailer", "adetailer"]]) {
   $(`#${id}`).checked = g[key];
   $(`#${id}`).onchange = (e) => { g[key] = e.target.checked; persist(); };

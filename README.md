@@ -77,6 +77,8 @@ Results are rendered at about the chosen *Resolution* (default 1024², Anima's n
 
 The **Regions** list under the prompt shows every region with its prompt. *+ Region* adds one and picks the **Rectangle tool (U)**: drag boxes where it applies (or paint with the brush; Ctrl+drag erases a box). *Area* reselects a region's layer to edit it, the eye turns it off. LoRAs apply to the whole image, not to a single region.
 
+Where regions overlap, the **higher layer wins** by default: a region covers the ones below it, with a soft edge. So a background region filling the whole canvas with a character region on a layer above gives the character's prompt the character's area, and the background prompt everywhere else. The *Regions* overlay shows exactly this. Set *Overlapping regions* (in the region settings) to *Blend prompts* to mix overlapping prompts instead, for example to add a detail on top of a character.
+
 ### Prompting sketch layers
 
 Write a prompt in a paint or guide layer's *Layer prompt* field. That layer's strokes then act as a region, which is handy for "sketch each character on its own layer". *Region spread* sets how far around the strokes the prompt reaches. *Fill enclosed shapes* makes a closed outline count as its whole interior. Tick *Show region* to see the area that will be used. Paint layers stay part of the image. Guide layers with a prompt both steer the lines and prompt the area.

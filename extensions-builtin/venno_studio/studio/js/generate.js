@@ -1,6 +1,6 @@
 // Turns the canvas state into Venno jobs and manages results / live mode.
 
-import { LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, alphaToMask, ctx2d, hasContentIn, loadImage, makeCanvas, strokeRegionMask } from "./doc.js";
+import { LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, alphaToMask, ctx2d, hasContentIn, loadImage, makeCanvas, regionMasks, strokeRegionMask } from "./doc.js";
 import { ADETAILER_DEFAULT, withQualityPrefix } from "./common.js";
 import { cancelJob, jobModel, runJob } from "./jobs.js";
 import { jobLoras } from "./loras.js";
@@ -109,9 +109,7 @@ export class Generator {
 
     // regional prompts: region layers, plus paint / guide layers that carry a prompt (shaped by their strokes)
     job.regions = [];
-    for (const l of doc.layers) {
-      if (!l.visible || !l.prompt.trim()) continue;
-      const source = l.type === LAYER_REGION ? l.canvas : strokeRegionMask(l.canvas, l.regionSpread, l.regionFill);
+    for (const { layer: l, mask: source } of regionMasks(doc, { mode: g.regionOverlap || "top" })) {
       if (!hasContentIn(source, rect)) continue;
       let rp = l.prompt.trim();
       if (g.regionAppendRoot && g.prompt.trim()) rp = `${rp}, ${g.prompt.trim()}`;
