@@ -128,7 +128,7 @@ class Job(BaseModel):
     # Cosmos time axis (venno/engine/reference.py)
     frames: int = Field(1, ge=1, le=4)  # consistent set: frames generated together, as one sequence (text to image)
     frame_prompts: list[str] = []  # per frame, added in front of the prompt ("" = the prompt alone)
-    frame_separation: float = Field(0.3, ge=0.0, le=1.0)  # with frame prompts: keep frames apart (prompts ↔ consistency)
+    frame_separation: float = Field(0.2, ge=0.0, le=1.0)  # with frame prompts: keep frames apart (prompts ↔ consistency)
     references: list[str] = Field([], max_length=3)  # reference pictures (data URL or base64)
     reference_noise: float = Field(0.5, ge=0.0, le=1.0)  # the timestep the clean references are given
     reference_follow: bool = False  # their timestep follows the steps instead (Anima Edit LoRAs)

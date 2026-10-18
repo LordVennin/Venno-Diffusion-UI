@@ -3,7 +3,7 @@
 
 import { $, $$, escapeHtml, toast } from "./common.js";
 
-export const SET_DEFAULT = { enabled: false, frames: 3, prompts: ["", "", "", ""], separation: 0.3 };
+export const SET_DEFAULT = { enabled: false, frames: 3, prompts: ["", "", "", ""], separation: 0.2 };
 export const REFERENCE_DEFAULT = { enabled: false, useInput: false, follow: false, noise: 0.5 };
 const MAX_REFERENCES = 3;
 
