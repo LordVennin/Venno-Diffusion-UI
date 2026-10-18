@@ -1,10 +1,12 @@
-// Settings (⚙ in the top bar): Models (downloads), Plugins (coming) and System (version, device, folders).
+// Settings (⚙ in the top bar): Models (downloads), Studio (preferences), Plugins (coming) and System (version, device, folders).
 // New sections go in SECTIONS and get a <section data-section="…"> in the page.
 
-import { $, $$, api, escapeHtml, toast } from "./common.js";
+import { warmTags } from "./autocomplete.js";
+import { $, $$, api, escapeHtml, prefs, setPref, toast } from "./common.js";
 
 const SECTIONS = [
   { key: "models", label: "Models", hint: "Download checkpoints, guides, upscalers" },
+  { key: "studio", label: "Studio", hint: "Prompt boxes and other preferences" },
   { key: "plugins", label: "Plugins", hint: "Coming soon" },
   { key: "system", label: "System", hint: "Version, device, folders" },
 ];
@@ -22,6 +24,15 @@ export class SettingsPage {
       </nav>
       <div class="settings-body">
         <section data-section="models" class="settings-models"></section>
+        <section data-section="studio" hidden>
+          <div class="settings-inner">
+            <section class="card">
+              <h3>Prompt boxes</h3>
+              <label class="check"><input type="checkbox" class="pref-autocomplete"> Tag autocomplete</label>
+              <p>Suggests Danbooru tags (and <code>__wildcard__</code> files after <code>__</code>) while you type in any prompt box. Saved in this browser.</p>
+            </section>
+          </div>
+        </section>
         <section data-section="plugins" hidden>
           <div class="settings-inner">
             <section class="card">
@@ -34,6 +45,9 @@ export class SettingsPage {
         <section data-section="system" hidden><div class="settings-inner system-info"></div></section>
       </div>`;
     $$(".settings-nav button", root).forEach((b) => (b.onclick = () => this.show(b.dataset.section)));
+    const ac = $(".pref-autocomplete", root);
+    ac.checked = prefs.autocomplete;
+    ac.onchange = () => { setPref("autocomplete", ac.checked); warmTags(); };
   }
 
   /** The element the Models page renders into. */

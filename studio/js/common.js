@@ -65,6 +65,14 @@ export function toast(msg, kind = "error") {
   toastTimer = setTimeout(() => (t.className = "toast"), kind === "info" ? 2500 : 6000);
 }
 
+/** Studio preferences (Settings → Studio), kept in this browser. */
+export const PREFS_DEFAULT = { autocomplete: true };
+export const prefs = loadStore("venno-prefs", PREFS_DEFAULT);
+export function setPref(key, value) {
+  prefs[key] = value;
+  saveStore("venno-prefs", prefs);
+}
+
 export function loadStore(key, fallback) {
   try { return { ...fallback, ...(JSON.parse(localStorage.getItem(key)) || {}) }; } catch { return { ...fallback }; }
 }

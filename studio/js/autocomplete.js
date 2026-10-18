@@ -1,8 +1,9 @@
 // Tag autocomplete for every prompt box (delegated, so layer / detailer prompts created later get it too).
 // Danbooru tags come from the server already in Anima's format (spaces, @artist, escaped parentheses).
 // Typing "@" lists artists only; "__" lists wildcard files. ↑/↓ to choose, Enter or Tab to insert, Esc to close.
+// Can be switched off in Settings → Studio (prefs.autocomplete).
 
-import { escapeHtml } from "./common.js";
+import { escapeHtml, prefs } from "./common.js";
 
 const SEPARATORS = /[,\n]/;
 let wildcardNames = [];
@@ -123,11 +124,17 @@ async function suggest(ta) {
   popup.show(ta, tok, items);
 }
 
+/** Have the server load its tag list now (it is read on first use), so the first suggestion isn't slow. */
+export function warmTags() {
+  if (prefs.autocomplete) fetch("/venno/v1/tags?limit=1&q=").catch(() => {});
+}
+
 export function enableAutocomplete(root = document) {
   popup = popup || new Popup();
+  warmTags();
   root.addEventListener("input", (e) => {
     const ta = e.target;
-    if (!(ta instanceof HTMLTextAreaElement) || ta.dataset.noac !== undefined) return;
+    if (!prefs.autocomplete || !(ta instanceof HTMLTextAreaElement) || ta.dataset.noac !== undefined) return;
     clearTimeout(timer);
     timer = setTimeout(() => suggest(ta), 90);
   });
