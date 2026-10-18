@@ -61,11 +61,28 @@ def _adetailer_models() -> list[str]:
     return [m for m in detect.models() if m != "mediapipe_face_mesh"]
 
 
+def _code_stamp() -> tuple:
+    """Fingerprint of the server's Python code on disk (newest change, file count)."""
+    newest, count = 0.0, 0
+    for top in ("venno", "backend"):
+        for dirpath, dirnames, files in os.walk(os.path.join(config.ROOT, top)):
+            dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+            for f in files:
+                if f.endswith(".py"):
+                    count += 1
+                    newest = max(newest, os.path.getmtime(os.path.join(dirpath, f)))
+    return newest, count
+
+
+STARTED_WITH = _code_stamp()  # Venno updated (e.g. git pull) without a restart → the Studio says so
+
+
 def _info() -> dict:
     from venno.engine import models
 
     loaded = models.manager.info
     return {
+        "restart_needed": _code_stamp() != STARTED_WITH,
         "checkpoints": [{"title": t, "name": models.checkpoint_name(os.path.basename(t))} for t in models.checkpoints()],
         "modules": [{"name": k, "filename": v} for k, v in models.modules().items()],
         "current_checkpoint": loaded.get("name", ""),

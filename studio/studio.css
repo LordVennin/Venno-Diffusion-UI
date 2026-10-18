@@ -471,3 +471,7 @@ html, body { overflow-x: hidden; }
 .tc-wrap > .tc { position: absolute; right: 8px; bottom: 4px; font-size: 10.5px; line-height: 1; color: var(--muted); background: color-mix(in srgb, var(--bg) 80%, transparent); padding: 2px 4px; border-radius: 3px; pointer-events: none; font-variant-numeric: tabular-nums; opacity: 0.85; }
 .tc-wrap > .tc.empty { display: none; }
 .tc-wrap > .tc.over { color: var(--warn, #e0a050); opacity: 1; }
+
+/* the server runs older code than is on disk (updated without a restart) */
+#restart-banner { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 50; margin-top: 6px; max-width: min(900px, 94vw); background: #3a2a2a; border: 1px solid var(--danger); color: var(--text); padding: 7px 36px 7px 14px; border-radius: 6px; font-size: 13px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); }
+#restart-banner button { position: absolute; top: 4px; right: 6px; border: 0; background: transparent; font-size: 15px; padding: 0 6px; }

@@ -107,6 +107,18 @@ function toast(msg, kind = "error") {
 view.onToast = (m) => toast(m, "info");
 const setStatus = (s) => ($("#status").textContent = s);
 
+/** Venno's files were updated after the server started: new options in the Studio would be ignored until a restart. */
+function showRestartBanner(on) {
+  let el = $("#restart-banner");
+  if (!on) return el?.remove();
+  if (el) return;
+  el = document.createElement("div");
+  el.id = "restart-banner";
+  el.innerHTML = `Venno was updated after it started. <b>Restart Venno</b> (close it and run venno.bat / venno.sh again): until then the server runs the old version and ignores new options. <button title="Hide">×</button>`;
+  el.querySelector("button").onclick = () => el.remove();
+  document.body.prepend(el);
+}
+
 // ---------------- toolbar ----------------
 const ICONS = {
   brush: '<path d="M4 20c2 0 4-1 4-3a2 2 0 0 0-2-2c-2 0-2 3-2 5z"/><path d="M8 15 19 4l1 1L9 16"/>',
@@ -767,6 +779,7 @@ async function loadInfo(refresh = false) {
     setStatus(refresh ? "Rescanning models…" : "Connecting…");
     const info = refresh ? await api("/venno/v1/refresh", {}) : await api("/venno/v1/info");
     state.info = info;
+    showRestartBanner(info.restart_needed);
     refreshTokenCounters(); // the quality prefix comes with the info
     const ckpts = info.checkpoints.map((c) => ({ value: c.title, label: c.name }));
     const mods = info.modules.filter((m) => !/qwen3[._-]?5[._-]?4b|qwen35_4b/i.test(m.name)); // Anima 3.8B's second encoder is picked automatically
