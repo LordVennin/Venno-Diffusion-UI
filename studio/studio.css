@@ -406,8 +406,8 @@ details.card > summary > span { color: var(--text); }
 .ref-card .ref-pic button { position: absolute; top: 2px; right: 2px; padding: 0 6px; line-height: 18px; font-size: 13px; }
 .set-card .set-sep-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
 .set-card .set-sep-v { min-width: 3em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
-.ref-card .ref-noise-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
-.ref-card .ref-noise-v { min-width: 3.5em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ref-card .ref-noise-row, .ref-card .ref-strength-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
+.ref-card .ref-strength-v, .ref-card .ref-noise-v { min-width: 3.5em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 .panel details.card > summary { cursor: pointer; font-weight: 600; }
 #thumbs img.grid { outline: 1px dashed var(--accent2); }
 #lightbox { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.86); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; }

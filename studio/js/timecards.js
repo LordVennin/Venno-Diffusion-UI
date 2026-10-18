@@ -4,7 +4,7 @@
 import { $, $$, escapeHtml, toast } from "./common.js";
 
 export const SET_DEFAULT = { enabled: false, frames: 3, prompts: ["", "", "", ""], separation: 0.2 };
-export const REFERENCE_DEFAULT = { enabled: false, useInput: false, follow: false, noise: 0.5 };
+export const REFERENCE_DEFAULT = { enabled: false, useInput: false, follow: false, noise: 0.5, strength: 1 };
 const MAX_REFERENCES = 3;
 
 export class SetCard {
@@ -86,6 +86,7 @@ export class ReferenceCard {
       <div class="ref-list"></div>
       <div class="row"><button class="ref-add">Add picture…</button><span class="muted">or drop one here · up to ${MAX_REFERENCES}</span></div>
       <label class="check" title="The references get the same noise level as the picture at every step. This is how the Anima Edit LoRAs were trained."><input type="checkbox" class="ref-follow"> Follow the steps (Anima Edit LoRAs)</label>
+      <label class="ref-strength-row" title="How much the new picture looks at the references. Lower lets the prompt decide pose and scene, and keeps the character from the references.">Reference strength <input type="range" class="ref-strength" min="0" max="100" step="5"><span class="ref-strength-v"></span></label>
       <label class="ref-noise-row">Reference noise <input type="range" class="ref-noise" min="0" max="100" step="5"><span class="ref-noise-v"></span></label>
       <div class="hint ref-hint"></div>`;
     const s = () => this.o.state();
@@ -94,6 +95,7 @@ export class ReferenceCard {
     on.onchange = () => { s().enabled = on.checked; if (on.checked) el.open = true; this.changed(); };
     $(".ref-follow", el).onchange = (e) => { s().follow = e.target.checked; this.changed(); };
     $(".ref-noise", el).oninput = (e) => { s().noise = Number(e.target.value) / 100; this.changed(); };
+    $(".ref-strength", el).oninput = (e) => { s().strength = Number(e.target.value) / 100; this.changed(); };
     const useInput = $(".ref-input", el);
     if (useInput) useInput.onchange = () => { s().useInput = useInput.checked; if (useInput.checked) s().enabled = true; this.changed(); this.render(); };
     const picker = document.createElement("input");
@@ -155,6 +157,7 @@ export class ReferenceCard {
     if (useInput) useInput.checked = s.useInput;
     $(".ref-follow", el).checked = s.follow;
     $(".ref-noise", el).value = Math.round(s.noise * 100);
+    $(".ref-strength", el).value = Math.round(s.strength * 100);
     const list = $(".ref-list", el);
     list.innerHTML = this.pictures.map((src, k) => `<div class="ref-pic"><img src="${src}" alt="Reference ${k + 1}" draggable="false"><button data-k="${k}" title="Remove">×</button></div>`).join("");
     $$("button", list).forEach((b) => (b.onclick = () => { this.pictures.splice(Number(b.dataset.k), 1); this.changed(); this.render(); }));
@@ -169,6 +172,7 @@ export class ReferenceCard {
     $(".ref-noise", el).disabled = s.follow;
     $(".ref-noise-row", el).classList.toggle("muted", s.follow);
     $(".ref-noise-v", el).textContent = s.follow ? "follows the steps" : s.noise.toFixed(2);
+    $(".ref-strength-v", el).textContent = `${Math.round(s.strength * 100)}%`;
     $(".ref-hint", el).innerHTML = s.follow
       ? "For an Edit LoRA: add it under LoRAs, use the input image as the reference and Denoising 1, and write the change you want in the prompt."
       : "How noisy the model is told the references are. Lower copies them more closely (below about 0.3 a dotted pattern can appear); higher follows the prompt more. 0.5 is a good start.";
@@ -180,12 +184,13 @@ export class ReferenceCard {
     if (!s.enabled) return {};
     const refs = [...(this.usesInput() && this.o.input() ? [this.o.input()] : []), ...this.pictures];
     if (!refs.length) return {};
-    return { references: refs, reference_noise: s.noise, reference_follow: s.follow };
+    return { references: refs, reference_noise: s.noise, reference_follow: s.follow, reference_strength: s.strength };
   }
 
   apply(x) {
     const s = this.o.state();
     if (x.reference_follow !== undefined) s.follow = x.reference_follow;
     if (x.reference_noise !== undefined) s.noise = x.reference_noise;
+    if (x.reference_strength !== undefined) s.strength = x.reference_strength;
   }
 }

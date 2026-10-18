@@ -24,6 +24,8 @@ export const AXES = [
   { key: "region_separation", label: "Region separation", hint: "0, 0.5, 1 (Canvas regions)" },
   { key: "region_refine", label: "Region pass", hint: "0, 0.35, 0.5 (denoising, 0 = off; Canvas regions)" },
   { key: "frame_separation", label: "Frame separation", hint: "0, 0.2, 0.4 (consistent sets with frame texts)" },
+  { key: "reference_strength", label: "Reference strength", hint: "1, 0.6, 0.3 (with reference pictures)" },
+  { key: "reference_noise", label: "Reference noise", hint: "0.3, 0.5, 0.8 (with reference pictures)" },
 ];
 
 export const GRID_DEFAULT = {
