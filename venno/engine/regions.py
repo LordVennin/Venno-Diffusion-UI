@@ -28,8 +28,9 @@ frame prompt: on its frame it takes the main prompt's share of the blend (its pr
 main prompt), and it is absent on the other frames. Spatial regions apply to every generated frame.
 Frames past `frames` are reference pictures (venno/engine/reference.py): they see the main prompt only.
 Joint self-attention averages the frames' differences away (three expressions come out as one in-between
-face), so with frame prompts the same middle-step window damps attention between different generated
-frames by `frame_separation` (`frame_bias`); reference frames stay fully visible.
+face), so with frame prompts attention between different generated frames is damped by `frame_separation`
+at every step (`frame_bias`); reference frames stay fully visible. Separating only some of the steps
+doesn't work here: early steps fix the expression, and switching separation off late leaves blocky patches.
 """
 
 from __future__ import annotations
@@ -118,7 +119,7 @@ class RegionalAttention:
         """Self-attention key bias per query frame, (t, N), or None. It depends only on the key's frame,
         so a frame's queries can be run with a (1, 1, 1, N) mask instead of an (N, N) one."""
         t, h, w = thw
-        if self.frame_separation <= 0 or t < 2 or self.frames < 2 or not self.separate_from <= self.step <= self.separate_until:
+        if self.frame_separation <= 0 or t < 2 or self.frames < 2:
             return None
         if not any(r.frame is not None for r in self.regions):
             return None

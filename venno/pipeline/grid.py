@@ -94,6 +94,7 @@ AXES: dict[str, AxisType] = {a.key: a for a in [
     AxisType("region_base", "Region base", "float", lambda j, v, t: {"region_base": v}),
     AxisType("region_separation", "Region separation", "float", lambda j, v, t: {"region_separation": v}),
     AxisType("region_refine", "Region pass", "float", lambda j, v, t: {"region_refine": v}),
+    AxisType("frame_separation", "Frame separation", "float", lambda j, v, t: {"frame_separation": v}),
     AxisType("detailer_denoise", "Detailer denoise", "float", _detailer_denoise),
 ]}
 
@@ -263,7 +264,11 @@ def run(job, progress, run_job) -> "object":
         if part.cancelled or not part.images:
             result.cancelled = part.cancelled
             break
-        images[(zi, yi, xi)] = Image.open(io.BytesIO(part.images[0])).convert("RGB")
+        frames = [Image.open(io.BytesIO(png)).convert("RGB") for png in part.images]  # a consistent set: its frames side by side
+        cell = Image.new("RGB", (sum(f.width for f in frames), max(f.height for f in frames)))
+        for k, f in enumerate(frames):
+            cell.paste(f, (sum(g.width for g in frames[:k]), 0))
+        images[(zi, yi, xi)] = cell
         cell_infos[(zi, yi, xi)] = (part.images[0], part.seeds[0], part.infotexts[0])
     if result.cancelled or not images:
         return result

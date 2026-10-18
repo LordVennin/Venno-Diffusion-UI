@@ -3,7 +3,7 @@
 
 import { $, $$, escapeHtml, toast } from "./common.js";
 
-export const SET_DEFAULT = { enabled: false, frames: 3, prompts: ["", "", "", ""] };
+export const SET_DEFAULT = { enabled: false, frames: 3, prompts: ["", "", "", ""], separation: 0.3 };
 export const REFERENCE_DEFAULT = { enabled: false, useInput: false, follow: false, noise: 0.5 };
 const MAX_REFERENCES = 3;
 
@@ -18,12 +18,14 @@ export class SetCard {
       <div class="hint">Generates several pictures <b>together</b>, as frames of one sequence: the same character, outfit and style, with small changes between them. Give a frame its own text to steer it (added in front of the prompt), e.g. an expression or a pose. Each image of the batch is its own set.</div>
       <label>Frames <span class="seg set-frames">${[2, 3, 4].map((n) => `<button data-n="${n}">${n}</button>`).join("")}</span></label>
       <div class="set-prompts"></div>
+      <label class="set-sep-row" title="With frame texts: how far the frames are kept from each other. Higher follows each frame's text more; lower keeps the frames more alike.">Keep frames apart <input type="range" class="set-sep" min="0" max="100" step="5"><span class="set-sep-v"></span></label>
       <div class="hint">Sampling takes longer with every frame (about ×2 for 2 frames, ×5 for 4). Not used by the Canvas.</div>`;
     const s = () => this.o.state();
     const on = $(".set-on", el);
     on.onclick = (e) => e.stopPropagation();
     on.onchange = () => { s().enabled = on.checked; if (on.checked) el.open = true; this.changed(); };
     $$(".set-frames button", el).forEach((b) => (b.onclick = () => { s().frames = Number(b.dataset.n); this.changed(); this.render(); }));
+    $(".set-sep", el).oninput = (e) => { s().separation = Number(e.target.value) / 100; this.changed(); };
     this.render();
   }
 
@@ -39,20 +41,23 @@ export class SetCard {
     $$(".set-frames button", el).forEach((b) => b.classList.toggle("on", Number(b.dataset.n) === s.frames));
     const box = $(".set-prompts", el);
     box.innerHTML = Array.from({ length: s.frames }, (_, k) => `<label>Frame ${k + 1} <input type="text" data-k="${k}" placeholder="e.g. ${["smile", "angry", "surprised", "sleeping"][k]} (optional)" value="${escapeHtml(s.prompts[k] || "")}"></label>`).join("");
-    $$("input", box).forEach((input) => (input.oninput = () => { s().prompts[Number(input.dataset.k)] = input.value; this.o.persist(); }));
+    $$("input", box).forEach((input) => (input.oninput = () => { s().prompts[Number(input.dataset.k)] = input.value; this.changed(); }));
     this.updateSummary();
   }
 
   updateSummary() {
     const s = this.o.state();
     $(".set-sum", this.el).textContent = s.enabled ? `(${s.frames} frames)` : "";
+    $(".set-sep", this.el).value = Math.round(s.separation * 100);
+    $(".set-sep-v", this.el).textContent = `${Math.round(s.separation * 100)}%`;
+    $(".set-sep-row", this.el).classList.toggle("muted", !s.prompts.slice(0, s.frames).some((p) => p?.trim()));
   }
 
   /** Fields for the job (text to image), or {} when off. */
   job() {
     const s = this.o.state();
     if (!s.enabled) return {};
-    return { frames: s.frames, frame_prompts: s.prompts.slice(0, s.frames).map((p) => p || "") };
+    return { frames: s.frames, frame_prompts: s.prompts.slice(0, s.frames).map((p) => p || ""), frame_separation: s.separation };
   }
 
   /** Settings read from an image (infotext.settings). */
@@ -62,6 +67,7 @@ export class SetCard {
     if (s.enabled) {
       s.frames = Math.min(4, Math.max(2, x.frames));
       s.prompts = Array.from({ length: 4 }, (_, k) => x.frame_prompts?.[k] || "");
+      if (x.frame_separation !== undefined) s.separation = x.frame_separation;
     }
   }
 }

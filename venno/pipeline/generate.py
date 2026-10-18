@@ -269,6 +269,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
         for k, fp in enumerate(job.frame_prompts[:frames], start=1):
             if fp.strip():
                 params[f"Frame {k} prompt"] = fp
+        if any(fp.strip() for fp in job.frame_prompts[:frames]):
+            params["Frame separation"] = job.frame_separation
     if refs is not None:
         params.update(refs.info())
     if job.regions:
@@ -366,9 +368,6 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
 # ---------------------------------------------------------------- passes
 
 
-FRAME_SEPARATION = 0.7  # frame prompts: damp attention between frames in the middle steps (regions.RegionalAttention)
-
-
 def with_frames(shape: tuple[int, ...], frames: int) -> tuple[int, ...]:
     """A per-image latent shape (C, 1, h, w) with `frames` frames on the time axis."""
     return shape if frames == 1 else (shape[0], frames, *shape[2:])
@@ -401,7 +400,7 @@ def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int
             region.negative_contexts = {t: cond.tensor(engine, t, True, width, height) for t in texts}
         region_list.append(region)
     return regions.RegionalAttention(
-        region_list, base_strength=job.region_base, frames=frames, frame_separation=FRAME_SEPARATION if frame_prompts else 0.0,
+        region_list, base_strength=job.region_base, frames=frames, frame_separation=job.frame_separation if frame_prompts else 0.0,
         separation=job.region_separation,
         separate_from=max(2, math.floor(steps_run * job.region_end * 0.25) + 1),  # layout first, as one picture
         separate_until=math.ceil(steps_run * job.region_end * 0.6),

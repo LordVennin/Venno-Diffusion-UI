@@ -136,6 +136,7 @@ def settings(text: str) -> dict:
     if frames := _num(prm.get("Frames"), int):
         out["frames"] = frames
         out["frame_prompts"] = [prm.get(f"Frame {k + 1} prompt", "") for k in range(frames)]
+        out["frame_separation"] = _num(prm.get("Frame separation"))
     if "Reference noise" in prm:  # the pictures themselves are not stored
         follow = prm["Reference noise"] == "follow"
         out["reference_follow"] = follow
