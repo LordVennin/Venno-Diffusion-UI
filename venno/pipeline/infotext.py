@@ -142,4 +142,5 @@ def settings(text: str) -> dict:
         out["reference_follow"] = follow
         if not follow:
             out["reference_noise"] = _num(prm["Reference noise"])
+        out["reference_strength"] = _num(prm.get("Reference strength", "1"))
     return {k: v for k, v in out.items() if v is not None}

@@ -377,7 +377,7 @@ def make_reference(job) -> Optional[reference.Reference]:
     if not job.references:
         return None
     pictures = [images.load_rgb(r) for r in job.references]
-    return reference.Reference(pictures, noise=job.reference_noise, follow=job.reference_follow)
+    return reference.Reference(pictures, noise=job.reference_noise, follow=job.reference_follow, strength=job.reference_strength)
 
 
 def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int, height: int, cond, frames: int = 1):

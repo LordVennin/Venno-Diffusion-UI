@@ -11,6 +11,10 @@ Each reference frame carries its own timestep:
   the reference too literally and shows a dotted pattern; about 0.5 works best for plain Anima.
 - `follow`: the frame's timestep follows the generated frames' at every step. This is what the Anima Edit
   LoRAs were trained with (references concatenated on the time axis, same timestep).
+
+On its own a clean reference is a strong pull: the picture tends to copy it (pose and framing included) and
+the prompt loses. `strength` < 1 damps the generated frames' self-attention to the reference frames (by up
+to 1000× at 0), so the prompt keeps the composition while the reference still lends the character.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ class Reference:
     pictures: list[Image.Image]
     noise: float = 0.5  # fixed timestep of the reference frames, 0..1
     follow: bool = False  # timestep follows the steps instead (Anima Edit LoRAs)
+    strength: float = 1.0  # 0..1: how much the generated frames attend to the references
     _latents: dict = field(default_factory=dict, repr=False)
     _current: torch.Tensor = field(default=None, repr=False)  # (1, C, R, h, w) for the pass being sampled
     _timestep: float = field(default=0.0, repr=False)
@@ -56,5 +61,21 @@ class Reference:
             return t.expand(-1, count)
         return torch.full((t.shape[0], count), self._timestep, device=t.device, dtype=t.dtype)
 
+    MAX_DAMPING = -6.9  # log(1/1000)
+
+    def key_bias(self, thw: tuple[int, int, int], like: torch.Tensor):
+        """Self-attention key bias per query frame, (t, N): generated frames' queries see the reference frames
+        damped by `strength`; or None at full strength. The references are the last frames."""
+        if self.strength >= 1.0 or self._current is None:
+            return None
+        t, h, w = thw
+        refs = self._current.shape[2]
+        bias = torch.zeros(t, t)
+        bias[: t - refs, t - refs :] = self.MAX_DAMPING * (1.0 - max(0.0, self.strength))
+        return bias.repeat_interleave(h * w, dim=1).to(device=like.device, dtype=like.dtype)
+
     def info(self) -> dict:
-        return {"Reference images": len(self.pictures), "Reference noise": "follow" if self.follow else self.noise}
+        out = {"Reference images": len(self.pictures), "Reference noise": "follow" if self.follow else self.noise}
+        if self.strength < 1.0:
+            out["Reference strength"] = self.strength
+        return out

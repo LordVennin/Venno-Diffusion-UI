@@ -132,6 +132,7 @@ class Job(BaseModel):
     references: list[str] = Field([], max_length=3)  # reference pictures (data URL or base64)
     reference_noise: float = Field(0.5, ge=0.0, le=1.0)  # the timestep the clean references are given
     reference_follow: bool = False  # their timestep follows the steps instead (Anima Edit LoRAs)
+    reference_strength: float = Field(1.0, ge=0.0, le=1.0)  # how much the picture attends to them (1 = fully)
     hires: Optional[Hires] = None
     detailer: list[Detailer] = []
     grid: Optional[Grid] = None  # comparison grid (X/Y/Z plot): runs every combination

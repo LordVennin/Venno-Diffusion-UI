@@ -332,6 +332,10 @@ class Block(nn.Module):
         _self_tokens = rearrange(normalized_x_B_T_H_W_D.to(compute_dtype), "b t h w d -> b (t h w) d")
         _bias = _regional.self_bias((T, H, W), _self_tokens) if _regional is not None else None
         _frame_bias = _regional.frame_bias((T, H, W), _self_tokens) if _regional is not None else None
+        _reference = transformer_options.get("venno_reference")  # Venno: reference frames, damped (venno/engine/reference.py)
+        _ref_bias = _reference.key_bias((T, H, W), _self_tokens) if _reference is not None else None
+        if _ref_bias is not None:
+            _frame_bias = _ref_bias if _frame_bias is None else _frame_bias + _ref_bias
         if _frame_bias is not None:  # frames kept apart: each frame's queries with a per-key bias
             _q, _k, _v = (t.transpose(1, 2) for t in self.self_attn.compute_qkv(_self_tokens, None, rope_emb=rope_emb_L_1_1_D))
             _hw = H * W
