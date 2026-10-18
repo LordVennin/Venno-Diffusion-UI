@@ -16,9 +16,9 @@ export class SetCard {
     el.innerHTML = `
       <summary><input type="checkbox" class="set-on" title="Generate a consistent set"> <span>Consistent set</span> <span class="set-sum"></span></summary>
       <div class="hint">Generates several pictures <b>together</b>, as frames of one sequence: the same character, outfit and style, with small changes between them. Give a frame its own text to steer it (added in front of the prompt), e.g. an expression or a pose. Each image of the batch is its own set.</div>
-      <label>Frames <span class="seg set-frames">${[2, 3, 4].map((n) => `<button data-n="${n}">${n}</button>`).join("")}</span></label>
+      <label class="slider">Frames <span class="seg set-frames">${[2, 3, 4].map((n) => `<button data-n="${n}">${n}</button>`).join("")}</span></label>
       <div class="set-prompts"></div>
-      <label class="set-sep-row" title="With frame texts: how far the frames are kept from each other. Higher follows each frame's text more; lower keeps the frames more alike.">Keep frames apart <input type="range" class="set-sep" min="0" max="100" step="5"><span class="set-sep-v"></span></label>
+      <label class="slider set-sep-row" title="With frame texts: how far the frames are kept from each other. Higher follows each frame's text more; lower keeps the frames more alike.">Keep frames apart <input type="range" class="set-sep" min="0" max="100" step="5"><span class="set-sep-v"></span></label>
       <div class="hint">Sampling takes longer with every frame (about ×2 for 2 frames, ×5 for 4). Not used by the Canvas.</div>`;
     const s = () => this.o.state();
     const on = $(".set-on", el);
@@ -41,7 +41,7 @@ export class SetCard {
     $$(".set-frames button", el).forEach((b) => b.classList.toggle("on", Number(b.dataset.n) === s.frames));
     const box = $(".set-prompts", el);
     box.innerHTML = Array.from({ length: s.frames }, (_, k) => `<label>Frame ${k + 1} <input type="text" data-k="${k}" placeholder="e.g. ${["smile", "angry", "surprised", "sleeping"][k]} (optional)" value="${escapeHtml(s.prompts[k] || "")}"></label>`).join("");
-    $$("input", box).forEach((input) => (input.oninput = () => { s().prompts[Number(input.dataset.k)] = input.value; this.changed(); }));
+    $$("input", box).forEach((input) => (input.oninput = () => { s.prompts[Number(input.dataset.k)] = input.value; this.changed(); }));
     this.updateSummary();
   }
 
@@ -81,13 +81,13 @@ export class ReferenceCard {
     el.classList.add("ref-card");
     el.innerHTML = `
       <summary><input type="checkbox" class="ref-on" title="Use reference pictures"> <span>Reference</span> <span class="ref-sum"></span></summary>
-      <div class="hint">The model sees these pictures next to the one it generates and takes over their character, outfit and style, without a LoRA. Works best when the prompt describes the same character.</div>
+      <div class="hint">The model sees these pictures next to the one it generates and takes over their character, outfit and style, without a LoRA. At full strength the result stays close to the reference (variations, Edit LoRAs); around 80–90% the prompt sets the scene and pose and the reference lends its look. Works best when the prompt describes the same character.</div>
       ${opts.input ? `<label class="check"><input type="checkbox" class="ref-input"> Use the input image as a reference</label>` : ""}
       <div class="ref-list"></div>
       <div class="row"><button class="ref-add">Add picture…</button><span class="muted">or drop one here · up to ${MAX_REFERENCES}</span></div>
       <label class="check" title="The references get the same noise level as the picture at every step. This is how the Anima Edit LoRAs were trained."><input type="checkbox" class="ref-follow"> Follow the steps (Anima Edit LoRAs)</label>
-      <label class="ref-strength-row" title="How much the new picture looks at the references. Lower lets the prompt decide pose and scene, and keeps the character from the references.">Reference strength <input type="range" class="ref-strength" min="0" max="100" step="5"><span class="ref-strength-v"></span></label>
-      <label class="ref-noise-row">Reference noise <input type="range" class="ref-noise" min="0" max="100" step="5"><span class="ref-noise-v"></span></label>
+      <label class="slider ref-strength-row" title="How much the new picture looks at the references. Lower lets the prompt decide pose and scene, and keeps the character from the references.">Reference strength <input type="range" class="ref-strength" min="50" max="100" step="5"><span class="ref-strength-v"></span></label>
+      <label class="slider ref-noise-row">Reference noise <input type="range" class="ref-noise" min="0" max="100" step="5"><span class="ref-noise-v"></span></label>
       <div class="hint ref-hint"></div>`;
     const s = () => this.o.state();
     const on = $(".ref-on", el);
