@@ -6,6 +6,7 @@
 # References: https://github.com/nvidia-cosmos/cosmos-predict2
 
 import math
+import threading
 from typing import Callable, Final, Optional
 
 import torch
@@ -396,6 +397,14 @@ class Block(nn.Module):
         return x_B_T_H_W_D
 
 
+CURRENT_CALL = threading.local()  # Venno: the transformer_options of the model call in progress
+
+
+def current_cond_rows():
+    """Batch rows of the prompt (not the negative) in the model call in progress, or None when unknown."""
+    return getattr(CURRENT_CALL, "options", {}).get("cond_indices")
+
+
 class Anima(nn.Module):
 
     def __init__(
@@ -490,6 +499,7 @@ class Anima(nn.Module):
     def forward(self, x: torch.Tensor, timesteps: torch.Tensor, context: torch.Tensor, padding_mask: Optional[torch.Tensor] = None, **kwargs):
         orig_shape = list(x.shape)
         transformer_options = kwargs.get("transformer_options", {})
+        CURRENT_CALL.options = transformer_options  # Venno: read by guides that act on the prompt rows only
         timesteps_B_T = timesteps
 
         # Venno: reference images as extra, clean frames on Cosmos's time axis, each with its own timestep

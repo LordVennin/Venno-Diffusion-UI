@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from venno.engine import conditioning, guides, images, lora, prompts, reference, regions, rng, sampling, upscale, vae, wildcards
+from venno.engine import conditioning, guides, images, lora, preprocess, prompts, reference, regions, rng, sampling, upscale, vae, wildcards
 from venno.engine.models import manager
 
 from . import detail, metadata, region_pass
@@ -110,6 +110,18 @@ def region_mask(job, src: Optional[Source], data: str, width: int, height: int):
     return images.to_tensor(fit_to_source(job, src, images.load_mask(data), width, height))[0]
 
 
+def guide_map(job, g, src: Optional[Source], width: int, height: int) -> Image.Image:
+    """A guide's map in the coordinates of the job's input (or output, for text to image): an uploaded picture
+    is first fitted to that frame with its own resize mode, then run through its preprocessor."""
+    img = images.load_rgb(g.image)
+    if g.resize_mode is not None:
+        frame = src.original.size if src is not None and src.box is not None else (width, height)
+        img = images.resize(img, frame[0], frame[1], g.resize_mode)
+    if g.preprocessor != "none":
+        img = preprocess.run(g.preprocessor, img, g.model, g.canny_low, g.canny_high)
+    return img
+
+
 def make_guides(engine, job, src: Optional[Source], width: int, height: int):
     if not job.guides:
         return None
@@ -118,8 +130,8 @@ def make_guides(engine, job, src: Optional[Source], width: int, height: int):
     for g in job.guides:
         if g.model not in known:
             raise ValueError(f'Guide model "{g.model}" not found')
-        image = fit_to_source(job, src, images.load_rgb(g.image), width, height)
-        items.append(guides.Guide(known[g.model], image, g.weight, g.start, g.end))
+        image = fit_to_source(job, src, guide_map(job, g, src, width, height), width, height)
+        items.append(guides.Guide(known[g.model], image, g.weight, g.start, g.end, g.mode))
     return guides.GuideSet(engine, items)
 
 
@@ -287,7 +299,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
             if r.negative.strip():
                 params[f"Region {k} negative"] = r.negative
     for k, g in enumerate(job.guides, start=1):
-        params[f"Guide {k}"] = f"{g.model}, weight {g.weight:g}, steps {g.start:g}-{g.end:g}"
+        extra = (f", {preprocess.PREPROCESSORS[g.preprocessor]}" if g.preprocessor != "none" else "") + (f", {MODE_NAMES[g.mode]}" if g.mode != "balanced" else "")
+        params[f"Guide {k}"] = f"{g.model}, weight {g.weight:g}, steps {g.start:g}-{g.end:g}{extra}"
     units = [d for d in job.detailer if d.model and d.model != "None"]
     for k, unit in enumerate(units):
         suffix = "" if k == 0 else f" {k + 1}{['nd', 'rd'][k - 1] if k < 3 else 'th'}"
@@ -366,6 +379,9 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
 
 
 # ---------------------------------------------------------------- passes
+
+
+MODE_NAMES = {"balanced": "Balanced", "prompt": "My prompt is more important", "guide": "ControlNet is more important"}
 
 
 def with_frames(shape: tuple[int, ...], frames: int) -> tuple[int, ...]:

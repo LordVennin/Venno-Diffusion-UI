@@ -164,6 +164,7 @@ class LLLiteModuleDiT(nn.Module):
         self.layer_idx: int = -1
         self._depth_embeds_ref: list[nn.Parameter] = []
 
+        self.cond_only: bool = False  # Venno: "ControlNet is more important" applies the guide to the prompt rows only
         self.num_steps: int = 0
         self.start_step: int = 0
         self.end_step: int = 0
@@ -237,6 +238,14 @@ class LLLiteModuleDiT(nn.Module):
             m = F.dropout(m, p=self.dropout)
 
         out = self.up(m) * self.multiplier
+        if self.cond_only:
+            from backend.nn.anima import current_cond_rows
+
+            rows = current_cond_rows()
+            if rows is not None and len(rows) < out.shape[0]:  # with a negative pass in the batch: leave it unguided
+                keep = torch.zeros(out.shape[0], 1, 1, device=out.device, dtype=out.dtype)
+                keep[torch.tensor(rows, device=out.device)] = 1
+                out = out * keep
 
         if out.dtype != x.dtype:
             out = out.to(x.dtype)

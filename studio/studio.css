@@ -445,3 +445,22 @@ html, body { overflow-x: hidden; }
 .status + .settings-btn { margin-left: 0; }
 @media (max-width: 1700px) { .settings-btn .lbl { display: none; } }
 @media (max-width: 1400px) { .tabs button { padding: 4px 8px; } .menu button { padding-left: 7px; padding-right: 7px; } }
+
+/* ControlNet card (form tabs) */
+.cn-card summary .cn-sum { color: var(--accent2); font-size: 12px; margin-left: 4px; }
+.cn-card summary .cn-sum.warn { color: var(--warn, #e0a050); }
+.cn-card .cn-units button i { display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--line); vertical-align: middle; }
+.cn-card .cn-units button.active i { background: var(--accent); }
+.cn-card .cn-unit { display: flex; flex-direction: column; gap: 8px; }
+.cn-card .cn-pics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cn-card .cn-drop, .cn-card .cn-mapbox { position: relative; height: 140px; border: 1px dashed var(--line); border-radius: 6px; background: var(--bg); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.cn-card .cn-drop { cursor: pointer; }
+.cn-card .cn-drop:hover { border-color: var(--accent); }
+.cn-card .cn-drop span, .cn-card .cn-mapbox span { color: var(--muted); font-size: 12px; text-align: center; }
+.cn-card .cn-drop img, .cn-card .cn-mapbox img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: none; }
+.cn-card .has img { display: block; }
+.cn-card .has span { display: none; }
+.cn-card .cn-mapbox.busy::after { content: "…"; position: absolute; right: 8px; bottom: 4px; color: var(--accent2); font-size: 18px; }
+.cn-card .cn-clear { position: absolute; top: 4px; right: 4px; padding: 0 6px; line-height: 18px; font-size: 13px; z-index: 1; }
+.cn-card .cn-mode { flex: none; }
+.cn-card .hint.warn { color: var(--warn, #e0a050); }

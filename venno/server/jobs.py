@@ -37,10 +37,26 @@ class Region(BaseModel):
 
 class Guide(BaseModel):
     model: str
-    image: str  # PNG, already in the polarity the model expects
+    image: str  # PNG: a map in the polarity the model expects, or any picture with a preprocessor
     weight: float = 0.8
     start: float = 0.0
     end: float = 0.8
+    preprocessor: Literal["none", "canny", "lineart", "softedge", "depth"] = "none"  # venno/engine/preprocess.py
+    mode: Literal["balanced", "prompt", "guide"] = "balanced"  # which is more important: neither / the prompt / the guide
+    resize_mode: Optional[int] = None  # an uploaded picture: 0 stretch, 1 crop, 2 fit to the job's frame (None: drawn in its coordinates)
+    canny_low: int = Field(100, ge=0, le=255)
+    canny_high: int = Field(200, ge=0, le=255)
+
+
+class GuidePreview(BaseModel):
+    image: str
+    preprocessor: Literal["none", "canny", "lineart", "softedge", "depth"] = "none"
+    model: str = ""  # decides the line polarity
+    width: int = 0  # the job's frame (0 = the picture's own size)
+    height: int = 0
+    resize_mode: int = 1
+    canny_low: int = Field(100, ge=0, le=255)
+    canny_high: int = Field(200, ge=0, le=255)
 
 
 class Hires(BaseModel):

@@ -10,6 +10,7 @@ import { describeSettings, hasQualityTags, offerSettings, readImageSettings } fr
 import { GRID_DEFAULT, GridCard } from "./gridui.js";
 import { strokeRegionMask } from "./doc.js";
 import { DetailerCard, HIRES_DEFAULT, HiresCard } from "./cards.js";
+import { CONTROLNET_DEFAULT, ControlNetCard } from "./controlnet.js";
 import { REFERENCE_DEFAULT, ReferenceCard, SET_DEFAULT, SetCard } from "./timecards.js";
 
 const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768]];
@@ -35,6 +36,7 @@ const DEFAULTS = {
   // Cosmos time axis: consistent set (txt2img) and reference pictures
   set: SET_DEFAULT,
   reference: REFERENCE_DEFAULT,
+  controlnet: CONTROLNET_DEFAULT,
 };
 
 export class GenForm {
@@ -50,6 +52,8 @@ export class GenForm {
     this.s.outpaint = { ...structuredClone(DEFAULTS.outpaint), ...(this.s.outpaint || {}) };
     this.s.set = { ...structuredClone(SET_DEFAULT), ...(this.s.set || {}) };
     this.s.reference = { ...structuredClone(REFERENCE_DEFAULT), ...(this.s.reference || {}) };
+    const cn = this.s.controlnet || {};
+    this.s.controlnet = { ...structuredClone(CONTROLNET_DEFAULT), ...cn, units: CONTROLNET_DEFAULT.units.map((u, k) => ({ ...structuredClone(u), ...(cn.units?.[k] || {}) })) };
     this.results = []; // [{src, seed, info}]
     this.current = -1;
     this.busy = false;
@@ -166,6 +170,8 @@ export class GenForm {
         <details class="card f-hr-card"></details>
 
         <details class="card f-set-card"></details>`}
+
+        <details class="card f-cn-card"></details>
 
         <details class="card f-ref-card"></details>
 
@@ -367,6 +373,14 @@ export class GenForm {
       this.syncs.push(() => this.setCard.render());
     }
 
+    // ControlNet units (all tabs; image to image / inpaint can use the input image)
+    this.cnCard = new ControlNetCard(this.q(".f-cn-card"), {
+      state: () => s.controlnet, persist: () => this.persist(),
+      size: () => (this.mode === "txt2img" ? [s.width, s.height] : this.outputSize()),
+      input: i2i ? () => this.originalDataURL() : null,
+    });
+    this.syncs.push(() => this.cnCard.render());
+
     // reference pictures (all tabs; image to image / inpaint can use the input image)
     this.refCard = new ReferenceCard(this.q(".f-ref-card"), {
       state: () => s.reference, persist: () => this.persist(),
@@ -497,6 +511,7 @@ export class GenForm {
     this.loras.setAvailable(info.loras.map((l) => l.name));
     this.hrCard?.setInfo(info);
     this.adCard.setInfo(info);
+    this.cnCard.setInfo(info);
     const gsel = this.q(".f-guide-model");
     if (gsel) {
       const models = info.controlnets || [];
@@ -950,6 +965,8 @@ export class GenForm {
         });
       }
     }
+    const cnGuides = this.cnCard.job();
+    if (cnGuides.length) job.guides = [...(job.guides || []), ...cnGuides];
     const grid = this.gridCard.job();
     if (grid) job.grid = grid;
     job.detailer = this.adCard.job();

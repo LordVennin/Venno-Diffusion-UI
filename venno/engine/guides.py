@@ -5,6 +5,13 @@ Differences from Forge's port:
   samplers that evaluate twice per step and with image to image)
 - the guide image is fitted to every pass's exact size, so guides also steer the hires pass
 - patches are always removed after sampling (the model is shared with the Forge path)
+
+Control modes (as in Forge's ControlNet):
+- balanced: the guide acts on every block, for the prompt and the negative pass alike.
+- prompt ("My prompt is more important"): the guide fades over the blocks (later blocks ~0.1×, like
+  Forge's soft injection), so it sets the layout and the prompt decides the details.
+- guide ("ControlNet is more important"): the guide acts on the prompt rows only, so CFG amplifies it.
+  Needs CFG > 1 (with CFG 1 there is no negative pass and it equals balanced).
 """
 
 from __future__ import annotations
@@ -69,6 +76,16 @@ class Guide:
     weight: float = 0.8
     start: float = 0.0
     end: float = 0.8
+    mode: str = "balanced"  # balanced | prompt | guide
+
+
+SOFT_DECAY = 0.825  # Forge's soft injection: 0.825 ** 12 ≈ 0.1 for the last blocks
+
+
+def layer_scales(count: int, mode: str) -> list[float]:
+    if mode != "prompt" or count < 2:
+        return [1.0] * count
+    return [SOFT_DECAY ** (12 * i / (count - 1)) for i in range(count)]
 
 
 class GuideSet:
@@ -78,6 +95,7 @@ class GuideSet:
         self.engine = engine
         self.guides = guides
         self.nets = [_net(engine, g.path) for g in guides]
+        self.scales = [layer_scales(len(net.lllite_modules), g.mode) for g, net in zip(guides, self.nets)]
         self.ranges: list[tuple[int, int]] = []
         self._last_step = None
 
@@ -96,6 +114,7 @@ class GuideSet:
                 net.set_cond_image(x.to(device=device, dtype=dtype))
             for m in net.lllite_modules:
                 m.num_steps = 0  # Venno sets the multiplier per step instead of the module's call counter
+                m.cond_only = g.mode == "guide"
             start = math.floor(steps_run * g.start) if g.start > 0 else 0
             end = math.floor(steps_run * g.end) if g.end > 0 else steps_run
             self.ranges.append((start, max(end, start + 1)))
@@ -105,8 +124,11 @@ class GuideSet:
         if step == self._last_step:
             return
         self._last_step = step
-        for g, net, (start, end) in zip(self.guides, self.nets, self.ranges):
-            net.set_multiplier(g.weight if start <= step - 1 < end else 0.0)
+        for g, net, scales, (start, end) in zip(self.guides, self.nets, self.scales, self.ranges):
+            weight = g.weight if start <= step - 1 < end else 0.0
+            net.multiplier = weight
+            for m, scale in zip(net.lllite_modules, scales):
+                m.multiplier = weight * scale
 
     def attach(self):
         for net in self.nets:
@@ -114,4 +136,6 @@ class GuideSet:
 
     def detach(self):
         for net in reversed(self.nets):
+            for m in net.lllite_modules:
+                m.cond_only = False  # the nets are cached and shared between jobs
             net.restore()  # also clears the conditioning image

@@ -74,6 +74,7 @@ def _info() -> dict:
         "schedulers": _engine_list("schedulers"),
         "loras": _loras(),
         "controlnets": _controlnets(),
+        "preprocessors": _preprocessors(),
         "upscalers": _upscalers(),
         "adetailer_models": _adetailer_models(),
         "wildcards": _wildcards(),
@@ -82,6 +83,12 @@ def _info() -> dict:
         "presets": PRESETS,
         "prompt_defaults": PROMPT_DEFAULTS,
     }
+
+
+def _preprocessors() -> list[dict]:
+    from venno.engine import preprocess
+
+    return [{"key": k, "label": v, "suits": list(preprocess.SUITS.get(k, ()))} for k, v in preprocess.PREPROCESSORS.items()]
 
 
 def _engine_list(kind: str) -> list[str]:
@@ -224,6 +231,30 @@ def create_app() -> FastAPI:
         return {"found": True, "text": text, "settings": infotext.settings(text)}
 
     app.add_api_route(f"{V}/image/params", image_params, methods=["POST"])
+
+    def guide_preview(req: jobs.GuidePreview):
+        """A guide picture after its resize mode and preprocessor, as the job will use it (shown on the ControlNet card)."""
+        import io
+
+        from PIL import Image
+
+        from venno.engine import images, preprocess
+
+        try:
+            img = images.load_rgb(req.image)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Not a readable image: {e}")
+        if req.width and req.height:
+            scale = min(1.0, 1024 / max(req.width, req.height))  # a preview: at most 1024 px
+            img = images.resize(img, max(16, round(req.width * scale)), max(16, round(req.height * scale)), req.resize_mode)
+        elif max(img.size) > 1024:
+            img.thumbnail((1024, 1024), Image.LANCZOS)
+        out = preprocess.run(req.preprocessor, img, req.model, req.canny_low, req.canny_high)
+        buf = io.BytesIO()
+        out.save(buf, format="PNG")
+        return {"image": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()}
+
+    app.add_api_route(f"{V}/guides/preview", guide_preview, methods=["POST"])
 
     def tag_search(q: str = "", limit: int = 12):
         """Danbooru tags for autocomplete, in Anima's format (spaces, @artist, escaped parentheses)."""

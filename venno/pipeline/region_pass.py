@@ -48,7 +48,10 @@ def run(engine, job, progress, image: Image.Image, seed: int, *, src, cache: dic
     grow, feather, context = round(long_side * GROW), max(2, round(long_side * FEATHER)), round(long_side * CONTEXT)
     target_area = min(job.width * job.height, 1024 * 1024)
     steps_run = sampling.run_steps(job.steps, job.region_refine)
-    guide_images = [(g, _to_output(job, src, images.load_rgb(g.image), (W, H))) for g in job.guides]
+    from .generate import guide_map
+
+    sw, sh = images.snap(job.width), images.snap(job.height)
+    guide_images = [(g, _to_output(job, src, guide_map(job, g, src, sw, sh), (W, H))) for g in job.guides]
     known = guides.models() if guide_images else {}
     lm = np.asarray(limit_mask.resize((W, H), Image.BILINEAR)).astype(np.float32) / 255.0 if limit_mask is not None else None
 
@@ -75,7 +78,7 @@ def run(engine, job, progress, image: Image.Image, seed: int, *, src, cache: dic
 
         guide_set = None
         if guide_images:
-            items = [guides.Guide(known[g.model], img.crop(box), g.weight, g.start, g.end) for g, img in guide_images if g.model in known]
+            items = [guides.Guide(known[g.model], img.crop(box), g.weight, g.start, g.end, g.mode) for g, img in guide_images if g.model in known]
             guide_set = guides.GuideSet(engine, items) if items else None
 
         engine.set_shift(shift=job.shift, width=pw, height=ph)
