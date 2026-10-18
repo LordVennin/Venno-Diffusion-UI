@@ -7,6 +7,19 @@ export const SET_DEFAULT = { enabled: false, frames: 3, prompts: ["", "", "", ""
 export const REFERENCE_DEFAULT = { enabled: false, useInput: false, follow: false, noise: 0.5, strength: 1 };
 const MAX_REFERENCES = 3;
 
+const readDataURL = (blob) => new Promise((ok, fail) => {
+  const r = new FileReader();
+  r.onload = () => ok(r.result);
+  r.onerror = fail;
+  r.readAsDataURL(blob);
+});
+
+async function toDataURL(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Could not load the picture (${res.status})`);
+  return readDataURL(await res.blob());
+}
+
 export class SetCard {
   /** opts: { state: () => SET_DEFAULT-shaped object, persist } */
   constructor(el, opts) {
@@ -127,20 +140,16 @@ export class ReferenceCard {
   async addFiles(files) {
     for (const f of files) {
       if (this.pictures.length >= this.max()) { toast(`Up to ${MAX_REFERENCES} reference pictures`, "info"); break; }
-      this.pictures.push(await new Promise((ok, fail) => {
-        const r = new FileReader();
-        r.onload = () => ok(r.result);
-        r.onerror = fail;
-        r.readAsDataURL(f);
-      }));
+      this.pictures.push(await readDataURL(f));
     }
     this.o.state().enabled = true;
     this.changed();
     this.render();
   }
 
-  /** Add a picture given as a data URL (e.g. a result: "Use as reference"). */
-  add(src) {
+  /** Add a picture given as a data URL or a URL (e.g. a result: "Use as reference"). */
+  async add(src) {
+    if (!src.startsWith("data:")) src = await toDataURL(src); // results are server URLs; jobs carry the picture itself
     if (this.pictures.length >= this.max()) this.pictures.shift();
     this.pictures.push(src);
     this.o.state().enabled = true;

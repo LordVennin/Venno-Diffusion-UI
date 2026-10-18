@@ -388,7 +388,7 @@ export class GenForm {
     this.q(".r-to-i2i")?.addEventListener("click", () => this.withCurrent((r) => this.ctx.onSend("img2img", r.src, this.exportState(r))));
     this.q(".r-to-inpaint")?.addEventListener("click", () => this.withCurrent((r) => this.ctx.onSend("inpaint", r.src, this.exportState(r))));
     this.q(".r-download").onclick = () => this.withCurrent((r) => downloadDataURL(r.src, `venno-${r.seed}.png`));
-    this.q(".r-to-ref").onclick = () => this.withCurrent((r) => { this.refCard.add(r.src); toast("Added to the Reference pictures", "info"); });
+    this.q(".r-to-ref").onclick = () => this.withCurrent((r) => this.refCard.add(r.src).then(() => toast("Added to the Reference pictures", "info"), (e) => toast(e.message)));
     this.q(".r-use-settings").onclick = () => this.withCurrent((r) => this.loadSettingsFrom(r.src));
 
     // settings from an image: button, or drop an image anywhere on the form column (not the input-image box)
