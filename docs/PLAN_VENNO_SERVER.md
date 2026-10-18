@@ -134,9 +134,10 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
   - `AND` uses the backend's weighted composition and always runs the negative pass, so it works at CFG 1 (Forge washes the image out there).
   - Studio: a preview line under every prompt box says what the model gets at which step (same parser, `POST /venno/v1/prompt/schedule`), and a "Then switch to… after N %" prompt covers the common case without syntax (job fields `switch_prompt` / `switch_at`; sent to Forge as `[A:B:step]` when it falls back).
 
-**Phase 2b: Anima 3.8B** (3–5 days)
-- Load Qwen3.5 4B as a second text encoder and implement the 3.8B conditioning path (from the 3.8B model card and the companion Forge extension).
-- Variant-aware presets for 2B / 2.9B / 3.8B.
+**Phase 2b: Anima 3.8B** ✅ done (to be verified on a GPU: the model is too large for the CPU sandbox)
+- `venno/engine/anima38/`: Qwen3.5 4B backbone (hybrid Gated DeltaNet / gated attention), the v1 cross adapter and the v1.1 "Semantic Connector v2", ported from GumGum10/forge-anima-3.8B (MIT). Parameter layouts checked against the released files' headers (all names and shapes match).
+- The bundle is detected by its safetensors metadata (v1: 52 blocks + a separate adapter). Positive prompts encode into the native features + four Qwen3.5 layers; v1.1's timestep-aware connector rebuilds the context at every step in `Anima.forward` (`venno_context_expander`, run ids in `y`), region prompts included. Negatives stay native. The connector keeps a private copy of the native LLM adapter so text-encoder offloading never pulls weights from under it. Qwen's tokenizer is fetched from the official repo at a pinned revision and verified.
+- Presets / catalog: "Anima 3.8B" preset (Res Multistep · Beta · 32 · CFG 5), downloads for the bundle and Qwen3.5 4B.
 
 **Phase 3: hires fix, upscalers, guides, detailer, saving** ✅ done
 - ✅ Upscalers (`venno/engine/upscale.py`): Spandrel models with feathered tiles (tiled = untiled to 0.09/255), chained for bigger targets, Lanczos/Nearest, latent resize.
@@ -199,7 +200,7 @@ Studio gets a prompt-syntax hint and, later, highlighting that shows where switc
 |---|---|---|---|
 | Anima 2B Base / Aesthetic / Turbo | 28 blocks | Qwen3 0.6B | works today |
 | Anima 2.9B (Gazingstars123) | 40 blocks, layer-expanded 2B | Qwen3 0.6B | engine detects the 40 blocks and remaps 2B LoRAs / ControlLLLite; generation verified (incl. region + remapped guide); preset + Models-tab download added |
-| Anima 3.8B (lylogummy) | 52 blocks + bundled "Semantic Connector v2" | Qwen3 0.6B **+ Qwen3.5 4B** | needs work: Forge Neo only loads the extra Qwen3.5 encoder through a third-party extension (`GumGum10/forge-anima-3.8B`); Venno must implement the dual-encoder conditioning itself (Phase 2b). Testing happens on the owner's local GPU (model too large for the CPU sandbox) |
+| Anima 3.8B (lylogummy) | 52 blocks + bundled "Semantic Connector v2" | Qwen3 0.6B **+ Qwen3.5 4B** | implemented natively (Phase 2b, `venno/engine/anima38/`); verified on CPU with the real weight layouts and a plumbing run, final check on the owner's GPU |
 
 Requirements that follow:
 - Presets come from the detected variant, not the file name. 2.9B recommends ~28–50 steps, CFG 3.5–5, Euler + SGM Uniform or Res Multistep + Linear Quadratic.

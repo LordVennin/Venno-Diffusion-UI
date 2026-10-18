@@ -97,9 +97,10 @@ export function showLightbox(src, name = "venno-grid.png") {
   box.hidden = false;
 }
 
-// Recommended preset for a checkpoint (by file name; Phase 2b detects the variant server-side)
+// Recommended preset for a checkpoint (by file name)
 export function presetForCheckpoint(name = "") {
   if (/turbo/i.test(name)) return "turbo";
+  if (/3[._-]?8b/i.test(name)) return "anima38";
   if (/2[._-]?9b/i.test(name)) return "anima29";
   return "standard";
 }

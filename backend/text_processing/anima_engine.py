@@ -40,21 +40,29 @@ class Qwen06Engine:
             if line in cache:
                 z = cache[line]
             else:
-                qwen_chunk = self.qwen_tokenizer.tokenize_with_weights(line, disable_weights=n)
-                t5_chunk = self.t5_tokenizer.tokenize_with_weights(line, disable_weights=n)
-
-                qwen_chunk = [[(x[0], 1.0) for x in inner] for inner in qwen_chunk]
-
-                cond = self.text_encoder.encode_token_weights(qwen_chunk)[0]
-                ids = torch.tensor(list(map(lambda x: x[0], t5_chunk[0])), dtype=torch.int).unsqueeze(0)
-                weights = torch.tensor(list(map(lambda x: (1.0 if i else x[1]), t5_chunk[0]))).unsqueeze(0).unsqueeze(-1)
-
-                z = self._preprocess(cond, ids, weights)
+                z = self._preprocess(*self._features(line, n, i))
                 cache[line] = z
 
             zs.append(z)
 
         return zs
+
+    def features(self, line: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """What the LLM adapter takes: Qwen3 hidden states (1, L, 1024), T5 token ids (1, T) and their weights (1, T, 1).
+        Anima 3.8B feeds these to its own connector instead (venno/engine/anima38)."""
+        name = self.emphasis.name
+        return self._features(line, name == "None", name == "Ignore")
+
+    def _features(self, line: str, n: bool, i: bool):
+        qwen_chunk = self.qwen_tokenizer.tokenize_with_weights(line, disable_weights=n)
+        t5_chunk = self.t5_tokenizer.tokenize_with_weights(line, disable_weights=n)
+
+        qwen_chunk = [[(x[0], 1.0) for x in inner] for inner in qwen_chunk]
+
+        cond = self.text_encoder.encode_token_weights(qwen_chunk)[0]
+        ids = torch.tensor(list(map(lambda x: x[0], t5_chunk[0])), dtype=torch.int).unsqueeze(0)
+        weights = torch.tensor(list(map(lambda x: (1.0 if i else x[1]), t5_chunk[0]))).unsqueeze(0).unsqueeze(-1)
+        return cond, ids, weights
 
     def _preprocess(self, cross_attn: torch.Tensor, t5xxl_ids: torch.Tensor, t5xxl_weights: torch.Tensor) -> torch.Tensor:
         device = memory_management.text_encoder_device()

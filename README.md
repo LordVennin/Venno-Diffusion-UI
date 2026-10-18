@@ -58,6 +58,8 @@ The text encoder and VAE are picked automatically in the top bar. Choosing a che
 
 Only Anima checkpoints are accepted. Loading any other architecture fails with a clear error.
 
+**Anima 3.8B** ([lylogummy/Anima-3.8B](https://huggingface.co/lylogummy/Anima-3.8B), community) is supported natively: a 52-block Anima whose prompt is also read by **Qwen3.5 4B**, for better prompt adherence, several characters, interactions, positions and natural-language prompts. Get *Anima 3.8B v1.1* and *Qwen3.5 4B text encoder* in the Models tab (or put `Anima-3.8B-v1.1.safetensors` in `models/Stable-diffusion/` and `qwen35_4b.safetensors` in `models/text_encoder/`), then pick the checkpoint and keep **Qwen3 0.6B** as the text encoder: Venno recognises the 3.8B, finds the Qwen3.5 encoder by itself and downloads Qwen's tokenizer (12 MB, once). It picks the model card's settings (Res Multistep · Beta · 32 steps · CFG 5). The bundled "Semantic Connector v2" runs at every step; both text encoders are released after the prompt is encoded, so sampling needs no more memory than the diffusion model plus the connector. Negative prompts use the native encoder, as in the reference workflows. The older v1 checkpoint works too with `Anima-3.8B-expanded_adapter.safetensors` next to the text encoders. Regions, region negatives, the region pass, hires fix, guides, ADetailer, LoRAs (2B / 2.9B LoRAs are re-mapped onto the 52 blocks) and prompt scheduling all work with it. Prompting tip from the model card: give each character their own sentence and name characters instead of using "she" / "he".
+
 **Options** go after the launcher, e.g. `./venno.sh --listen --lowvram` (`--help` lists them all; options you always want can go in the `VENNO_ARGS` environment variable):
 
 - `--port 7860`, `--listen` (serve on the network), `--autolaunch`
@@ -176,6 +178,7 @@ The old A1111/Forge `/sdapi` endpoints are gone (see [`docs/PLAN_VENNO_SERVER.md
 ## Credits & licence
 
 - Engine (`backend/`): forked from [Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo) by Haoming02, based on [Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) by lllyasviel and [Stable Diffusion WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) by AUTOMATIC1111. The upstream README is kept in [`docs/FORGE_NEO_README.md`](docs/FORGE_NEO_README.md).
+- Anima 3.8B support (`venno/engine/anima38/`): ported from [forge-anima-3.8B](https://github.com/GumGum10/forge-anima-3.8B) by GumGum10 (MIT); the model is [Anima 3.8B](https://huggingface.co/lylogummy/Anima-3.8B) by lylogummy, and Qwen3.5's tokenizer comes from [Qwen/Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B) (Apache-2.0).
 - Model: [Anima](https://huggingface.co/circlestone-labs/Anima) by CircleStone Labs & Comfy Org (non-commercial model licence; generated images may be used commercially).
 - Inspired by [Krita AI Diffusion](https://github.com/Acly/krita-ai-diffusion).
 

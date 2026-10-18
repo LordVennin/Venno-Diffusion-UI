@@ -71,6 +71,8 @@ class ModelManager:
     def resolve_module(name: str) -> str:
         if os.path.isfile(name):
             return name
+        if os.path.basename(name).lower().startswith("qwen35"):  # Anima 3.8B's second encoder is found on its own
+            raise ValueError("Pick the Qwen3 0.6B text encoder here; Anima 3.8B finds qwen35_4b by itself")
         path = modules().get(os.path.basename(name))
         if path is None:
             raise ValueError(f'Text encoder / VAE "{name}" not found')
@@ -91,6 +93,14 @@ class ModelManager:
             self.engine = forge_loader(ckpt_path, additional_state_dicts=module_paths)
             self.key = key
             self.info = {"name": ckpt_name, "path": ckpt_path, "modules": [os.path.basename(m) for m in module_paths]}
+            from venno.engine import anima38
+
+            try:
+                if anima38.attach(self.engine, ckpt_path) is not None:
+                    self.info["variant"] = "anima38"
+            except Exception:
+                self.unload()
+                raise
             print(f"[Venno] model ready in {time.time() - t0:.1f}s")
             return self.engine
 

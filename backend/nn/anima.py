@@ -455,6 +455,8 @@ class Anima(nn.Module):
         )
 
         self.t_embedding_norm = nn.RMSNorm(model_channels, eps=1e-6)
+        # Venno: Anima 3.8B rebuilds its text context at every step (venno/engine/anima38.Runtime: expand / expand_one)
+        self.venno_context_expander = None
 
     def prepare_embedded_sequence(self, x_B_C_T_H_W: torch.Tensor, padding_mask: Optional[torch.Tensor] = None) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         if padding_mask is None:
@@ -488,6 +490,22 @@ class Anima(nn.Module):
         x_B_C_T_H_W = x
         timesteps_B_T = timesteps
         crossattn_emb = context
+        transformer_options = kwargs.get("transformer_options", {})
+        expander = self.venno_context_expander
+        if expander is not None:
+            y = kwargs.get("y")  # prompt run ids (absent for prompts on the native path, e.g. negatives)
+            if y is not None:
+                crossattn_emb = expander.expand(crossattn_emb, timesteps, y)
+            regional = transformer_options.get("venno_regional")
+            if regional is not None:  # region prompts: same per-step expansion, once per model call
+                cache = {}
+
+                def resolve(cond, t=timesteps, ctx=crossattn_emb):
+                    if id(cond) not in cache:
+                        cache[id(cond)] = expander.expand_one(cond, t, ctx.device, ctx.dtype)
+                    return cache[id(cond)]
+
+                regional.resolve_context = resolve
 
         x_B_T_H_W_D, rope_emb_L_1_1_D, extra_pos_emb_None = self.prepare_embedded_sequence(x_B_C_T_H_W, padding_mask=padding_mask)
 
@@ -500,7 +518,7 @@ class Anima(nn.Module):
             "rope_emb_L_1_1_D": rope_emb_L_1_1_D.unsqueeze(1).unsqueeze(0),
             "adaln_lora_B_T_3D": adaln_lora_B_T_3D,
             "extra_per_block_pos_emb": extra_pos_emb_None,
-            "transformer_options": kwargs.get("transformer_options", {}),
+            "transformer_options": transformer_options,
         }
 
         # To make fp16 compute_dtype work, we keep the residual stream in fp32 but run attention and MLP modules in fp16.

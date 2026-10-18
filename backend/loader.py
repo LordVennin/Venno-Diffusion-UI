@@ -482,6 +482,8 @@ def process_anima(dit: dict[str, torch.Tensor], enc: dict[str, torch.Tensor]):
     for k in keys:
         if k.startswith("llm_adapter"):
             enc[k] = dit.pop(k)
+        elif k.startswith("anima_v2_connector."):  # Anima 3.8B's bundled text connector: loaded by venno/engine/anima38
+            dit.pop(k)
 
 
 def _load_unet(path: os.PathLike):

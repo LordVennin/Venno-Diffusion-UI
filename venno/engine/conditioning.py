@@ -45,9 +45,17 @@ def extract_lora_tags(prompt: str, *, keep_random: bool = False) -> tuple[str, l
     return text.strip().strip(",").strip(), found
 
 
-def encode(engine, prompt: str, batch: int, *, negative: bool, width: int, height: int) -> torch.Tensor:
-    """(batch, L, D) conditioning for one prompt repeated over a batch."""
+def encode(engine, prompt: str, batch: int, *, negative: bool, width: int, height: int):
+    """(batch, L, D) conditioning for one prompt repeated over a batch. Anima 3.8B positive prompts give
+    {"crossattn": placeholder, "vector": run ids} instead, expanded at every step (venno/engine/anima38)."""
     from backend.settings import Conditioning
+
+    anima38 = getattr(engine, "venno_anima38", None)
+    if anima38 is not None and not negative:
+        c = anima38.encode(prompt)
+        if isinstance(c, dict):
+            return {"crossattn": c["crossattn"].repeat(batch, 1, 1), "vector": c["vector"].repeat(batch, 1)}
+        return c.repeat(batch, 1, 1)
 
     conds = engine.get_learned_conditioning(Conditioning([prompt], is_negative_prompt=negative, width=width, height=height))
     c = conds[0] if isinstance(conds, (list, tuple)) else conds
@@ -71,7 +79,7 @@ class PromptConditioning:
         self.positive, self.negative = positive, negative  # prompts.PromptPlan
         self.needs_uncond = positive.composed  # AND / weights: CFG composition needs the negative even at CFG 1
         self._compile = compile_conditions
-        self._tensors: dict[tuple[str, bool], torch.Tensor] = {} if cache is None else cache  # shared between passes
+        self._tensors: dict[tuple[str, bool], object] = {} if cache is None else cache  # shared between passes
         self._steps: dict[tuple, tuple] = {}
         for step in range(1, positive.steps + 1):
             for text, _ in positive.parts(step):
@@ -79,7 +87,7 @@ class PromptConditioning:
             for text, _ in negative.parts(step):
                 self.tensor(engine, text, True, width, height)
 
-    def tensor(self, engine, text: str, negative: bool, width: int = 0, height: int = 0) -> torch.Tensor:
+    def tensor(self, engine, text: str, negative: bool, width: int = 0, height: int = 0):
         key = (text, negative)
         if key not in self._tensors:
             self._tensors[key] = encode(engine, text, 1, negative=negative, width=width, height=height)

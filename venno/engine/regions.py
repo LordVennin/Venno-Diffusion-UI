@@ -41,7 +41,8 @@ class Region:
     negative_plan: object = None  # PromptPlan of the region's own negative, None = the main negative
     negative_contexts: dict = field(default_factory=dict)
 
-    def context(self, step: int, negative: bool = False) -> torch.Tensor:
+    def context(self, step: int, negative: bool = False):
+        """The encoded prompt for a step: a (1, L, D) tensor, or an Anima 3.8B placeholder dict resolved per model call."""
         if negative:
             return self.negative_contexts[self.negative_plan.parts(step)[0][0]]
         return self.contexts[self.plan.parts(step)[0][0]]
@@ -58,6 +59,7 @@ class RegionalAttention:
     _contexts: dict = field(default_factory=dict, repr=False)
     _weights: dict = field(default_factory=dict, repr=False)
     _bias: dict = field(default_factory=dict, repr=False)
+    resolve_context: object = field(default=None, repr=False)  # set per model call for Anima 3.8B prompts
 
     MAX_DAMPING = -6.9  # log(1/1000): separation 1 damps attention between regions 1000×
     BACKGROUND_BOX = 0.6  # a region whose bounding box covers more of the picture than this is background
@@ -98,8 +100,11 @@ class RegionalAttention:
     def contexts(self, like: torch.Tensor, regions: list[Region] | None = None, negative: bool = False) -> torch.Tensor:
         """(R, L, D) region contexts, zero-padded to a common length (Anima pads prompts with zeros)."""
         current = [r.context(self.step, negative) for r in (self.regions if regions is None else regions)]
+        current = [self.resolve_context(c) if isinstance(c, dict) else c for c in current]
         key = (like.device, like.dtype, tuple(id(c) for c in current))
         if key not in self._contexts:
+            if len(self._contexts) > 8:  # 3.8B contexts are new tensors every step: keep the cache small
+                self._contexts.clear()
             length = max(max(c.shape[1] for c in current), like.shape[1])
             ctx = [F.pad(c[:1], (0, 0, 0, length - c.shape[1])) for c in current]
             self._contexts[key] = torch.cat(ctx).to(device=like.device, dtype=like.dtype)

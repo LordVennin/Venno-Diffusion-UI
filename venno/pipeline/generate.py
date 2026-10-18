@@ -183,6 +183,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
         return run_each(job, progress)
     W, H = images.snap(job.width), images.snap(job.height)
     engine = manager.get(job.model.checkpoint, [job.model.text_encoder, job.model.vae])
+    if getattr(engine, "venno_anima38", None) is not None:
+        engine.venno_anima38.reset()  # prompts of earlier jobs are no longer needed
     engine.set_shift(shift=job.shift, width=W, height=H)
     loras = [(lr.name, lr.weight) for lr in job.loras]
     result = Result(warnings=lora.apply(engine, loras))  # before encoding: LoRAs can patch the text encoder too
@@ -284,6 +286,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
             params[f"ADetailer prompt{suffix}"] = unit.prompt
     for k, m in enumerate(manager.info.get("modules", []), start=1):
         params[f"Module {k}"] = m.rsplit(".", 1)[0]
+    if getattr(engine, "venno_anima38", None) is not None:
+        params.update(engine.venno_anima38.info)
     params.update(extra_params or {})
     params["Version"] = metadata.VERSION
 

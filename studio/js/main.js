@@ -757,7 +757,7 @@ async function loadInfo(refresh = false) {
     const info = refresh ? await api("/venno/v1/refresh", {}) : await api("/venno/v1/info");
     state.info = info;
     const ckpts = info.checkpoints.map((c) => ({ value: c.title, label: c.name }));
-    const mods = info.modules;
+    const mods = info.modules.filter((m) => !/qwen3[._-]?5[._-]?4b|qwen35_4b/i.test(m.name)); // Anima 3.8B's second encoder is picked automatically
     if (!ckpts.some((c) => c.value === state.model.checkpoint)) {
       const cur = ckpts.find((c) => c.value === info.current_checkpoint);
       state.model.checkpoint = cur ? cur.value : ckpts.find((c) => /anima/i.test(c.label))?.value || ckpts[0]?.value || "";
