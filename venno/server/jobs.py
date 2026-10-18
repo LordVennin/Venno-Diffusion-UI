@@ -48,6 +48,10 @@ class Guide(BaseModel):
     canny_high: int = Field(200, ge=0, le=255)
 
 
+class TokenRequest(BaseModel):
+    texts: list[str] = Field([], max_length=64)
+
+
 class GuidePreview(BaseModel):
     image: str
     preprocessor: Literal["none", "canny", "lineart", "softedge", "depth"] = "none"

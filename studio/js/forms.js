@@ -12,6 +12,7 @@ import { strokeRegionMask } from "./doc.js";
 import { DetailerCard, HIRES_DEFAULT, HiresCard } from "./cards.js";
 import { CONTROLNET_DEFAULT, ControlNetCard } from "./controlnet.js";
 import { REFERENCE_DEFAULT, ReferenceCard, SET_DEFAULT, SetCard } from "./timecards.js";
+import { attachTokenCounter, refreshTokenCounters } from "./tokens.js";
 
 const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768]];
 const RESIZE_MODES = ["Just resize", "Crop and resize", "Resize and fill"];
@@ -252,7 +253,11 @@ export class GenForm {
 
     txt(".f-prompt", "prompt");
     txt(".f-negative", "negative");
-    chk(".f-quality", "qualityPrefix");
+    chk(".f-quality", "qualityPrefix", refreshTokenCounters);
+    const sent = (ta) => () => withQualityPrefix(ta.value, s.qualityPrefix, this.ctx.state.info); // what the job sends
+    for (const sel of [".f-prompt", ".f-switch"]) attachTokenCounter(this.q(sel), { text: sent(this.q(sel)) });
+    attachTokenCounter(this.q(".f-negative"));
+    this.syncs.push(refreshTokenCounters); // prompts set from settings, another tab or an image
     chk(".f-save", "saveImages");
     num(".f-steps", "steps");
     num(".f-cfg", "cfg");

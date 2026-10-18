@@ -3,7 +3,7 @@ import { Generator } from "./generate.js";
 import { jobProgress } from "./jobs.js";
 import { TOOLS, View } from "./view.js";
 import { GenForm } from "./forms.js";
-import { ADETAILER_DEFAULT, api, presetForCheckpoint, showLightbox } from "./common.js";
+import { ADETAILER_DEFAULT, api, presetForCheckpoint, showLightbox, withQualityPrefix } from "./common.js";
 import { DetailerCard, HIRES_DEFAULT, HiresCard } from "./cards.js";
 import { GRID_DEFAULT, GridCard } from "./gridui.js";
 import { ModelsPage } from "./models.js";
@@ -12,6 +12,7 @@ import { InfoPage } from "./info.js";
 import { LoraChips } from "./loras.js";
 import { describeSettings, hasQualityTags, offerSettings } from "./params.js";
 import { enableAutocomplete, setWildcards } from "./autocomplete.js";
+import { attachTokenCounter, refreshTokenCounters } from "./tokens.js";
 
 enableAutocomplete();
 import { runSteps, SchedulePreview } from "./schedule.js";
@@ -516,6 +517,8 @@ function renderRegions() {
     ta.value = l.prompt;
     ta.oninput = () => { l.prompt = ta.value; doc.emit("region-prompt"); updateLayerThumbLabel(); };
     ta.onfocus = () => { if (doc.activeId !== l.id) { doc.activeId = l.id; doc.emit("active"); } };
+    attachTokenCounter(ta);
+    attachTokenCounter(nta);
     li.querySelector(".r-str").value = l.regionStrength;
     li.querySelector(".r-str").onchange = (e) => { l.regionStrength = Math.max(0.1, Number(e.target.value) || 1); gen.scheduleLive(); };
     li.querySelector(".r-edit").onclick = () => { doc.activeId = l.id; doc.emit("active"); setTool(l.type === LAYER_REGION ? "shape-rect" : "brush"); };
@@ -569,6 +572,8 @@ const negative = $("#negative");
 prompt_.value = g.prompt;
 negative.value = g.negative;
 prompt_.oninput = () => { g.prompt = prompt_.value; persist(); gen.scheduleLive(1200); };
+attachTokenCounter(prompt_, { text: () => withQualityPrefix(prompt_.value, g.qualityPrefix, state.info) }); // what the job sends
+attachTokenCounter(negative);
 negative.oninput = () => { g.negative = negative.value; persist(); gen.scheduleLive(1200); };
 
 bindRange("strength", () => Math.round(g.strength * 100), (v) => { g.strength = v / 100; updateModeLabel(); gen.scheduleLive(); }, (v) => `${v}%`);
@@ -639,7 +644,7 @@ view.regionOverlap = g.regionOverlap;
 $("#region-overlap").onchange = (e) => { g.regionOverlap = view.regionOverlap = e.target.value; persist(); view.render(); gen.scheduleLive(); };
 for (const [id, key] of [["quality-prefix", "qualityPrefix"], ["save-images", "saveImages"], ["soft-inpaint", "softInpaint"], ["region-append", "regionAppendRoot"], ["region-refine", "regionRefine"]]) {
   $(`#${id}`).checked = g[key];
-  $(`#${id}`).onchange = (e) => { g[key] = e.target.checked; persist(); };
+  $(`#${id}`).onchange = (e) => { g[key] = e.target.checked; persist(); if (key === "qualityPrefix") refreshTokenCounters(); };
 }
 $("#progress-preview").checked = state.showProgressPreview;
 $("#progress-preview").onchange = (e) => { state.showProgressPreview = e.target.checked; persist(); };
@@ -664,6 +669,7 @@ const showSwitch = () => {
   $("#switch-state").textContent = g.switchPrompt.trim() ? `(on, after ${Math.round(g.switchAt * 100)}%)` : "";
 };
 switchTa.value = g.switchPrompt;
+attachTokenCounter(switchTa, { text: () => withQualityPrefix(switchTa.value, g.qualityPrefix, state.info) });
 switchAt.value = Math.round(g.switchAt * 100);
 $("#switch-box").open = !!g.switchPrompt.trim();
 const promptSchedule = new SchedulePreview(prompt_, {
@@ -761,6 +767,7 @@ async function loadInfo(refresh = false) {
     setStatus(refresh ? "Rescanning models…" : "Connecting…");
     const info = refresh ? await api("/venno/v1/refresh", {}) : await api("/venno/v1/info");
     state.info = info;
+    refreshTokenCounters(); // the quality prefix comes with the info
     const ckpts = info.checkpoints.map((c) => ({ value: c.title, label: c.name }));
     const mods = info.modules.filter((m) => !/qwen3[._-]?5[._-]?4b|qwen35_4b/i.test(m.name)); // Anima 3.8B's second encoder is picked automatically
     if (!ckpts.some((c) => c.value === state.model.checkpoint)) {
@@ -832,6 +839,7 @@ function applyCanvasSettings(x) {
   if (x.switch_at != null) { g.switchAt = x.switch_at; switchAt.value = Math.round(x.switch_at * 100); }
   $("#switch-box").open = !!g.switchPrompt;
   showSwitch();
+  refreshTokenCounters();
   if (x.detailer) {
     g.detailer.enabled = x.detailer.length > 0;
     x.detailer.slice(0, g.detailer.units.length).forEach((d, i) => Object.assign(g.detailer.units[i], { model: d.model, confidence: d.confidence, denoise: d.denoise, prompt: d.prompt || "" }));

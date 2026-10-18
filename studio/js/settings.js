@@ -2,6 +2,7 @@
 // New sections go in SECTIONS and get a <section data-section="…"> in the page.
 
 import { warmTags } from "./autocomplete.js";
+import { refreshTokenCounters } from "./tokens.js";
 import { $, $$, api, escapeHtml, prefs, setPref, toast } from "./common.js";
 
 const SECTIONS = [
@@ -29,7 +30,9 @@ export class SettingsPage {
             <section class="card">
               <h3>Prompt boxes</h3>
               <label class="check"><input type="checkbox" class="pref-autocomplete"> Tag autocomplete</label>
-              <p>Suggests Danbooru tags (and <code>__wildcard__</code> files after <code>__</code>) while you type in any prompt box. Saved in this browser.</p>
+              <p>Suggests Danbooru tags (and <code>__wildcard__</code> files after <code>__</code>) while you type in any prompt box.</p>
+              <label class="check"><input type="checkbox" class="pref-tokens"> Token counter</label>
+              <p>Shows each prompt's length in tokens in the corner of its box (Anima is trained on prompts up to 512). Saved in this browser.</p>
             </section>
           </div>
         </section>
@@ -48,6 +51,9 @@ export class SettingsPage {
     const ac = $(".pref-autocomplete", root);
     ac.checked = prefs.autocomplete;
     ac.onchange = () => { setPref("autocomplete", ac.checked); warmTags(); };
+    const tc = $(".pref-tokens", root);
+    tc.checked = prefs.tokenCounter;
+    tc.onchange = () => { setPref("tokenCounter", tc.checked); refreshTokenCounters(); };
   }
 
   /** The element the Models page renders into. */

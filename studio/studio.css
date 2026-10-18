@@ -464,3 +464,10 @@ html, body { overflow-x: hidden; }
 .cn-card .cn-clear { position: absolute; top: 4px; right: 4px; padding: 0 6px; line-height: 18px; font-size: 13px; z-index: 1; }
 .cn-card .cn-mode { flex: none; }
 .cn-card .hint.warn { color: var(--warn, #e0a050); }
+
+/* token counters on prompt boxes (js/tokens.js) */
+.tc-wrap { position: relative; }
+.tc-wrap > textarea { display: block; padding-bottom: 17px; } /* room for the counter under the last line */
+.tc-wrap > .tc { position: absolute; right: 8px; bottom: 4px; font-size: 10.5px; line-height: 1; color: var(--muted); background: color-mix(in srgb, var(--bg) 80%, transparent); padding: 2px 4px; border-radius: 3px; pointer-events: none; font-variant-numeric: tabular-nums; opacity: 0.85; }
+.tc-wrap > .tc.empty { display: none; }
+.tc-wrap > .tc.over { color: var(--warn, #e0a050); opacity: 1; }

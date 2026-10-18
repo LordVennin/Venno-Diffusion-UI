@@ -264,6 +264,14 @@ def create_app() -> FastAPI:
 
     app.add_api_route(f"{V}/tags", tag_search, methods=["GET"])
 
+    def token_count(req: jobs.TokenRequest):
+        """Context length of prompts (T5 tokens, as Anima's adapter sees them), for the counters on the prompt boxes."""
+        from venno.engine import tokens
+
+        return {"counts": [tokens.count(t) for t in req.texts], "limit": tokens.LIMIT}
+
+    app.add_api_route(f"{V}/tokens", token_count, methods=["POST"])
+
     def grid_check(req: jobs.Grid):
         """Parse grid axes for Studio's preview ("3 × 4 = 12 images") without running anything."""
         from venno.pipeline import grid

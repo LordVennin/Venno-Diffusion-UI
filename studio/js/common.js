@@ -66,7 +66,7 @@ export function toast(msg, kind = "error") {
 }
 
 /** Studio preferences (Settings → Studio), kept in this browser. */
-export const PREFS_DEFAULT = { autocomplete: true };
+export const PREFS_DEFAULT = { autocomplete: true, tokenCounter: true };
 export const prefs = loadStore("venno-prefs", PREFS_DEFAULT);
 export function setPref(key, value) {
   prefs[key] = value;
