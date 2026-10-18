@@ -76,6 +76,7 @@ class SampleRequest:
     inpaint: Optional[Inpaint] = None  # needs init_latent
     regional: Optional[object] = None  # regions.RegionalAttention
     regional_end: float = 1.0  # stop regional prompts after this fraction of the full schedule
+    reference: Optional[object] = None  # reference.Reference, prepared for this pass's size
     step_hooks: list = field(default_factory=list)  # called with the 1-based step before every model call (guides)
     on_step: Callable[[int, int, torch.Tensor], None] = lambda i, n, denoised: None
     is_cancelled: Callable[[], bool] = lambda: False
@@ -116,11 +117,14 @@ class Denoiser:
         model_options = utils.join_dicts(self.unet.model_options, self.req.extra_model_options)
         if self.req.conditioning.needs_uncond:
             model_options = {**model_options, "disable_cfg1_optimization": True}
+        venno = {}  # read by backend/nn/anima.py
         if self.req.regional is not None and float(sigma.max()) >= self.regional_sigma_end:
             self.req.regional.step = step
-            transformer_options = dict(model_options.get("transformer_options", {}))
-            transformer_options["venno_regional"] = self.req.regional  # read by the Anima blocks' cross-attention
-            model_options = {**model_options, "transformer_options": transformer_options}
+            venno["venno_regional"] = self.req.regional  # the blocks' cross-attention (and self-attention separation)
+        if self.req.reference is not None:
+            venno["venno_reference"] = self.req.reference  # extra frames on the time axis
+        if venno:
+            model_options = {**model_options, "transformer_options": {**model_options.get("transformer_options", {}), **venno}}
         cond, uncond = self.req.conditioning.at(step)
         mask = None
         if self.req.inpaint is not None:

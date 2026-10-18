@@ -133,4 +133,12 @@ def settings(text: str) -> dict:
     out["region_base"] = _num(prm.get("Region base"))
     out["region_separation"] = _num(prm.get("Region separation"))
     out["region_refine"] = _num(prm.get("Region pass"))
+    if frames := _num(prm.get("Frames"), int):
+        out["frames"] = frames
+        out["frame_prompts"] = [prm.get(f"Frame {k + 1} prompt", "") for k in range(frames)]
+    if "Reference noise" in prm:  # the pictures themselves are not stored
+        follow = prm["Reference noise"] == "follow"
+        out["reference_follow"] = follow
+        if not follow:
+            out["reference_noise"] = _num(prm["Reference noise"])
     return {k: v for k, v in out.items() if v is not None}

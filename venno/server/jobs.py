@@ -125,6 +125,12 @@ class Job(BaseModel):
     region_refine: float = 0.0  # region pass denoise: re-render each region on its own afterwards (0 = off)
     region_separation: float = 0.0  # 0..1: keep regions apart in self-attention in the middle steps
     guides: list[Guide] = []
+    # Cosmos time axis (venno/engine/reference.py)
+    frames: int = Field(1, ge=1, le=4)  # consistent set: frames generated together, as one sequence (text to image)
+    frame_prompts: list[str] = []  # per frame, added in front of the prompt ("" = the prompt alone)
+    references: list[str] = Field([], max_length=3)  # reference pictures (data URL or base64)
+    reference_noise: float = Field(0.5, ge=0.0, le=1.0)  # the timestep the clean references are given
+    reference_follow: bool = False  # their timestep follows the steps instead (Anima Edit LoRAs)
     hires: Optional[Hires] = None
     detailer: list[Detailer] = []
     grid: Optional[Grid] = None  # comparison grid (X/Y/Z plot): runs every combination
@@ -319,6 +325,8 @@ def unsupported(job: Job) -> Optional[str]:
         name = job.hires.upscaler
         if not (upscale.is_latent(name) or name in upscale.RESAMPLE or name in upscale.models()):
             return f'hires upscaler "{name}"'
+    if job.frames > 1 and job.mode != "txt2img":
+        return "consistent sets (several frames) outside text to image"
     if job.sampler not in sampling.SAMPLERS:
         return f'sampler "{job.sampler}"'
     if job.scheduler not in schedulers.SCHEDULERS and job.scheduler not in ("", "Automatic"):

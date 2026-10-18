@@ -394,6 +394,18 @@ details.card > summary > span { color: var(--text); }
 .i2i-stage.outpainting { background: repeating-conic-gradient(#2a2d33 0 25%, #1d1f23 0 50%) 0 0 / 16px 16px; outline: 1px dashed var(--accent); }
 .i2i-stage img { -webkit-user-drag: none; user-select: none; }
 .hr-card summary .hr-sum { color: var(--accent2); font-size: 12px; margin-left: 4px; }
+.set-card summary .set-sum, .ref-card summary .ref-sum { color: var(--accent2); font-size: 12px; margin-left: 4px; }
+.ref-card summary .ref-sum.warn { color: var(--warn, #e0a050); }
+.set-card .set-frames { margin-left: 8px; }
+.set-card .set-prompts { display: flex; flex-direction: column; gap: 6px; }
+.set-card .set-prompts label { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 6px; }
+.ref-card .ref-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.ref-card .ref-list:empty { display: none; }
+.ref-card .ref-pic { position: relative; }
+.ref-card .ref-pic img { display: block; height: 72px; max-width: 120px; object-fit: contain; border-radius: 4px; border: 1px solid var(--line); background: #000; }
+.ref-card .ref-pic button { position: absolute; top: 2px; right: 2px; padding: 0 6px; line-height: 18px; font-size: 13px; }
+.ref-card .ref-noise-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
+.ref-card .ref-noise-v { min-width: 3.5em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 .panel details.card > summary { cursor: pointer; font-weight: 600; }
 #thumbs img.grid { outline: 1px dashed var(--accent2); }
 #lightbox { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.86); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; }

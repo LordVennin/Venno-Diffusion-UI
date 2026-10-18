@@ -207,6 +207,14 @@ Requirements that follow:
 - The Models tab offers the 2.9B (and later 3.8B) downloads.
 - The parity/smoke tests run on 2B Turbo and 2.9B.
 
+### Cosmos time axis (consistent sets, reference pictures)
+
+Anima is Cosmos-Predict2 Text2Image, so its DiT keeps the video model's 3D RoPE and per-frame timesteps. Venno uses that axis in two ways:
+- **Consistent sets** (`frames`, `frame_prompts`): the latent gets T = 2–4 frames that are sampled together; every frame is decoded on its own. Frame prompts are regions with `frame=k` (venno/engine/regions.py): on their frame they replace the main prompt in the cross-attention blend. Self-attention separation is off for T > 1.
+- **Reference pictures** (`references`, `reference_noise`, `reference_follow`, venno/engine/reference.py): clean VAE latents appended as extra frames inside `Anima.forward`, each with its own timestep (fixed, or following the steps as the Anima Edit LoRAs expect); the model's output for them is dropped. Regions and frame prompts don't apply to reference frames. Not used by the detailer and the region pass.
+
+Probes on Turbo (CPU): joint frames stay the same character with video-like variation; a clean reference at timestep 0 is copied with a dotted artefact, at 0.5 cleanly.
+
 ### Plugins (decision 6)
 
 Venno plugins are Python packages in `plugins/<name>/` with a `venno_plugin.toml` manifest. They can:

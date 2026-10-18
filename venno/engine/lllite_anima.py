@@ -212,7 +212,9 @@ class LLLiteModuleDiT(nn.Module):
             cx = cx.repeat(x.shape[0] // cx.shape[0], 1, 1)
 
         if x.shape[1] != cx.shape[1]:
-            return self.org_forward(x.reshape(orig_shape) if is_5d else x)
+            if x.shape[1] % cx.shape[1] != 0:
+                return self.org_forward(x.reshape(orig_shape) if is_5d else x)
+            cx = cx.repeat(1, x.shape[1] // cx.shape[1], 1)  # Venno: several frames (consistent sets / references) share the guide
 
         param_dtype = self.down.weight.dtype
         x_proc = x if x.dtype == param_dtype else x.to(param_dtype)

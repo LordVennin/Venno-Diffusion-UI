@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from venno.engine import conditioning, guides, images, lora, prompts, regions, rng, sampling, upscale, vae, wildcards
+from venno.engine import conditioning, guides, images, lora, prompts, reference, regions, rng, sampling, upscale, vae, wildcards
 from venno.engine.models import manager
 
 from . import detail, metadata, region_pass
@@ -124,7 +124,7 @@ def make_guides(engine, job, src: Optional[Source], width: int, height: int):
 
 
 def uses_wildcards(job) -> bool:
-    texts = [job.prompt, job.negative, job.switch_prompt, *(r.prompt for r in job.regions), *(r.negative for r in job.regions), *(d.prompt for d in job.detailer), *(d.negative for d in job.detailer)]
+    texts = [job.prompt, job.negative, job.switch_prompt, *job.frame_prompts, *(r.prompt for r in job.regions), *(r.negative for r in job.regions), *(d.prompt for d in job.detailer), *(d.negative for d in job.detailer)]
     return any(wildcards.has_syntax(t) for t in texts)
 
 
@@ -147,6 +147,7 @@ def run_each(job, progress: Progress) -> Result:
                 negative=negative,
                 loras=list(job.loras) + extra_loras,
                 switch_prompt=pick(job.switch_prompt, "switch"),
+                frame_prompts=[pick(fp, f"frame{i}") for i, fp in enumerate(job.frame_prompts)],
                 regions=[r.model_copy(update={"prompt": pick(r.prompt, f"region{i}"), "negative": pick(r.negative, f"region{i}n")}) for i, r in enumerate(job.regions)],
                 detailer=[d.model_copy(update={"prompt": pick(d.prompt, f"detail{i}"), "negative": pick(d.negative, f"detail{i}n")}) for i, d in enumerate(job.detailer)],
                 seed=seed,
@@ -190,7 +191,9 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
     result = Result(warnings=lora.apply(engine, loras))  # before encoding: LoRAs can patch the text encoder too
 
     base_seed = rng.resolve_seed(job.seed)
-    shape = vae.latent_shape(engine, W, H)
+    frames = job.frames if job.mode == "txt2img" else 1  # consistent set: frames sampled together on the time axis
+    shape = with_frames(vae.latent_shape(engine, W, H), frames)
+    refs = make_reference(job)
 
     # everything below is the same for every run of the job: prepare once
     src = prepare_source(job, W, H) if job.mode == "img2img" and job.init_image else None
@@ -216,7 +219,7 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
     tensors: dict = {}  # encoded prompt texts, shared by every pass of the job
     steps_run = sampling.run_steps(job.steps, denoise if src is not None else 1.0)
     cond = make_conditioning(engine, job, steps_run, W, H, tensors)
-    regional = make_regional(engine, job, src, steps_run, W, H, cond)
+    regional = make_regional(engine, job, src, steps_run, W, H, cond, frames)
 
     guide_set = make_guides(engine, job, src, W, H)
     guide_mask = src.hard_mask if src is not None and src.mask is not None else None
@@ -228,7 +231,7 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
         hires_steps = hires.steps or job.steps
         hires_run = sampling.run_steps(hires_steps, hires.denoise)
         cond2 = make_conditioning(engine, job, hires_run, TW, TH, tensors)
-        regional2 = make_regional(engine, job, None, hires_run, TW, TH, cond2)
+        regional2 = make_regional(engine, job, None, hires_run, TW, TH, cond2, frames)
         out_size = (tw, th)
     total_steps = steps_run + (hires_run if hires is not None else 0)
 
@@ -261,7 +264,14 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
     if job.switch_prompt:
         params["Prompt switch"] = job.switch_prompt
         params["Prompt switch at"] = job.switch_at
-    if regional is not None:
+    if frames > 1:
+        params["Frames"] = frames
+        for k, fp in enumerate(job.frame_prompts[:frames], start=1):
+            if fp.strip():
+                params[f"Frame {k} prompt"] = fp
+    if refs is not None:
+        params.update(refs.info())
+    if job.regions:
         params["Regions"] = len(job.regions)
         params["Region base"] = job.region_base
         if job.region_separation > 0:
@@ -315,21 +325,22 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
                 engine, job, progress, seeds, shape, cond, regional,
                 steps=job.steps, cfg=job.cfg, init_latent=init_latent, denoise=denoise,
                 inpaint=sampling.Inpaint(latent_mask, differential=job.soft_inpaint, keep=keep_latent) if latent_mask is not None else None,
-                on_step=stepper(0), guides=guide_set, guide_mask=guide_mask,
+                on_step=stepper(0), guides=guide_set, guide_mask=guide_mask, reference=refs,
             )
             if hires is not None:
                 latents = upscale_latents(engine, latents, hires.upscaler, TW, TH)
                 engine.set_shift(shift=hires.shift or job.shift, width=TW, height=TH)  # shift follows the new resolution
                 latents = sample_pass(
-                    engine, job, progress, seeds, vae.latent_shape(engine, TW, TH), cond2, regional2,
+                    engine, job, progress, seeds, with_frames(vae.latent_shape(engine, TW, TH), frames), cond2, regional2,
                     steps=hires_steps, cfg=hires.cfg or job.cfg, init_latent=latents, denoise=hires.denoise,
-                    on_step=stepper(steps_run), guides=guide_set,
+                    on_step=stepper(steps_run), guides=guide_set, reference=refs,
                 )
         except sampling.Cancelled:
             result.cancelled = True
             break
 
-        for seed, generated in zip(seeds, vae.decode(engine, latents)):
+        for k, generated in enumerate(vae.decode(engine, latents)):  # frames of an image are consecutive
+            seed, frame = seeds[k // frames], k % frames
             image = finish(src, generated, out_size)
             if job.region_refine > 0 and job.regions:
                 try:
@@ -343,7 +354,7 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
                 except sampling.Cancelled:
                     result.cancelled = True
                     return result
-            info = metadata.infotext(metadata.with_lora_tags(job.prompt, loras), job.negative, {**params, "Seed": seed})
+            info = metadata.infotext(metadata.with_lora_tags(job.prompt, loras), job.negative, {**params, "Seed": seed, **({"Frame": frame + 1} if frames > 1 else {})})
             if job.save:
                 metadata.save(image, info, job.mode, seed)
             result.images.append(metadata.png_bytes(image, info))
@@ -355,10 +366,27 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
 # ---------------------------------------------------------------- passes
 
 
-def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int, height: int, cond):
-    if not job.regions:
+def with_frames(shape: tuple[int, ...], frames: int) -> tuple[int, ...]:
+    """A per-image latent shape (C, 1, h, w) with `frames` frames on the time axis."""
+    return shape if frames == 1 else (shape[0], frames, *shape[2:])
+
+
+def make_reference(job) -> Optional[reference.Reference]:
+    if not job.references:
+        return None
+    pictures = [images.load_rgb(r) for r in job.references]
+    return reference.Reference(pictures, noise=job.reference_noise, follow=job.reference_follow)
+
+
+def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int, height: int, cond, frames: int = 1):
+    frame_prompts = [(k, fp) for k, fp in enumerate(job.frame_prompts[:frames]) if fp.strip()] if frames > 1 else []
+    if not job.regions and not frame_prompts:
         return None
     region_list = []
+    for k, fp in frame_prompts:  # frame prompts: the prompt with the frame's own text in front, on that frame only
+        plan = prompts.PromptPlan(steps_run, f"{fp}, {job.prompt}", switch=f"{fp}, {job.switch_prompt}" if job.switch_prompt else None, switch_at=job.switch_at, allow_and=False)
+        texts = {t for step in range(1, steps_run + 1) for t, _ in plan.parts(step)}
+        region_list.append(regions.Region(plan=plan, contexts={t: cond.tensor(engine, t, False, width, height) for t in texts}, mask=None, frame=k))
     for r in job.regions:
         plan = prompts.PromptPlan(steps_run, r.prompt, allow_and=False)
         texts = {t for step in range(1, steps_run + 1) for t, _ in plan.parts(step)}
@@ -370,7 +398,7 @@ def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int
             region.negative_contexts = {t: cond.tensor(engine, t, True, width, height) for t in texts}
         region_list.append(region)
     return regions.RegionalAttention(
-        region_list, base_strength=job.region_base,
+        region_list, base_strength=job.region_base, frames=frames,
         separation=job.region_separation,
         separate_from=max(2, math.floor(steps_run * job.region_end * 0.25) + 1),  # layout first, as one picture
         separate_until=math.ceil(steps_run * job.region_end * 0.6),
@@ -390,13 +418,12 @@ def hires_size(job) -> tuple[int, int]:
 
 
 def upscale_latents(engine, latents, upscaler_name: str, width: int, height: int):
-    """Latent resize, or decode → upscale (model / resampling) → encode."""
+    """Latent resize, or decode → upscale (model / resampling) → encode. Latents are (B, C, T, h, w)."""
+    b, c, t = latents.shape[:3]
     if upscale.is_latent(upscaler_name):
-        lat = latents.float()
-        squeeze = lat.ndim == 5
-        if squeeze:
-            lat = lat[:, :, 0]
+        lat = latents.float().transpose(1, 2).reshape(b * t, c, *latents.shape[-2:])  # every frame on its own
         lat = F.interpolate(lat, size=(height // 8, width // 8), mode=upscale.latent_mode(upscaler_name))
-        return lat.unsqueeze(2) if squeeze else lat
+        return lat.reshape(b, t, c, *lat.shape[-2:]).transpose(1, 2)
     big = [upscale.upscale(im, upscaler_name, width, height) for im in vae.decode(engine, latents)]
-    return torch.cat([vae.encode(engine, im) for im in big])
+    lat = torch.cat([vae.encode(engine, im) for im in big])  # (B·T, C, 1, h, w)
+    return lat.reshape(b, t, c, *lat.shape[-2:]).transpose(1, 2)

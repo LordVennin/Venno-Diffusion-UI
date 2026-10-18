@@ -10,6 +10,7 @@ import { describeSettings, hasQualityTags, offerSettings, readImageSettings } fr
 import { GRID_DEFAULT, GridCard } from "./gridui.js";
 import { strokeRegionMask } from "./doc.js";
 import { DetailerCard, HIRES_DEFAULT, HiresCard } from "./cards.js";
+import { REFERENCE_DEFAULT, ReferenceCard, SET_DEFAULT, SetCard } from "./timecards.js";
 
 const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768]];
 const RESIZE_MODES = ["Just resize", "Crop and resize", "Resize and fill"];
@@ -31,6 +32,9 @@ const DEFAULTS = {
   guide: { model: "", weight: 0.8, start: 0, end: 0.8, invert: "auto" }, sketchPad: 48,
   // img2img: outpaint (extend the image)
   outpaint: { enabled: false, left: 0, right: 0, top: 0, bottom: 0, overlap: 32, denoise: 1 },
+  // Cosmos time axis: consistent set (txt2img) and reference pictures
+  set: SET_DEFAULT,
+  reference: REFERENCE_DEFAULT,
 };
 
 export class GenForm {
@@ -44,6 +48,8 @@ export class GenForm {
     this.s.grid = { ...structuredClone(GRID_DEFAULT), ...(this.s.grid || {}) };
     this.s.guide = { ...structuredClone(DEFAULTS.guide), ...(this.s.guide || {}) };
     this.s.outpaint = { ...structuredClone(DEFAULTS.outpaint), ...(this.s.outpaint || {}) };
+    this.s.set = { ...structuredClone(SET_DEFAULT), ...(this.s.set || {}) };
+    this.s.reference = { ...structuredClone(REFERENCE_DEFAULT), ...(this.s.reference || {}) };
     this.results = []; // [{src, seed, info}]
     this.current = -1;
     this.busy = false;
@@ -157,7 +163,11 @@ export class GenForm {
           </div>
           <div class="hint f-op-info"></div>
         </details>` : `
-        <details class="card f-hr-card"></details>`}
+        <details class="card f-hr-card"></details>
+
+        <details class="card f-set-card"></details>`}
+
+        <details class="card f-ref-card"></details>
 
         <details class="card f-ad-card"></details>
 
@@ -201,6 +211,7 @@ export class GenForm {
           ${i2i ? `<button class="r-to-input" disabled>Use as input</button>` : ""}
           ${this.mode !== "img2img" ? `<button class="r-to-i2i" disabled>Send to Image to Image</button>` : ""}
           ${this.mode !== "inpaint" ? `<button class="r-to-inpaint" disabled>Send to Inpaint</button>` : ""}
+          <button class="r-to-ref" disabled title="Add this image to the Reference pictures">Use as reference</button>
           <button class="r-use-settings" disabled title="Load this image's prompt and settings into the form">Use settings</button>
           <button class="r-download" disabled>Download</button>
         </div>
@@ -352,7 +363,16 @@ export class GenForm {
     } else {
       this.hrCard = new HiresCard(this.q(".f-hr-card"), { state: () => s, persist: () => this.persist(), size: () => [s.width, s.height] });
       this.syncs.push(() => this.hrCard.render());
+      this.setCard = new SetCard(this.q(".f-set-card"), { state: () => s.set, persist: () => this.persist() });
+      this.syncs.push(() => this.setCard.render());
     }
+
+    // reference pictures (all tabs; image to image / inpaint can use the input image)
+    this.refCard = new ReferenceCard(this.q(".f-ref-card"), {
+      state: () => s.reference, persist: () => this.persist(),
+      input: i2i ? () => this.originalDataURL() : null,
+    });
+    this.syncs.push(() => this.refCard.render());
 
     // ADetailer
     this.adCard = new DetailerCard(this.q(".f-ad-card"), { state: () => s.adetailer, persist: () => this.persist() });
@@ -368,6 +388,7 @@ export class GenForm {
     this.q(".r-to-i2i")?.addEventListener("click", () => this.withCurrent((r) => this.ctx.onSend("img2img", r.src, this.exportState(r))));
     this.q(".r-to-inpaint")?.addEventListener("click", () => this.withCurrent((r) => this.ctx.onSend("inpaint", r.src, this.exportState(r))));
     this.q(".r-download").onclick = () => this.withCurrent((r) => downloadDataURL(r.src, `venno-${r.seed}.png`));
+    this.q(".r-to-ref").onclick = () => this.withCurrent((r) => { this.refCard.add(r.src); toast("Added to the Reference pictures", "info"); });
     this.q(".r-use-settings").onclick = () => this.withCurrent((r) => this.loadSettingsFrom(r.src));
 
     // settings from an image: button, or drop an image anywhere on the form column (not the input-image box)
@@ -442,6 +463,8 @@ export class GenForm {
         Object.assign(s, { hrScale: h.scale || s.hrScale, hrResizeX: h.resize_x || 0, hrResizeY: h.resize_y || 0, hrSteps: h.steps || 0, hrDenoise: h.denoise, hrCfg: h.cfg || 0, hrShift: h.shift || 0 });
       }
     }
+    if (this.mode === "txt2img") this.setCard.apply(x);
+    this.refCard.apply(x);
     if (x.detailer) {
       s.adetailer.enabled = x.detailer.length > 0;
       x.detailer.slice(0, s.adetailer.units.length).forEach((d, i) => Object.assign(s.adetailer.units[i], { model: d.model, confidence: d.confidence, denoise: d.denoise, prompt: d.prompt || "" }));
@@ -455,6 +478,7 @@ export class GenForm {
     const notes = [];
     if (x.regions?.length) notes.push(`${x.regions.length} region prompt(s) are only usable on the Canvas`);
     if (x.template) notes.push("it used wildcards: its resolved prompt was loaded");
+    if (x.reference_follow !== undefined) notes.push("it used reference pictures: add them under Reference");
     toast(`Loaded: ${describeSettings(x)}${notes.length ? ` (${notes.join("; ")})` : ""}`, "info");
   }
 
@@ -813,6 +837,17 @@ export class GenForm {
     return c.toDataURL("image/png");
   }
 
+  /** The input image as it was given (no outpaint border), or null. */
+  originalDataURL() {
+    const img = this.inputImage;
+    if (!img) return null;
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    c.getContext("2d").drawImage(img, 0, 0);
+    return c.toDataURL("image/png");
+  }
+
   /** Outpaint mask: the new border, reaching `overlap` px into the original on the extended sides. */
   outpaintMaskDataURL() {
     const img = this.inputImage, o = this.outpaint();
@@ -880,6 +915,9 @@ export class GenForm {
       tag: this.mode,
     };
     if (this.mode === "txt2img" && s.hr) job.hires = this.hrCard.job();
+    if (this.mode === "txt2img") Object.assign(job, this.setCard.job());
+    Object.assign(job, this.refCard.job());
+    if (s.reference.enabled && !job.references) throw new Error("Add a reference picture (or turn Reference off)");
     if (this.mode === "inpaint" && this.inputImage && this.sketchHasContent()) {
       if (!s.guide.model) throw new Error("Pick a guide model under “Sketch guide” (or clear the sketch)");
       if (!this.maskHasContent()) {

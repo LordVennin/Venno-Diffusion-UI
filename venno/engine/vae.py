@@ -27,7 +27,10 @@ def to_pil(x: torch.Tensor) -> list[Image.Image]:
 
 @torch.inference_mode()
 def decode(engine, latents: torch.Tensor) -> list[Image.Image]:
+    """(B, C, T, h, w) → B·T images, the frames of each image in order (each frame is its own picture)."""
     images = []
+    if latents.ndim == 5 and latents.shape[2] > 1:
+        latents = latents.transpose(1, 2).reshape(-1, latents.shape[1], 1, *latents.shape[-2:])
     for i in range(latents.shape[0]):  # one at a time keeps VRAM flat
         out = engine.decode_first_stage(latents[i : i + 1])
         if torch.isnan(out).any():

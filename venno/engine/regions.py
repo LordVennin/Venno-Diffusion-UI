@@ -22,11 +22,17 @@ run unmasked so the picture's layout forms as one image (separating from step 1 
 compose its own little picture, e.g. a group of people per region), and the last steps run unmasked to
 blend lighting and style. Regions whose box spans most of the picture count as background
 and are never separated from the others (a background region behind characters stays shared).
+
+Frames (consistent sets, reference images): tokens are ordered (t h w). A region with `frame` set is a
+frame prompt: on its frame it takes the main prompt's share of the blend (its prompt already contains the
+main prompt), and it is absent on the other frames. Spatial regions apply to every generated frame.
+Frames past `frames` are reference pictures (venno/engine/reference.py): they see the main prompt only.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -36,10 +42,11 @@ import torch.nn.functional as F
 class Region:
     plan: object  # prompts.PromptPlan of the region prompt (scheduling works here too)
     contexts: dict  # text → (1, L, D) encoded, for every text the plan uses
-    mask: torch.Tensor  # (H, W) float 0..1 at image resolution
+    mask: Optional[torch.Tensor]  # (H, W) float 0..1 at image resolution (None: frame prompts)
     strength: float = 1.0
     negative_plan: object = None  # PromptPlan of the region's own negative, None = the main negative
     negative_contexts: dict = field(default_factory=dict)
+    frame: Optional[int] = None  # a frame prompt for this frame of a consistent set (0-based)
 
     def context(self, step: int, negative: bool = False):
         """The encoded prompt for a step: a (1, L, D) tensor, or an Anima 3.8B placeholder dict resolved per model call."""
@@ -55,6 +62,7 @@ class RegionalAttention:
     separation: float = 0.0  # 0..1, how strongly regions are kept apart in self-attention
     separate_from: int = 1  # first step (1-based) with separation
     separate_until: int = 0  # last step (1-based) with separation
+    frames: int = 1  # generated frames; tokens of later frames belong to reference pictures
     step: int = 1  # set by the denoiser before each model call
     _contexts: dict = field(default_factory=dict, repr=False)
     _weights: dict = field(default_factory=dict, repr=False)
@@ -68,6 +76,9 @@ class RegionalAttention:
         """(R, h, w) region masks at the block's token resolution."""
         masks = []
         for r in self.regions:
+            if r.mask is None:  # frame prompts cover their whole frame
+                masks.append(torch.ones(h, w))
+                continue
             m = F.interpolate(r.mask[None, None].float(), size=(h, w), mode="area")
             m = F.avg_pool2d(F.pad(m, (1, 1, 1, 1), mode="replicate"), kernel_size=3, stride=1)  # soften by one token
             masks.append(m[0, 0])
@@ -83,6 +94,8 @@ class RegionalAttention:
             masks = self.token_masks(h, w)
             keep = []
             for k, r in enumerate(self.regions):
+                if r.frame is not None:
+                    continue
                 ys, xs = torch.nonzero(r.mask > 0.5, as_tuple=True)
                 box = 0.0 if not len(ys) else float((ys.max() - ys.min() + 1) * (xs.max() - xs.min() + 1)) / r.mask.numel()
                 if box <= self.BACKGROUND_BOX:
@@ -115,15 +128,23 @@ class RegionalAttention:
         key = (thw, like.device, like.dtype)
         if key not in self._weights:
             t, h, w = thw
-            masks = self.token_masks(h, w)  # (R, h, w)
+            R = len(self.regions)
+            spatial = [k for k, r in enumerate(self.regions) if r.frame is None]
+            masks = torch.zeros(R, t, h, w)
+            if spatial:
+                masks[spatial, : self.frames] = self.token_masks(h, w)[spatial][:, None]
+            strength = torch.tensor([r.strength for r in self.regions])[:, None, None, None]
             coverage = masks.sum(0).clamp(max=1.0)
             base = 1.0 - coverage * (1.0 - self.base_strength)
-            region = masks * torch.tensor([r.strength for r in self.regions])[:, None, None]
+            region = masks * strength
             total = (base + region.sum(0)).clamp_min(1e-6)
-            base, region = base / total, region / total
-            # token order is (t h w); every frame shares the spatial mask
-            base = base.reshape(1, h * w).repeat(t, 1).reshape(-1, 1)
-            region = region.reshape(len(self.regions), 1, h * w).repeat(1, t, 1).reshape(len(self.regions), -1, 1)
+            base, region = base / total, region / total  # (t, h, w), (R, t, h, w)
+            for k, r in enumerate(self.regions):
+                if r.frame is not None and r.frame < min(t, self.frames):  # the frame prompt replaces the main prompt there
+                    region[k, r.frame] = base[r.frame]
+                    base[r.frame] = 0.0
+            base = base.reshape(-1, 1)
+            region = region.reshape(R, -1, 1)
             self._weights[key] = (base.to(device=like.device, dtype=like.dtype), region.to(device=like.device, dtype=like.dtype))
         return self._weights[key]
 

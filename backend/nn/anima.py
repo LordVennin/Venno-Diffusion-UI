@@ -14,7 +14,6 @@ from einops.layers.torch import Rearrange
 from torch import nn
 from torchvision.transforms import InterpolationMode, functional
 
-from backend.args import dynamic_args
 from backend.attention import attention_function
 from backend.memory_management import is_device_mps
 from backend.operations import (
@@ -480,17 +479,22 @@ class Anima(nn.Module):
 
     def forward(self, x: torch.Tensor, timesteps: torch.Tensor, context: torch.Tensor, padding_mask: Optional[torch.Tensor] = None, **kwargs):
         orig_shape = list(x.shape)
+        transformer_options = kwargs.get("transformer_options", {})
+        timesteps_B_T = timesteps
 
-        for ref in dynamic_args.ref_latents:
-            if x.shape[0] == 2:  # batch_cond_uncond
-                ref = torch.cat((ref, ref), dim=0)
-            x = torch.cat((x, ref.to(x)), dim=2)
+        # Venno: reference images as extra, clean frames on Cosmos's time axis, each with its own timestep
+        # (venno/engine/reference.py). The output keeps only the generated frames.
+        reference = transformer_options.get("venno_reference")
+        if reference is not None:
+            refs = reference.latents_like(x)  # (B, C, R, H, W)
+            frames = x.shape[2]
+            x = torch.cat((x, refs), dim=2)
+            t = timesteps.reshape(x.shape[0], -1)[:, :1].float()
+            timesteps_B_T = torch.cat((t.expand(-1, frames), reference.timesteps(t, refs.shape[2]).to(t)), dim=1)
 
         x = pad_to_patch_size(x, (self.patch_temporal, self.patch_spatial, self.patch_spatial))
         x_B_C_T_H_W = x
-        timesteps_B_T = timesteps
         crossattn_emb = context
-        transformer_options = kwargs.get("transformer_options", {})
         expander = self.venno_context_expander
         if expander is not None:
             y = kwargs.get("y")  # prompt run ids (absent for prompts on the native path, e.g. negatives)
