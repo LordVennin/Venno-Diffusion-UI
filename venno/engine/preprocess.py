@@ -24,11 +24,12 @@ PREPROCESSORS = {
     "softedge": "Soft edge / scribble",
     "depth": "Depth (Depth Anything V2)",
 }
-# the guide models each preprocessor's maps suit, by file-name keyword, best first
+# the guide models each preprocessor's maps suit, by file-name keyword, best first. any-test v2 (trained on
+# Anima Base v1.0) follows line maps far better than the Preview3-era lineart / scribble models on current Anima.
 SUITS = {
-    "canny": ("lineart", "any-test", "anytest"),
-    "lineart": ("lineart", "any-test", "anytest"),
-    "softedge": ("scribble", "any-test", "anytest"),
+    "canny": ("any-test", "anytest", "lineart"),
+    "lineart": ("any-test", "anytest", "lineart"),
+    "softedge": ("any-test", "anytest", "scribble"),
     "depth": ("depth",),
 }
 DEPTH_REPO = "depth-anything/Depth-Anything-V2-Small-hf"

@@ -12,7 +12,7 @@ const MODES = [
   ["guide", "ControlNet", "ControlNet is more important: the guide acts on the prompt side only, so CFG amplifies it. Needs CFG above 1."],
 ];
 const RESIZE = [[1, "Crop and resize"], [0, "Just resize"], [2, "Resize and fill"]];
-const NEEDS = { canny: "LLLite lineart or any-test", lineart: "LLLite lineart or any-test", softedge: "LLLite scribble or any-test", depth: "LLLite depth" };
+const NEEDS = { canny: "LLLite any-test (or lineart)", lineart: "LLLite any-test (or lineart)", softedge: "LLLite any-test (or scribble)", depth: "LLLite depth" };
 
 const readDataURL = (blob) => new Promise((ok, fail) => {
   const r = new FileReader();
