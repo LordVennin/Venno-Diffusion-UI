@@ -27,6 +27,9 @@ Frames (consistent sets, reference images): tokens are ordered (t h w). A region
 frame prompt: on its frame it takes the main prompt's share of the blend (its prompt already contains the
 main prompt), and it is absent on the other frames. Spatial regions apply to every generated frame.
 Frames past `frames` are reference pictures (venno/engine/reference.py): they see the main prompt only.
+Joint self-attention averages the frames' differences away (three expressions come out as one in-between
+face), so with frame prompts the same middle-step window damps attention between different generated
+frames by `frame_separation` (`frame_bias`); reference frames stay fully visible.
 """
 
 from __future__ import annotations
@@ -63,6 +66,7 @@ class RegionalAttention:
     separate_from: int = 1  # first step (1-based) with separation
     separate_until: int = 0  # last step (1-based) with separation
     frames: int = 1  # generated frames; tokens of later frames belong to reference pictures
+    frame_separation: float = 0.0  # 0..1, how strongly frames with their own prompts are kept apart
     step: int = 1  # set by the denoiser before each model call
     _contexts: dict = field(default_factory=dict, repr=False)
     _weights: dict = field(default_factory=dict, repr=False)
@@ -108,6 +112,23 @@ class RegionalAttention:
                 cross = (any_[:, None] * any_[None, :] - m.T @ m).clamp_(0, 1)  # sum over a≠b of m_a(i)·m_b(j)
                 bias = cross * (self.MAX_DAMPING * self.separation)  # even steps: 0.5 → ~30×, 1 → 1000×
                 self._bias[key] = bias.to(like.dtype)[None, None]
+        return self._bias[key]
+
+    def frame_bias(self, thw: tuple[int, int, int], like: torch.Tensor):
+        """Self-attention key bias per query frame, (t, N), or None. It depends only on the key's frame,
+        so a frame's queries can be run with a (1, 1, 1, N) mask instead of an (N, N) one."""
+        t, h, w = thw
+        if self.frame_separation <= 0 or t < 2 or self.frames < 2 or not self.separate_from <= self.step <= self.separate_until:
+            return None
+        if not any(r.frame is not None for r in self.regions):
+            return None
+        key = ("frames", thw, like.device, like.dtype)
+        if key not in self._bias:
+            frame = torch.arange(t)
+            generated = frame < self.frames
+            other = generated[:, None] & generated[None, :] & (frame[:, None] != frame[None, :])  # query frame × key frame
+            bias = other.float() * (self.MAX_DAMPING * self.frame_separation)
+            self._bias[key] = bias.repeat_interleave(h * w, dim=1).to(device=like.device, dtype=like.dtype)
         return self._bias[key]
 
     def contexts(self, like: torch.Tensor, regions: list[Region] | None = None, negative: bool = False) -> torch.Tensor:

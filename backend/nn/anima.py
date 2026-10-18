@@ -331,7 +331,13 @@ class Block(nn.Module):
         _regional = transformer_options.get("venno_regional")  # Venno: keep regions apart early (venno/engine/regions.py)
         _self_tokens = rearrange(normalized_x_B_T_H_W_D.to(compute_dtype), "b t h w d -> b (t h w) d")
         _bias = _regional.self_bias((T, H, W), _self_tokens) if _regional is not None else None
-        if _bias is not None:
+        _frame_bias = _regional.frame_bias((T, H, W), _self_tokens) if _regional is not None else None
+        if _frame_bias is not None:  # frames kept apart: each frame's queries with a per-key bias
+            _q, _k, _v = (t.transpose(1, 2) for t in self.self_attn.compute_qkv(_self_tokens, None, rope_emb=rope_emb_L_1_1_D))
+            _hw = H * W
+            _out = torch.cat([torch.nn.functional.scaled_dot_product_attention(_q[:, :, f * _hw : (f + 1) * _hw], _k, _v, attn_mask=_frame_bias[f][None, None, None]) for f in range(T)], dim=2)
+            _self_out = self.self_attn.output_dropout(self.self_attn.output_proj(_out.transpose(1, 2).reshape(B, -1, _out.shape[1] * _out.shape[3])))
+        elif _bias is not None:
             _q, _k, _v = self.self_attn.compute_qkv(_self_tokens, None, rope_emb=rope_emb_L_1_1_D)
             _out = torch.nn.functional.scaled_dot_product_attention(_q.transpose(1, 2), _k.transpose(1, 2), _v.transpose(1, 2), attn_mask=_bias)
             _self_out = self.self_attn.output_dropout(self.self_attn.output_proj(_out.transpose(1, 2).reshape(B, -1, _q.shape[2] * _q.shape[3])))
