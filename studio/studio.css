@@ -197,7 +197,7 @@ dialog .row input { width: 100%; }
 .mask-tools input[type=range] { width: 80px; }
 
 /* models page */
-#page-models { overflow-y: auto; }
+
 .models-page { max-width: 980px; margin: 0 auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
 .models-page .card { background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; }
 .models-page p { margin: 0; color: var(--muted); line-height: 1.5; }
@@ -399,3 +399,37 @@ details.card > summary > span { color: var(--text); }
 #lightbox { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.86); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; }
 #lightbox[hidden] { display: none; }
 #lightbox img { max-width: 100%; max-height: calc(100% - 50px); object-fit: contain; }
+
+/* Settings (⚙ in the top bar): side navigation + sections */
+.settings-btn { border: 1px solid var(--line); background: var(--bg); padding: 4px 10px; border-radius: 6px; white-space: nowrap; }
+.settings-btn.on { background: var(--bg3); box-shadow: inset 0 -2px 0 var(--accent); }
+.settings-page { display: grid; grid-template-columns: 220px 1fr; overflow: hidden; }
+.settings-page[hidden] { display: none; }
+.settings-nav { display: flex; flex-direction: column; gap: 4px; padding: 14px 10px; background: var(--bg2); border-right: 1px solid var(--line); }
+.settings-nav h2 { margin: 0 6px 10px; font-size: 15px; }
+.settings-nav button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; border: 0; background: transparent; padding: 7px 10px; border-radius: 6px; }
+.settings-nav button small { color: var(--muted); font-size: 11px; }
+.settings-nav button:hover { background: var(--bg3); border: 0; }
+.settings-nav button.on { background: var(--bg3); box-shadow: inset 2px 0 0 var(--accent); }
+.settings-body { overflow-y: auto; min-width: 0; }
+.settings-inner { max-width: 980px; margin: 0 auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.settings-inner .card { background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; }
+.settings-inner p { margin: 0; color: var(--muted); line-height: 1.5; }
+.kv { border-collapse: collapse; font-size: 12.5px; }
+.kv th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 14px 4px 0; vertical-align: top; white-space: nowrap; }
+.kv td { padding: 4px 14px 4px 0; word-break: break-all; }
+.kv code { font-size: 12px; }
+.kv.folders { margin-top: 6px; }
+@media (max-width: 900px) { .settings-page { grid-template-columns: 1fr; } .settings-nav { flex-direction: row; flex-wrap: wrap; } }
+/* top bar: never wider than the window; the model pickers give way first */
+html, body { overflow-x: hidden; }
+.topbar { overflow: hidden; }
+.topbar > * { flex: none; }
+.topbar > .models { flex: 0 1 auto; min-width: 0; display: flex; gap: 6px; align-items: center; }
+.models label { min-width: 0; flex: 0 1 auto; }
+.models select { min-width: 70px; width: 100%; }
+.topbar > .status { flex: 0 1000 auto; min-width: 0; } /* shrinks before the model pickers */
+.topbar > .settings-btn { margin-left: auto; }
+.status + .settings-btn { margin-left: 0; }
+@media (max-width: 1700px) { .settings-btn .lbl { display: none; } }
+@media (max-width: 1400px) { .tabs button { padding: 4px 8px; } .menu button { padding-left: 7px; padding-right: 7px; } }

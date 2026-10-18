@@ -11,6 +11,9 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 EXTENSIONS = (".pt", ".tflite", ".task")
+# ADetailer's standard detectors: listed even before they are downloaded, fetched from Bingsu/adetailer on first use
+STANDARD_REPO = "Bingsu/adetailer"
+STANDARD = ("face_yolov8n.pt", "face_yolov8s.pt", "hand_yolov8n.pt", "person_yolov8n-seg.pt", "person_yolov8s-seg.pt")
 _lock = threading.Lock()
 _yolo: dict = {}  # path → YOLO model (kept: small, and reloading is slow)
 
@@ -30,18 +33,31 @@ def folder() -> str:
 
 def models() -> dict[str, str]:
     root = folder()
+    found = {name: os.path.join(root, name) for name in STANDARD}
     try:
-        return {f: os.path.join(root, f) for f in sorted(os.listdir(root)) if f.lower().endswith(EXTENSIONS) and f != "face_landmarker.task"} | (
-            {"mediapipe_face_mesh": os.path.join(root, "face_landmarker.task")} if os.path.isfile(os.path.join(root, "face_landmarker.task")) else {}
-        )
+        found |= {f: os.path.join(root, f) for f in os.listdir(root) if f.lower().endswith(EXTENSIONS) and f != "face_landmarker.task"}
+        if os.path.isfile(os.path.join(root, "face_landmarker.task")):
+            found["mediapipe_face_mesh"] = os.path.join(root, "face_landmarker.task")
     except OSError:
-        return {}
+        pass
+    return dict(sorted(found.items()))
+
+
+def _ensure(name: str, path: str) -> str:
+    if not os.path.isfile(path) and name in STANDARD:
+        from huggingface_hub import hf_hub_download
+
+        print(f"[Venno] downloading detector {name} from {STANDARD_REPO}")
+        os.makedirs(folder(), exist_ok=True)
+        hf_hub_download(STANDARD_REPO, name, local_dir=folder())
+    return path
 
 
 def detect(name: str, image: Image.Image, confidence: float = 0.3) -> list[Detection]:
     path = models().get(name)
     if path is None:
         raise ValueError(f'Detection model "{name}" not found in {folder()}')
+    path = _ensure(name, path)
     image = image.convert("RGB")
     if path.endswith(".pt"):
         found = _yolo_detect(path, image, confidence)

@@ -15,7 +15,6 @@
     <button data-tab="img2img">Image to Image</button>
     <button data-tab="inpaint">Inpaint</button>
     <button data-tab="info">Image Info</button>
-    <button data-tab="models">Models</button>
   </nav>
   <div class="menu canvas-only">
     <button data-action="new" title="New canvas">New</button>
@@ -32,6 +31,7 @@
     <button id="btn-refresh" title="Rescan model folders">⟳</button>
   </div>
   <div class="status" id="status"></div>
+  <button id="btn-settings" class="settings-btn" title="Settings: model downloads, plugins, system">⚙<span class="lbl"> Settings</span></button>
 </header>
 
 <div class="page" id="page-canvas">
@@ -197,7 +197,7 @@
 <div class="page form-page" id="page-img2img" hidden></div>
 <div class="page form-page" id="page-inpaint" hidden></div>
 <div class="page info-page" id="page-info" hidden></div>
-<div class="page" id="page-models" hidden></div>
+<div class="page settings-page" id="page-settings" hidden></div>
 
 <div class="toast" id="toast"></div>
 

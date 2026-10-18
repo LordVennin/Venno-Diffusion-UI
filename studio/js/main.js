@@ -7,6 +7,7 @@ import { ADETAILER_DEFAULT, api, presetForCheckpoint, showLightbox } from "./com
 import { DetailerCard, HIRES_DEFAULT, HiresCard } from "./cards.js";
 import { GRID_DEFAULT, GridCard } from "./gridui.js";
 import { ModelsPage } from "./models.js";
+import { SettingsPage } from "./settings.js";
 import { InfoPage } from "./info.js";
 import { LoraChips } from "./loras.js";
 import { describeSettings, hasQualityTags, offerSettings } from "./params.js";
@@ -53,15 +54,17 @@ const gen = new Generator(doc, view, state);
 
 // ---------------- tabs ----------------
 let activeTab = "canvas";
-function showTab(name) {
+function showTab(name, section = undefined) {
   activeTab = name;
   $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  $("#btn-settings").classList.toggle("on", name === "settings");
   $$(".page").forEach((p) => (p.hidden = p.id !== `page-${name}`));
   $$(".canvas-only").forEach((el) => (el.style.visibility = name === "canvas" ? "" : "hidden"));
   if (name === "canvas") view.resize();
-  if (name === "models") modelsPage.load();
+  if (name === "settings") settingsPage.show(section);
 }
 $$("#tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+$("#btn-settings").onclick = () => showTab("settings");
 
 const formCtx = {
   state,
@@ -87,7 +90,9 @@ const infoPage = new InfoPage($("#page-info"), {
     if (settings) forms[target].applySettings(settings);
   },
 });
-const modelsPage = new ModelsPage($("#page-models"), { onInstalled: () => loadInfo(true) });
+const settingsPage = new SettingsPage($("#page-settings"), { modelsPage: null, onRescan: () => loadInfo(true) });
+const modelsPage = new ModelsPage(settingsPage.modelsRoot, { onInstalled: () => loadInfo(true) });
+settingsPage.o.modelsPage = modelsPage;
 
 // ---------------- toast / status ----------------
 let toastTimer = 0;
@@ -784,8 +789,8 @@ async function loadInfo(refresh = false) {
     hrCard.setInfo(info);
     adCard.setInfo(info);
     gridCard.render();
-    if (!ckpts.length && !refresh) showTab("models");
-    setStatus(ckpts.length ? `${ckpts.length} model(s) · ${info.loras.length} LoRA(s) · ${info.controlnets.length} guide model(s)` : "No Anima checkpoint yet — download one in the Models tab");
+    if (!ckpts.length && !refresh) showTab("settings", "models");
+    setStatus(ckpts.length ? `${ckpts.length} model(s) · ${info.loras.length} LoRA(s) · ${info.controlnets.length} guide model(s)` : "No Anima checkpoint yet — download one in ⚙ Settings → Models");
   } catch (e) {
     setStatus("Backend unreachable");
     toast(`Could not reach the backend: ${e.message}`);

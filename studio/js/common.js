@@ -1,4 +1,4 @@
-// Small helpers shared by the Canvas, form tabs and Models tab.
+// Small helpers shared by the Canvas, the form tabs and Settings.
 
 export const $ = (s, root = document) => root.querySelector(s);
 export const $$ = (s, root = document) => [...root.querySelectorAll(s)];

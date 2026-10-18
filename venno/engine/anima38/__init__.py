@@ -117,7 +117,7 @@ def _load_qwen35():
 
     path = qwen35_file()
     if path is None:
-        raise FileNotFoundError("Anima 3.8B needs qwen35_4b.safetensors (Qwen3.5 4B) in models/text_encoder — get it in the Models tab")
+        raise FileNotFoundError("Anima 3.8B needs qwen35_4b.safetensors (Qwen3.5 4B) in models/text_encoder — get it in Settings → Models")
     with _qwen_lock:
         if _qwen["path"] == path:
             return _qwen

@@ -920,7 +920,7 @@ export class GenForm {
 
   async generate() {
     if (this.busy) return;
-    if (!this.ctx.state.model.checkpoint) return toast("Select or download an Anima checkpoint first (Models tab).");
+    if (!this.ctx.state.model.checkpoint) return toast("Select or download an Anima checkpoint first (⚙ Settings → Models).");
     let job;
     try { job = this.buildJob(); } catch (e) { return toast(e.message); }
 

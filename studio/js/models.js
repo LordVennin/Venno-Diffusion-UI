@@ -1,4 +1,4 @@
-// "Models" tab: curated downloads (Anima, guides, upscalers, detectors) and download-from-URL.
+// Settings → Models: curated downloads (Anima, guides, upscalers, detectors) and download-from-URL.
 
 import { $, api, escapeHtml, formatBytes, toast } from "./common.js";
 
@@ -13,7 +13,7 @@ export class ModelsPage {
       <div class="models-page">
         <section class="card intro">
           <h3>Models</h3>
-          <p>Anima needs three files: a <b>checkpoint</b>, the <b>Qwen3 text encoder</b> and the <b>Qwen-Image VAE</b>. Guides (ControlLLLite) make the Canvas sketch guides work; upscalers are used by hires fix. ADetailer's face / hand detectors download automatically on first start.</p>
+          <p>Anima needs three files: a <b>checkpoint</b>, the <b>Qwen3 text encoder</b> and the <b>Qwen-Image VAE</b>. Guides (ControlLLLite) make the Canvas sketch guides work; upscalers are used by hires fix. ADetailer's standard face / hand / person detectors download by themselves the first time they are used.</p>
         </section>
         <div class="catalog"></div>
         <section class="card custom">

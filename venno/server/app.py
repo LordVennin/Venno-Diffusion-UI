@@ -114,6 +114,48 @@ def _upscalers() -> list[str]:
         return ["Latent", "Lanczos"]
 
 
+KIND_LABELS = {"checkpoint": "Checkpoints", "text_encoder": "Text encoders", "vae": "VAE", "lora": "LoRAs", "controlnet": "Guides", "upscaler": "Upscalers", "adetailer": "Detectors"}
+
+
+def _system() -> dict:
+    """Settings → System: version, device and the folders in use."""
+    import platform
+    import sys
+
+    import torch
+
+    from backend import memory_management
+    from venno.engine import models
+    from venno.pipeline import metadata
+
+    device = memory_management.get_torch_device()
+    gpu = torch.cuda.get_device_name(device) if device.type == "cuda" else ""
+    folders = [{"kind": label, "new_files": config.model_folder(kind), "searched": config.model_folders(kind)} for kind, label in KIND_LABELS.items()]
+    version = metadata.VERSION
+    try:  # the commit, when running from a git checkout
+        import subprocess
+
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=config.ROOT, capture_output=True, text=True, timeout=5).stdout.strip()
+        if commit:
+            version += f" ({commit})"
+    except Exception:
+        pass
+    return {
+        "version": version,
+        "python": platform.python_version(),
+        "torch": torch.__version__,
+        "device": f"{device}" + (f" ({gpu})" if gpu else ""),
+        "loaded_model": models.manager.info.get("name", ""),
+        "data": config.data_path(),
+        "outputs": config.outputs_path(),
+        "models": config.models_path(),
+        "folders": folders,
+        "listen": config.listen_host(),
+        "port": config.args.port,
+        "command_line": " ".join(sys.argv[1:]),
+    }
+
+
 def custom_downloads_allowed() -> bool:
     """Arbitrary URLs write files to disk: allowed locally, opt-in when served on the network."""
     return not config.is_shared() or config.args.allow_custom_downloads
@@ -128,6 +170,7 @@ def create_app() -> FastAPI:
         return _info()
 
     app.add_api_route(f"{V}/refresh", refresh, methods=["POST"])
+    app.add_api_route(f"{V}/system", _system, methods=["GET"])
 
     # ---- generation jobs ----
     def submit_job(job: jobs.Job):
