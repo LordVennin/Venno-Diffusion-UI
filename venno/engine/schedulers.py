@@ -36,7 +36,14 @@ def simple(n, sigma_min, sigma_max, linker):
 
 
 def uniform(n, sigma_min, sigma_max, linker):
-    return linker.get_sigmas(n)
+    """Evenly spaced over the model's own timestep table (A1111's "Uniform"). Read from the table directly:
+    `linker.get_sigmas` passes table indices (0..999) to `t_to_sigma`, which Anima's flow schedule reads as
+    fractions, giving sigmas above 1 (and NaN images)."""
+    log = linker.sigmas.float().log()
+    t = torch.linspace(len(log) - 1, 0, n)
+    lo, w = t.floor().long(), t.frac()
+    hi = (lo + 1).clamp(max=len(log) - 1)
+    return torch.FloatTensor(((1 - w) * log[lo] + w * log[hi]).exp().tolist() + [0.0])
 
 
 def ddim(n, sigma_min, sigma_max, linker):
