@@ -36,6 +36,8 @@ class Result:
     infotexts: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     cancelled: bool = False
+    detections: list = field(default_factory=list)  # per image: ADetailer detection preview (PNG) or None
+    detection_notes: list[str] = field(default_factory=list)  # per image: what the detailer found ("" without one)
 
 
 @dataclass
@@ -180,6 +182,8 @@ def run_each(job, progress: Progress) -> Result:
         result.images += part.images
         result.seeds += part.seeds
         result.infotexts += part.infotexts
+        result.detections += part.detections
+        result.detection_notes += part.detection_notes
         result.warnings += [w for w in part.warnings if w not in result.warnings]
         if part.cancelled:
             result.cancelled = True
@@ -363,9 +367,12 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
                 except sampling.Cancelled:
                     result.cancelled = True
                     return result
+            found, note = None, ""
             if units:
                 try:
-                    image, _ = detail.run(engine, job, progress, image, seed, units, job_loras=loras, cache=tensors, limit_mask=src.full_mask if src is not None else None)
+                    before = image
+                    image, report = detail.run(engine, job, progress, image, seed, units, job_loras=loras, cache=tensors, limit_mask=src.full_mask if src is not None else None)
+                    found, note = detail.preview_png(before, report), detail.summary(report)
                 except sampling.Cancelled:
                     result.cancelled = True
                     return result
@@ -375,6 +382,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
             result.images.append(metadata.png_bytes(image, info))
             result.seeds.append(seed)
             result.infotexts.append(info)
+            result.detections.append(found)
+            result.detection_notes.append(note)
     return result
 
 

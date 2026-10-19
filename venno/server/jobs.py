@@ -175,6 +175,8 @@ class JobRecord:
         self.images: list[bytes] = []
         self.seeds: list[int] = []
         self.infotexts: list[str] = []
+        self.detections: list[Optional[bytes]] = []  # per image: ADetailer detection preview (PNG) or None
+        self.detection_notes: list[str] = []
         self.progress = 0.0
         self.step = 0
         self.steps = 0
@@ -207,6 +209,8 @@ class JobRecord:
             "images": [f"/venno/v1/jobs/{self.id}/images/{i}.png" for i in range(len(self.images))],
             "seeds": self.seeds,
             "infotexts": self.infotexts,
+            "detections": [f"/venno/v1/jobs/{self.id}/detections/{i}.png" if d else None for i, d in enumerate(self.detections)],
+            "detection_notes": self.detection_notes,
             "queue_position": queue_position(self.id),
         }
 
@@ -379,4 +383,7 @@ def _run(rec: JobRecord) -> bool:
     with torch.inference_mode():  # the whole job, so weights moved / patched during it are consistent
         result = generate.run(rec.job, progress)
     rec.images, rec.seeds, rec.infotexts, rec.warnings = result.images, result.seeds, result.infotexts, result.warnings
+    pad = len(result.images) - len(result.detections)  # e.g. grid images have no detection preview
+    rec.detections = (result.detections + [None] * pad)[: len(result.images)]
+    rec.detection_notes = (result.detection_notes + [""] * pad)[: len(result.images)]
     return result.cancelled

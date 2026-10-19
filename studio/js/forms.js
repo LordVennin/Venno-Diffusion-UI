@@ -213,6 +213,7 @@ export class GenForm {
         </div>` : `
         <div class="result-main"><img class="r-img" alt=""><div class="r-empty">Results appear here</div></div>`}
         <div class="r-thumbs"></div>
+        <div class="row r-detect" hidden><span class="r-detect-note"></span><button class="r-detect-show" title="Show what ADetailer detected (boxes and scores), like Forge's ADetailer preview">Show detections</button></div>
         <div class="row r-actions">
           <button class="r-to-canvas" disabled>Open in Canvas</button>
           ${i2i ? `<button class="r-to-input" disabled>Use as input</button>` : ""}
@@ -409,6 +410,7 @@ export class GenForm {
     this.q(".r-download").onclick = () => this.withCurrent((r) => downloadDataURL(r.src, `venno-${r.seed}.png`));
     this.q(".r-to-ref").onclick = () => this.withCurrent((r) => this.refCard.add(r.src).then(() => toast("Added to the Reference pictures", "info"), (e) => toast(e.message)));
     this.q(".r-use-settings").onclick = () => this.withCurrent((r) => this.loadSettingsFrom(r.src));
+    this.q(".r-detect-show").onclick = () => this.withCurrent((r) => { this.showingDetect = !this.showingDetect; this.showDetect(r); });
 
     // settings from an image: button, or drop an image anywhere on the form column (not the input-image box)
     const picker = document.createElement("input");
@@ -1004,7 +1006,7 @@ export class GenForm {
       });
       if (done.status === "cancelled") throw new Error("Cancelled"); // ignore half-denoised images from an interrupted run
       if (!done.images.length) throw new Error("No image returned");
-      const fresh = done.images.map((src, i) => ({ src, seed: done.seeds[i] ?? job.seed, info: done.infotexts[i] || "" }));
+      const fresh = done.images.map((src, i) => ({ src, seed: done.seeds[i] ?? job.seed, info: done.infotexts[i] || "", detect: done.detections?.[i] || null, detectNote: done.detection_notes?.[i] || "" }));
       this.results = [...fresh, ...this.results].slice(0, 60);
       this.select(0);
     } catch (e) {
@@ -1024,11 +1026,28 @@ export class GenForm {
     this.q(".r-empty").hidden = true;
   }
 
+  /** ADetailer's report for a result, and the toggle between the result and its detection preview. */
+  showDetect(r) {
+    const row = this.q(".r-detect");
+    row.hidden = !r.detectNote;
+    if (!r.detectNote) return;
+    const none = !/\d+ found/.test(r.detectNote);
+    this.q(".r-detect-note").textContent = `ADetailer: ${r.detectNote}`;
+    row.classList.toggle("none", none);
+    const btn = this.q(".r-detect-show");
+    btn.hidden = !r.detect;
+    btn.textContent = this.showingDetect ? "Show result" : "Show detections";
+    btn.classList.toggle("on", !!this.showingDetect);
+    this.showPreview(this.showingDetect && r.detect ? r.detect : r.src);
+  }
+
   select(i) {
     this.current = i;
     const r = this.results[i];
     if (!r) return;
+    this.showingDetect = false;
     this.showPreview(r.src);
+    this.showDetect(r);
     this.q(".r-info").textContent = r.info;
     $$(".r-actions button", this.root).forEach((b) => (b.disabled = false));
     const thumbs = this.q(".r-thumbs");

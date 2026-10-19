@@ -212,6 +212,13 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown image")
         return Response(rec.images[index], media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
 
+    def job_detections(job_id: str, index: int):
+        """ADetailer's detection preview of an image (boxes and scores), like Forge's ADetailer preview."""
+        rec = jobs.get(job_id)
+        if rec is None or not (0 <= index < len(rec.detections)) or rec.detections[index] is None:
+            raise HTTPException(status_code=404, detail="No detection preview")
+        return Response(rec.detections[index], media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
     def cancel_job(job_id: str):
         if not jobs.cancel(job_id):
             raise HTTPException(status_code=404, detail="Unknown or finished job")
@@ -310,6 +317,7 @@ def create_app() -> FastAPI:
     app.add_api_route(f"{V}/jobs", list_jobs, methods=["GET"])
     app.add_api_route(f"{V}/jobs/{{job_id}}", get_job, methods=["GET"])
     app.add_api_route(f"{V}/jobs/{{job_id}}/images/{{index}}.png", job_image, methods=["GET"])
+    app.add_api_route(f"{V}/jobs/{{job_id}}/detections/{{index}}.png", job_detections, methods=["GET"])
     app.add_api_route(f"{V}/jobs/{{job_id}}/cancel", cancel_job, methods=["POST"])
 
     @app.websocket(f"{V}/events")

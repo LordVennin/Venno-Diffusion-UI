@@ -728,6 +728,8 @@ gen.on((what, data) => {
     showLightbox(data);
   } else if (what === "error") {
     toast(data);
+  } else if (what === "detected") {  // ADetailer's report: what it found (or that it found nothing)
+    toast(`ADetailer: ${data}${/\d+ found/.test(data) ? "" : " — nothing was refined"}. Right-click the result to see the detections.`, "info");
   }
 });
 
@@ -756,6 +758,11 @@ function renderThumbs() {
         img.title = `Seed ${r.seeds?.[i] ?? "?"} — click to preview, double-click to apply`;
         img.onclick = () => gen.preview(r, i);
         img.ondblclick = () => gen.apply(r, i);
+        if (r.detections?.[i]) {  // like Forge's ADetailer preview
+          img.title += `\nADetailer: ${r.detectNotes[i]} — right-click to see the detections`;
+          img.classList.add("detected");
+          img.oncontextmenu = (e) => { e.preventDefault(); showLightbox(r.detections[i], `venno-detections-${r.seeds?.[i] ?? 0}.png`); };
+        }
       }
       grp.appendChild(img);
     });

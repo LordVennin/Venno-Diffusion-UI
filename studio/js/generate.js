@@ -212,6 +212,8 @@ export class Generator {
       if (!images.length) throw new Error("No image returned");
       const result = { id: this._resultId++, images, rect: plan.rect, mask, seeds: done.seeds, infotexts: done.infotexts, prompt: job.prompt, txt2img: plan.txt2img };
       result.grid = images.map((_, i) => /, Grid: "/.test(done.infotexts?.[i] || "")); // comparison grids: viewed, not applied
+      result.detections = done.detections || []; // ADetailer's detection previews (boxes and scores)
+      result.detectNotes = done.detection_notes || [];
       if (live) {
         this.live.result = result;
         this.emit("live-result", result);
@@ -222,6 +224,8 @@ export class Generator {
         this.emit("results");
         const first = result.grid.indexOf(false);
         if (first >= 0) this.preview(result, first);
+        const note = result.detectNotes[Math.max(0, first)];
+        if (note) this.emit("detected", note);
         if (result.grid[0]) this.emit("grid", result.images[0].src);
       }
     } catch (e) {

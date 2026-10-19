@@ -11,22 +11,29 @@ Per unit:
 
 `[PROMPT]` in a detailer prompt is replaced by the main prompt; an empty prompt means the main prompt.
 `<lora:…>` tags in a detailer prompt apply to that unit's pass only.
+
+Like Forge's ADetailer, every run also returns a detection preview: the picture before detailing with each
+detection boxed and labelled with its score (grey when it lies outside the inpaint mask and is skipped), and a
+note for units that found nothing. It is also sent as the live preview while the detailer works.
 """
 
 from __future__ import annotations
 
+import io
 import math
 from typing import Callable, Optional
 
 import cv2
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from venno.engine import conditioning, detect, images, lora, sampling, vae
 
 from .passes import make_conditioning, sample_pass
 
+UNIT_COLORS = ((255, 120, 60), (60, 200, 255), (140, 230, 90), (230, 110, 230))  # per detector, as in the preview
+SKIPPED = (150, 150, 150)
 MAX_UPSCALE = 4.0
 ASPECTS = (1.0, 3 / 4, 4 / 3, 2 / 3, 3 / 2, 1 / 2, 2 / 1)
 
@@ -75,6 +82,49 @@ def resolve_prompt(text: str, main: str) -> str:
     return text.replace("[PROMPT]", main)
 
 
+def draw_detections(image: Image.Image, report: list[dict]) -> Image.Image:
+    """The picture with every unit's detections boxed and scored; `report` items: model, confidence, found, kept."""
+    out = image.convert("RGB").copy()
+    overlay = Image.new("RGBA", out.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    size = max(12, round(max(out.size) / 48))
+    font = ImageFont.load_default(size=size)
+    width = max(2, round(max(out.size) / 300))
+    for k, r in enumerate(report):
+        color = UNIT_COLORS[k % len(UNIT_COLORS)]
+        for d, kept in zip(r["found"], r["kept"]):
+            c = color if kept else SKIPPED
+            tint = Image.new("RGBA", out.size, (*c, 70 if kept else 40))
+            overlay.paste(tint, (0, 0), d.mask)  # the detected shape, tinted
+            draw.rectangle(d.box, outline=(*c, 255), width=width)
+            label = f"{r['model'].rsplit('.', 1)[0].split('_')[0]} {d.score:.2f}" + ("" if kept else " (outside mask)")
+            tx, ty = d.box[0], max(0, d.box[1] - size - 6)
+            tb = draw.textbbox((tx + 4, ty + 2), label, font=font)
+            draw.rectangle((tb[0] - 4, tb[1] - 2, tb[2] + 4, tb[3] + 2), fill=(*c, 220))
+            draw.text((tx + 4, ty + 2), label, font=font, fill=(0, 0, 0, 255))
+    lines = [f"{r['model']}: {'nothing found' if not r['found'] else ', '.join(f'{d.score:.2f}' for d in r['found'])} (confidence ≥ {r['confidence']:g})" for r in report]
+    y = out.size[1] - (size + 8) * len(lines) - 4
+    for k, line in enumerate(lines):
+        tb = draw.textbbox((8, y), line, font=font)
+        draw.rectangle((tb[0] - 4, tb[1] - 3, tb[2] + 4, tb[3] + 3), fill=(0, 0, 0, 170))
+        draw.text((8, y), line, font=font, fill=(*UNIT_COLORS[k % len(UNIT_COLORS)], 255))
+        y += size + 8
+    return Image.alpha_composite(out.convert("RGBA"), overlay).convert("RGB")
+
+
+def summary(report: list[dict]) -> str:
+    """One line for the Studio, e.g. "face_yolov8n.pt: 2 found (0.91, 0.54)"."""
+    parts = []
+    for r in report:
+        kept = [d for d, k in zip(r["found"], r["kept"]) if k]
+        skipped = len(r["found"]) - len(kept)
+        text = f"{r['model']}: " + (f"{len(kept)} found ({', '.join(f'{d.score:.2f}' for d in kept)})" if kept else "nothing found")
+        if skipped:
+            text += f", {skipped} outside the mask"
+        parts.append(text)
+    return "; ".join(parts)
+
+
 def run(
     engine,
     job,
@@ -87,9 +137,11 @@ def run(
     cache: dict,
     limit_mask: Optional[Image.Image] = None,
     on_unit: Callable[[int, int], None] = lambda done, total: None,
-) -> tuple[Image.Image, list[str]]:
-    """Refine `image` with every detailer unit in turn. Returns the image and notes for the infotext."""
-    notes = []
+) -> tuple[Image.Image, list[dict]]:
+    """Refine `image` with every detailer unit in turn. Returns the image and the detection report
+    (per unit: model, confidence, found, kept) for `draw_detections` / `summary`."""
+    report = []
+    original = image
     target_area = min(job.width * job.height, 1024 * 1024)
     for u_index, unit in enumerate(units):
         found = detect.detect(unit.model, image, unit.confidence)
@@ -97,8 +149,10 @@ def run(
         if limit_mask is not None:  # inpainting: only what touches the area being regenerated
             lm = np.asarray(limit_mask.resize(image.size, Image.BILINEAR)).astype(np.float32) / 255.0
             masks = [Image.fromarray((np.asarray(m) * lm).astype(np.uint8)) for m in masks]
-        masks = [m for m in masks if m.getbbox() is not None]
-        notes.append(f"{unit.model}: {len(masks)}")
+        kept = [m.getbbox() is not None for m in masks]
+        report.append(dict(model=unit.model, confidence=unit.confidence, found=found, kept=kept))
+        _show(progress, draw_detections(original, report))  # live preview: what this unit found
+        masks = [m for m, k in zip(masks, kept) if k]
         if not masks:
             continue
 
@@ -150,4 +204,17 @@ def run(
                 engine.forge_objects = engine.forge_objects_original.shallow_copy()
                 lora.apply(engine, job_loras)
         on_unit(u_index + 1, len(units))
-    return image, notes
+    return image, report
+
+
+def preview_png(image: Image.Image, report: list[dict]) -> bytes:
+    """The detection preview as a PNG (no generation parameters: it is not a result)."""
+    buf = io.BytesIO()
+    draw_detections(image, report).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _show(progress, image: Image.Image):
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", quality=85)
+    progress.on_preview(buf.getvalue())
