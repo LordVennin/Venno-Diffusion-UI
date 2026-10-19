@@ -102,7 +102,7 @@ def draw_detections(image: Image.Image, report: list[dict]) -> Image.Image:
             tb = draw.textbbox((tx + 4, ty + 2), label, font=font)
             draw.rectangle((tb[0] - 4, tb[1] - 2, tb[2] + 4, tb[3] + 2), fill=(*c, 220))
             draw.text((tx + 4, ty + 2), label, font=font, fill=(0, 0, 0, 255))
-    lines = [f"{r['model']}: {'nothing found' if not r['found'] else ', '.join(f'{d.score:.2f}' for d in r['found'])} (confidence ≥ {r['confidence']:g})" for r in report]
+    lines = [f"{r['model']}: {'nothing found' if not r['found'] else ', '.join(f'{d.score:.2f}' for d in r['found'])} (min. confidence {r['confidence']:g})" for r in report]
     y = out.size[1] - (size + 8) * len(lines) - 4
     for k, line in enumerate(lines):
         tb = draw.textbbox((8, y), line, font=font)
