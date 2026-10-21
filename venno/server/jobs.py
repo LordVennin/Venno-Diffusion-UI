@@ -48,6 +48,20 @@ class Guide(BaseModel):
     canny_high: int = Field(200, ge=0, le=255)
 
 
+class LoraMeta(BaseModel):
+    name: str
+    tags: Optional[list[str]] = None
+    activation: Optional[str] = None  # trigger words
+    weight: Optional[float] = None  # preferred weight (0 = none)
+    description: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LoraPreview(BaseModel):
+    name: str
+    image: Optional[str] = None  # data URL / base64; None removes the preview
+
+
 class TokenRequest(BaseModel):
     texts: list[str] = Field([], max_length=64)
 

@@ -13,6 +13,7 @@ import { LoraChips } from "./loras.js";
 import { describeSettings, hasQualityTags, offerSettings } from "./params.js";
 import { enableAutocomplete, setWildcards } from "./autocomplete.js";
 import { attachTokenCounter, refreshTokenCounters } from "./tokens.js";
+import { openLoraBrowser } from "./lorabrowser.js";
 
 enableAutocomplete();
 import { runSteps, SchedulePreview } from "./schedule.js";
@@ -696,6 +697,10 @@ showSwitch();
 for (const id of ["steps", "strength"]) $(`#${id}`).addEventListener("input", () => promptSchedule.refresh());
 for (const id of ["steps", "strength"]) $(`#${id}`).addEventListener("change", () => promptSchedule.refresh());
 
+$("#btn-lora-browser").onclick = () => openLoraBrowser({
+  chips: loraChips, prompt: prompt_,
+  current: () => (gen.selected ? gen.selected.result.images[gen.selected.index]?.src : null),
+});
 $("#sel-lora").onchange = (e) => {
   if (e.target.value) loraChips.add(e.target.value);
   e.target.value = "";

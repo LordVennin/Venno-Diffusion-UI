@@ -13,6 +13,7 @@ import { DetailerCard, HIRES_DEFAULT, HiresCard } from "./cards.js";
 import { CONTROLNET_DEFAULT, ControlNetCard } from "./controlnet.js";
 import { REFERENCE_DEFAULT, ReferenceCard, SET_DEFAULT, SetCard } from "./timecards.js";
 import { attachTokenCounter, refreshTokenCounters } from "./tokens.js";
+import { openLoraBrowser } from "./lorabrowser.js";
 
 const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768]];
 const RESIZE_MODES = ["Just resize", "Crop and resize", "Resize and fill"];
@@ -83,6 +84,7 @@ export class GenForm {
           <div class="f-schedule"></div>
           <div class="row">
             <select class="f-lora"></select>
+            <button class="f-lora-browse" title="Browse LoRAs: folders, previews, tags and search">🗂</button>
             <label class="check"><input type="checkbox" class="f-quality"> Anima quality tags</label>
             <button class="f-load-settings" title="Load prompt and settings from an image made with Venno, Forge or A1111 (you can also drop the image onto this panel)">From image…</button>
           </div>
@@ -286,6 +288,10 @@ export class GenForm {
     this.q(".f-generate").onclick = () => this.generate();
     this.q(".f-cancel").onclick = () => this.jobId && cancelJob(this.jobId);
     this.loras = new LoraChips(this.q(".f-lora-chips"), { get: () => s.loras, set: (list) => { s.loras = list; this.persist(); this.gridCard?.render(); } });
+    this.q(".f-lora-browse").onclick = () => openLoraBrowser({
+      chips: this.loras, prompt: this.q(".f-prompt"),
+      current: () => this.results[this.current]?.src || null,
+    });
     this.q(".f-lora").onchange = (e) => {
       if (e.target.value) this.loras.add(e.target.value);
       e.target.value = "";

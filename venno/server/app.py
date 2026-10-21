@@ -288,6 +288,48 @@ def create_app() -> FastAPI:
 
     app.add_api_route(f"{V}/tags", tag_search, methods=["GET"])
 
+    # LoRA browser (venno/engine/lora_library.py)
+    def lora_library():
+        from venno.engine import lora_library as lib
+
+        return lib.entries()
+
+    def lora_preview(name: str):
+        from venno.engine import lora_library as lib
+
+        try:
+            data, media = lib.preview_bytes(name)
+        except (ValueError, FileNotFoundError):
+            raise HTTPException(status_code=404, detail="No preview")
+        return Response(data, media_type=media, headers={"Cache-Control": "private, max-age=86400"})  # the URL carries a version
+
+    def lora_set_preview(req: jobs.LoraPreview):
+        from venno.engine import images, lora_library as lib
+
+        try:
+            lib.set_preview(req.name, images.load_rgb(req.image) if req.image else None)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"Could not save the preview: {e}")
+        return next((e for e in lib.entries() if e["name"] == req.name), {})
+
+    def lora_set_meta(req: jobs.LoraMeta):
+        from venno.engine import lora_library as lib
+
+        try:
+            lib.set_meta(req.name, tags=req.tags, activation=req.activation, weight=req.weight, description=req.description, notes=req.notes)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"Could not save: {e}")
+        return next((e for e in lib.entries() if e["name"] == req.name), {})
+
+    app.add_api_route(f"{V}/loras", lora_library, methods=["GET"])
+    app.add_api_route(f"{V}/loras/preview", lora_preview, methods=["GET"])
+    app.add_api_route(f"{V}/loras/preview", lora_set_preview, methods=["POST"])
+    app.add_api_route(f"{V}/loras/meta", lora_set_meta, methods=["POST"])
+
     def token_count(req: jobs.TokenRequest):
         """Context length of prompts (T5 tokens, as Anima's adapter sees them), for the counters on the prompt boxes."""
         from venno.engine import tokens
