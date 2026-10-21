@@ -178,7 +178,7 @@ export class GenForm {
 
         <details class="card f-ref-card"></details>
 
-        <details class="card f-ad-card"></details>
+        <details class="card f-det-card"></details>
 
         <details class="card f-grid-card grid-card"></details>
 
@@ -401,7 +401,7 @@ export class GenForm {
     this.syncs.push(() => this.refCard.render());
 
     // ADetailer
-    this.adCard = new DetailerCard(this.q(".f-ad-card"), { state: () => s.adetailer, persist: () => this.persist() });
+    this.adCard = new DetailerCard(this.q(".f-det-card"), { state: () => s.adetailer, persist: () => this.persist() });
     this.syncs.push(() => this.adCard.render());
 
     // comparison grid

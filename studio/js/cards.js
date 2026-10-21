@@ -97,56 +97,56 @@ export class DetailerCard {
   constructor(el, opts) {
     this.el = el;
     this.o = opts;
-    el.classList.add("ad-card");
+    el.classList.add("det-card");
     el.innerHTML = `
-      <summary><input type="checkbox" class="ad-on" title="Use ADetailer"> <span>ADetailer</span></summary>
+      <summary><input type="checkbox" class="det-on" title="Use ADetailer"> <span>ADetailer</span></summary>
       ${opts.note ? `<div class="hint">${opts.note}</div>` : ""}
       ${[0, 1].map((n) => `
-      <div class="ad-unit" data-unit="${n}">
+      <div class="det-unit" data-unit="${n}">
         <h4>${n === 0 ? "1st" : "2nd"} detector</h4>
         <div class="grid2">
-          <label>Model <select class="ad-model"></select></label>
-          <label>Denoising <input type="number" class="ad-denoise" min="0" max="1" step="0.05"></label>
-          <label>Confidence <input type="number" class="ad-confidence" min="0" max="1" step="0.05"></label>
-          <label>Mask blur <input type="number" class="ad-blur" min="0" max="64"></label>
-          <label>Dilate / erode <input type="number" class="ad-dilate" min="-64" max="64"></label>
-          <label>Padding <input type="number" class="ad-padding" min="0" max="256"></label>
+          <label>Model <select class="det-model"></select></label>
+          <label>Denoising <input type="number" class="det-denoise" min="0" max="1" step="0.05"></label>
+          <label>Confidence <input type="number" class="det-confidence" min="0" max="1" step="0.05"></label>
+          <label>Mask blur <input type="number" class="det-blur" min="0" max="64"></label>
+          <label>Dilate / erode <input type="number" class="det-dilate" min="-64" max="64"></label>
+          <label>Padding <input type="number" class="det-padding" min="0" max="256"></label>
         </div>
-        <textarea class="ad-prompt" rows="1" placeholder="Detail prompt (empty = main prompt)"></textarea>
+        <textarea class="det-prompt" rows="1" placeholder="Detail prompt (empty = main prompt)"></textarea>
       </div>`).join("")}`;
     const ad = () => this.o.state();
-    const on = $(".ad-on", el);
+    const on = $(".det-on", el);
     on.onclick = (e) => e.stopPropagation();
     on.onchange = () => { ad().enabled = on.checked; if (on.checked) el.open = true; this.o.persist(); };
-    $$(".ad-unit", el).forEach((unit) => {
+    $$(".det-unit", el).forEach((unit) => {
       const u = () => ad().units[Number(unit.dataset.unit)];
       for (const [cls, key, isNum] of this.fields()) {
         const f = $(cls, unit);
         f.onchange = () => { u()[key] = isNum ? Number(f.value) : f.value; this.o.persist(); };
       }
-      $(".ad-prompt", unit).oninput = (e) => { u().prompt = e.target.value; this.o.persist(); };
+      $(".det-prompt", unit).oninput = (e) => { u().prompt = e.target.value; this.o.persist(); };
     });
     this.render();
   }
 
   fields() {
-    return [[".ad-model", "model", false], [".ad-denoise", "denoise", true], [".ad-confidence", "confidence", true], [".ad-blur", "maskBlur", true], [".ad-dilate", "dilate", true], [".ad-padding", "padding", true]];
+    return [[".det-model", "model", false], [".det-denoise", "denoise", true], [".det-confidence", "confidence", true], [".det-blur", "maskBlur", true], [".det-dilate", "dilate", true], [".det-padding", "padding", true]];
   }
 
   render() {
     const ad = this.o.state();
-    $(".ad-on", this.el).checked = ad.enabled;
-    $$(".ad-unit", this.el).forEach((unit) => {
+    $(".det-on", this.el).checked = ad.enabled;
+    $$(".det-unit", this.el).forEach((unit) => {
       const u = ad.units[Number(unit.dataset.unit)];
       for (const [cls, key] of this.fields()) $(cls, unit).value = u[key];
-      $(".ad-prompt", unit).value = u.prompt || "";
+      $(".det-prompt", unit).value = u.prompt || "";
     });
   }
 
   setInfo(info) {
     const models = [{ value: "None", label: "None" }, ...(info.adetailer_models || []).map((x) => ({ value: x, label: x }))];
     const ad = this.o.state();
-    $$(".ad-unit", this.el).forEach((unit) => fillSelect($(".ad-model", unit), models, ad.units[Number(unit.dataset.unit)].model));
+    $$(".det-unit", this.el).forEach((unit) => fillSelect($(".det-model", unit), models, ad.units[Number(unit.dataset.unit)].model));
   }
 
   job() { return detailerJob(this.o.state()); }

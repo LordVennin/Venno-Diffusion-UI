@@ -76,11 +76,18 @@ export function setPref(key, value) {
 export function loadStore(key, fallback) {
   try { return { ...fallback, ...(JSON.parse(localStorage.getItem(key)) || {}) }; } catch { return { ...fallback }; }
 }
-const saveTimers = {};
-export function saveStore(key, value) {
-  clearTimeout(saveTimers[key]);
-  saveTimers[key] = setTimeout(() => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }, 300);
+const pendingSaves = {}; // key → [timer, value]
+function writeStore(key) {
+  const [timer, value] = pendingSaves[key];
+  clearTimeout(timer);
+  delete pendingSaves[key];
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
+export function saveStore(key, value) {
+  clearTimeout(pendingSaves[key]?.[0]);
+  pendingSaves[key] = [setTimeout(() => writeStore(key), 300), value];
+}
+addEventListener("pagehide", () => Object.keys(pendingSaves).forEach(writeStore)); // a change made just before closing or reloading
 
 export function downloadDataURL(src, name) {
   const a = document.createElement("a");

@@ -40,14 +40,18 @@ const state = {
 const brush = { size: 12, opacity: 1, hardness: 0.8, color: "#000000", color2: "#ffffff", pressureSize: true, pressureOpacity: false, selectMode: "replace", fillTolerance: 24, ...(saved.brush || {}) };
 
 let saveTimer = 0;
+function save() {
+  clearTimeout(saveTimer);
+  saveTimer = 0;
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({ model: state.model, gen: state.gen, brush, showProgressPreview: state.showProgressPreview, liveOnCanvas: state.liveOnCanvas }));
+  } catch {}
+}
 function persist() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ model: state.model, gen: state.gen, brush, showProgressPreview: state.showProgressPreview, liveOnCanvas: state.liveOnCanvas }));
-    } catch {}
-  }, 300);
+  saveTimer = setTimeout(save, 300);
 }
+addEventListener("pagehide", () => saveTimer && save()); // a change made just before closing or reloading
 
 // ---------------- core objects ----------------
 const doc = new Doc(1024, 1024);
@@ -110,11 +114,11 @@ const setStatus = (s) => ($("#status").textContent = s);
 
 /** Venno's files were updated after the server started: new options in the Studio would be ignored until a restart. */
 function showRestartBanner(on) {
-  let el = $("#restart-banner");
+  let el = $("#restart-note");
   if (!on) return el?.remove();
   if (el) return;
   el = document.createElement("div");
-  el.id = "restart-banner";
+  el.id = "restart-note";
   el.innerHTML = `Venno was updated after it started. <b>Restart Venno</b> (close it and run venno.bat / venno.sh again): until then the server runs the old version and ignores new options. <button title="Hide">×</button>`;
   el.querySelector("button").onclick = () => el.remove();
   document.body.prepend(el);
@@ -648,7 +652,7 @@ const hrCard = new HiresCard($("#canvas-hr-card"), {
   state: () => g, persist, size: () => { const p = gen.plan(); return [p.gw, p.gh]; },
   note: "Canvas: used when generating a new picture (no selection, Strength 100% or an empty canvas); the result is scaled to the canvas. Not in live mode.",
 });
-const adCard = new DetailerCard($("#canvas-ad-card"), { state: () => g.detailer, persist, note: "Not used in live mode." });
+const adCard = new DetailerCard($("#canvas-det-card"), { state: () => g.detailer, persist, note: "Not used in live mode." });
 const gridCard = new GridCard($("#canvas-grid-card"), { state: () => g.grid, persist, info: () => state.info, loras: () => g.loras });
 $("#resolution").addEventListener("change", () => hrCard.updateInfo());
 doc.on((what) => { if (what === "reset") hrCard.updateInfo(); });
