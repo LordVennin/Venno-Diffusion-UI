@@ -153,9 +153,11 @@ Studio already builds exactly these pieces; Phase 0 just changes where it sends 
 - Studio moved to `studio/`. New launchers `venno.sh` / `venno.bat` (venv + `python -m venno.install`: PyTorch CUDA build, requirements, optional sage / flash / xformers), requirements without Gradio and other Forge-only packages.
 
 **Phase 5: hardening** (ongoing)
-- Unit tests for pure parts: schedulers, mask ops, region masks, job validation, metadata.
-- A local smoke script that runs every mode on Anima Turbo at 512² × 4 steps (CPU-capable, ~10 min).
-- Low-VRAM checks (`--lowvram`, Never-OOM equivalent: always-offload + tiled VAE) on a real GPU.
+- ✅ Unit tests (`tests/`, `python -m pytest`, ~20 s, no model): prompt parser, every scheduler, region / frame-prompt weights and the self-attention biases, masks and resizing, job validation, infotext round trips, wildcards, grid values, the LoRA library, token counts, preprocessors, the detailer report. They found and fixed: Turbo and Uniform schedulers reading table indices as flow fractions (sigma ~1.5, NaN images), KL Optimal never reaching 0, Bong Tangent crashing at 1 step, infotext values with quotes breaking the settings line (now JSON-quoted like A1111), and engine modules relying on `backend` being imported first.
+- ✅ Smoke test (`python -m venno.smoke`): every mode on Anima Turbo at 256² × 4 steps with per-mode checks (inpaint keeps unmasked pixels, seeds are reproducible, sizes, saved settings, detection report, …) and a contact sheet; 17/17 pass on CPU (~20 min).
+- Low-VRAM checks (`--lowvram`, Never-OOM equivalent: always-offload + tiled VAE) on a real GPU, plus the GPU-only checks: Anima 3.8B, and the defaults chosen on CPU at small sizes (frame separation 0.2, reference strength, ControlNet's "ControlNet is more important" at CFG > 1).
+
+**Added since Phase 4** (all through `/venno/v1` and the job schema): per-region negatives, region separation and the region pass; consistent sets and reference pictures on Cosmos's time axis; ControlNet units with preprocessors (Canny, line art, soft edge, Depth Anything V2) and control modes; ADetailer detection previews; the LoRA browser and library (Forge file formats); prompt token counters; Settings (Models, Studio preferences, System) and a restart-needed banner.
 
 **Phase 6: plugin system** (after the rewrite)
 - Manifest, loader and hook API as described under Decisions.
