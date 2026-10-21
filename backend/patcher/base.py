@@ -576,7 +576,9 @@ class ModelPatcher:
                 if hasattr(m, "parameters_manual_cast"):
                     wipe_lowvram_weight(m)
 
-                if full_load or lowvram_fits:
+                # Venno: plain torch modules (no manual cast, e.g. Anima 3.8B's connector) can't fetch their weights
+                # on the fly, so they always go to the device, even in a partial load
+                if full_load or lowvram_fits or not hasattr(m, "parameters_manual_cast"):
                     mem_counter += module_mem
                     load_completely.append((module_mem, n, m, params))
                 else:
@@ -616,6 +618,15 @@ class ModelPatcher:
 
         for x in load_completely:
             x[2].to(device_to)
+
+        if not full_load:  # Venno: parameters held directly by container modules (e.g. learned query tokens)
+            for _, m in self.model.named_modules():
+                if hasattr(m, "parameters_manual_cast") or not any(True for c in m.children() for _ in c.parameters()):
+                    continue
+                for name, p in list(m._parameters.items()):
+                    if p is not None and p.device != torch.device(device_to):
+                        m._parameters[name] = torch.nn.Parameter(p.data.to(device_to), requires_grad=False)
+                        mem_counter += p.numel() * p.element_size()
 
         for x in offloaded:
             n = x[1]
