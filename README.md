@@ -2,7 +2,7 @@
 
 A painting-first UI for the **[Anima](https://huggingface.co/circlestone-labs/Anima)** image model, in the spirit of Krita AI Diffusion. You sketch, select and paint on a layered canvas. The model then generates, refines or inpaints exactly the part you point it at.
 
-Venno runs its own lean server and pipeline (`venno/`) on a forked copy of the **[Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)** engine (`backend/`, by Haoming02), cut down to Anima only: its model loading, memory management, attention and LoRA patching are kept; the A1111/Forge web UI layer, Gradio, extensions and the `/sdapi` API are gone. Venno Studio is the front end, with these tabs:
+Venno is a standalone app built for Anima: its own server and generation pipeline (`venno/`: job queue, sampling, regions, guides, detailer, consistent sets, reference pictures, LoRA library) and its own front end, Venno Studio (`studio/`). Underneath is a slim diffusion engine (`backend/`) that started from [Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)'s and keeps its model loading, memory management, attention and LoRA patching, trimmed to Anima only (see [Credits](#credits--licence)). There is no A1111/Forge layer: no Gradio, no extensions, no `/sdapi`. Studio has these tabs:
 
 - **Canvas**: the layered painting workspace.
 - **Text to Image**, **Image to Image** and **Inpaint**: classic form-style generation, with hires fix, ADetailer, comparison grids and a results gallery. Image to Image and Inpaint show the input (and mask) large, next to the result.
@@ -193,10 +193,10 @@ The old A1111/Forge `/sdapi` endpoints are gone (see [`docs/PLAN_VENNO_SERVER.md
 
 ## Credits & licence
 
-- Engine (`backend/`): forked from [Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo) by Haoming02, based on [Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) by lllyasviel and [Stable Diffusion WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) by AUTOMATIC1111. The upstream README is kept in [`docs/FORGE_NEO_README.md`](docs/FORGE_NEO_README.md).
+- Engine core (`backend/`): derived from the engine of [Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo) by Haoming02, which builds on [Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) by lllyasviel and [Stable Diffusion WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) by AUTOMATIC1111. Model loading, memory management, the attention back ends, LoRA patching and the Anima network come from there; Venno trimmed it to Anima and added the hooks its features use (regions, time-axis frames and references, guides). Third-party packages it bundles are in `backend/vendor/`. Forge Neo's README is kept in [`docs/FORGE_NEO_README.md`](docs/FORGE_NEO_README.md).
 - Anima 3.8B support (`venno/engine/anima38/`): ported from [forge-anima-3.8B](https://github.com/GumGum10/forge-anima-3.8B) by GumGum10 (MIT); the model is [Anima 3.8B](https://huggingface.co/lylogummy/Anima-3.8B) by lylogummy, and Qwen3.5's tokenizer comes from [Qwen/Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B) (Apache-2.0).
 - Guide models: [Anima ControlLLLite](https://huggingface.co/Mooshie/Anima-LLLite) by Mooshie (Anima licence). Depth preprocessor: [Depth Anything V2 Small](https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf) (Apache-2.0), downloaded on first use.
 - Model: [Anima](https://huggingface.co/circlestone-labs/Anima) by CircleStone Labs & Comfy Org (non-commercial model licence; generated images may be used commercially).
 - Inspired by [Krita AI Diffusion](https://github.com/Acly/krita-ai-diffusion).
 
-Licensed under the [AGPL-3.0](LICENSE), same as the upstream projects.
+Licensed under the [AGPL-3.0](LICENSE), as are the projects its engine derives from.
