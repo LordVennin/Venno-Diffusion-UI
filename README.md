@@ -47,6 +47,7 @@ Venno runs its own lean server and pipeline (`venno/`) on a forked copy of the *
    cd Venno-Diffusion-UI
    ```
 3. Run `venno.bat` (Windows) or `./venno.sh` (Linux/macOS). The first start creates `venv/` and installs PyTorch (CUDA 13 build; set `TORCH_INDEX_URL` / `TORCH_COMMAND` for other GPUs) and the requirements, then Studio runs at **http://127.0.0.1:7860/** (add `--autolaunch` to open the browser). Later starts only check that everything is in place.
+   - **Windows:** keep Venno in a short folder such as `C:\Venno`. PyTorch installs files nested ~140 characters deep, and Windows stops at 260 characters per path unless long paths are enabled; with a long folder path the install fails with *"The filename or extension is too long"* (WinError 206). Venno checks this before installing and says what to do: move the folder (then delete `venv`), or enable long paths once in an administrator PowerShell with `New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force`.
 4. With no Anima checkpoint installed, Studio opens **⚙ Settings → Models**. Download *Anima Turbo* (or Aesthetic/Base), the *Qwen3 text encoder* and the *Qwen-Image VAE*, plus any guides and upscalers you want. *Download from URL* takes any Hugging Face / Civitai / direct link (LoRAs too). You can also place files manually:
 
    | File | Folder |

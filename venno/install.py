@@ -21,11 +21,46 @@ TORCH_COMMAND = os.environ.get("TORCH_COMMAND", f"torch==2.13.0+cu130 torchvisio
 XFORMERS = os.environ.get("XFORMERS_PACKAGE", f"xformers==0.0.35 --extra-index-url {TORCH_INDEX_URL}")
 
 
+# Windows without long-path support stops at 260 characters per path. PyTorch's wheel has files ~140 characters
+# below site-packages' parent (torch-*.dist-info/licenses/third_party/kineto/…/DCGM/testing/python3/…), so the
+# environment's own path has to stay short.
+MAX_ENV_PATH = 75
+LONG_PATHS_HELP = """Either:
+  1. move Venno to a short folder, e.g. C:\\Venno (and delete the venv folder inside it), or
+  2. turn on Windows long-path support once, in PowerShell run as administrator:
+       New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\FileSystem" -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force
+     then delete the venv folder and start Venno again."""
+
+
+def long_paths_enabled() -> bool:
+    if os.name != "nt":
+        return True
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as key:
+            return winreg.QueryValueEx(key, "LongPathsEnabled")[0] == 1
+    except OSError:
+        return False
+
+
+def check_path_length():
+    """Stop before a long download that would fail on Windows' 260-character path limit."""
+    env = os.path.abspath(sys.prefix)
+    if os.name == "nt" and len(env) > MAX_ENV_PATH and not long_paths_enabled():
+        raise SystemExit(
+            f"[Venno] This folder's path is too long for Windows ({len(env)} characters: {env}).\n"
+            f"PyTorch's files would go past Windows' 260-character limit and the install would fail.\n{LONG_PATHS_HELP}"
+        )
+
+
 def pip(args: str, what: str):
+    check_path_length()
     print(f"[Venno] installing {what}…", flush=True)
     result = subprocess.run(f'"{sys.executable}" -m pip install {args}', shell=True)
     if result.returncode != 0:
-        raise SystemExit(f"[Venno] could not install {what} (pip exit code {result.returncode})")
+        hint = "" if long_paths_enabled() else f"\nIf pip said \"The filename or extension is too long\" (WinError 206), the folder path is too long.\n{LONG_PATHS_HELP}"
+        raise SystemExit(f"[Venno] could not install {what} (pip exit code {result.returncode}){hint}")
 
 
 def installed(package: str) -> bool:
