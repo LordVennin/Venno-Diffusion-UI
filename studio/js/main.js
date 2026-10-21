@@ -31,7 +31,7 @@ const state = {
   gen: {
     prompt: "", negative: "", loras: [], switchPrompt: "", switchAt: 0.4, strength: 1, batch: 2, steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple",
     seed: 0, seedLocked: false, resolution: 1024, context: 0.5, feather: 12, qualityPrefix: true, saveImages: true, softInpaint: true,
-    regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, regionOverlap: "top", regionSeparation: 0.7, regionRefine: false, regionRefineDenoise: 0.4, preset: "", ...HIRES_DEFAULT,
+    regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, regionOverlap: "top", regionSeparation: 0.7, regionRefine: false, regionRefineDenoise: 0.4, regionsOnly: false, preset: "", ...HIRES_DEFAULT,
     ...(saved.gen || {}),
   },
   showProgressPreview: saved.showProgressPreview ?? true,
@@ -477,10 +477,12 @@ function addRegion() {
 }
 $("#btn-add-region").onclick = (e) => { e.preventDefault(); e.stopPropagation(); addRegion(); };
 
+let activeRegions = 0;
 function updateRegionCount() {
   const items = doc.layers.filter((l) => l.type === LAYER_REGION || l.prompt?.trim());
-  const active = items.filter((l) => l.visible && l.prompt.trim() && hasContentIn(l.type === LAYER_REGION ? l.canvas : strokeRegionMask(l.canvas, l.regionSpread, l.regionFill), { x: 0, y: 0, w: doc.width, h: doc.height })).length;
-  $("#regions-count").textContent = items.length ? `(${active} active)` : "";
+  activeRegions = items.filter((l) => l.visible && l.prompt.trim() && hasContentIn(l.type === LAYER_REGION ? l.canvas : strokeRegionMask(l.canvas, l.regionSpread, l.regionFill), { x: 0, y: 0, w: doc.width, h: doc.height })).length;
+  $("#regions-count").textContent = items.length ? `(${activeRegions} active)` : "";
+  updateModeLabel();
 }
 
 /** "Region negative" textarea for the layer panel (the Regions list has its own). */
@@ -583,6 +585,7 @@ const g = state.gen;
 // ADetailer / grid settings like the other tabs (older saves had a single "ADetailer (faces)" switch)
 g.detailer = { ...structuredClone(ADETAILER_DEFAULT), ...(g.detailer || {}), ...(g.detailer ? {} : { enabled: g.adetailer !== false }) };
 delete g.adetailer;
+g.detailer.units = ADETAILER_DEFAULT.units.map((d, i) => ({ ...d, ...(g.detailer.units?.[i] || {}) })); // always both detector slots
 g.grid = { ...structuredClone(GRID_DEFAULT), ...(g.grid || {}) };
 const prompt_ = $("#prompt");
 const negative = $("#negative");
@@ -600,12 +603,18 @@ $("#batch").onchange = (e) => { g.batch = Math.max(1, Math.min(8, Number(e.targe
 function updateModeLabel() {
   const sel = doc.hasSelection;
   const s = Math.round(g.strength * 100);
+  $("#regions-only-box").hidden = !activeRegions;
   let label;
-  if (s >= 100) label = sel ? "Generate inside selection (inpaint)" : "Generate new image (replaces canvas view)";
+  if (g.regionsOnly && activeRegions) {
+    const n = `${activeRegions} region${activeRegions > 1 ? "s" : ""}`;
+    label = `${s >= 100 ? "Regenerate" : `Refine ${s}%:`} ${n}${sel ? " inside the selection" : ""}, one at a time (the rest stays)`;
+  } else if (s >= 100) label = sel ? "Generate inside selection (inpaint)" : "Generate new image (replaces canvas view)";
   else label = sel ? `Refine selection ${s}% (inpaint)` : `Refine canvas ${s}% (image-to-image / sketch)`;
   $("#mode-label").textContent = label;
   $("#btn-generate").textContent = s >= 100 ? "Generate" : "Refine";
 }
+$("#regions-only").checked = !!g.regionsOnly;
+$("#regions-only").onchange = (e) => { g.regionsOnly = e.target.checked; persist(); updateModeLabel(); gen.scheduleLive(); };
 
 $("#btn-generate").onclick = () => gen.run();
 $("#btn-cancel").onclick = () => gen.interrupt();

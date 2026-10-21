@@ -157,6 +157,7 @@ class Job(BaseModel):
     region_base: float = 0.25
     region_end: float = 1.0
     region_refine: float = 0.0  # region pass denoise: re-render each region on its own afterwards (0 = off)
+    regions_only: bool = False  # image to image: keep the input and regenerate only the regions, one at a time (denoise = strength)
     region_separation: float = 0.0  # 0..1: keep regions apart in self-attention in the middle steps
     guides: list[Guide] = []
     # Cosmos time axis (venno/engine/reference.py)
@@ -365,6 +366,8 @@ def unsupported(job: Job) -> Optional[str]:
         name = job.hires.upscaler
         if not (upscale.is_latent(name) or name in upscale.RESAMPLE or name in upscale.models()):
             return f'hires upscaler "{name}"'
+    if job.regions_only and (job.mode != "img2img" or not job.regions):
+        return "regenerating only the regions without an input image and region layers"
     if job.frames > 1 and job.mode != "txt2img":
         return "consistent sets (several frames) outside text to image"
     if job.sampler not in sampling.SAMPLERS:

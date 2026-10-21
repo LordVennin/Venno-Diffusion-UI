@@ -95,6 +95,8 @@ h4 { margin: 10px 0 4px; color: var(--muted); font-weight: 600; }
 .lora select { width: 100%; }
 .strength label { display: flex; align-items: center; gap: 8px; color: var(--text); }
 .strength input { flex: 1; }
+.strength label.check { justify-content: flex-start; margin-top: 4px; font-size: 12px; }
+.strength label.check input { flex: none; }
 .strength .mode { color: var(--accent2); font-size: 12px; margin-top: 2px; }
 .buttons .primary { flex: 1; }
 .batch { display: inline-flex; align-items: center; gap: 2px; }

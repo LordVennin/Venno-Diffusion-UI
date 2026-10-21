@@ -49,6 +49,7 @@ export class GenForm {
     this.key = `venno-form-${mode}`;
     this.s = loadStore(this.key, structuredClone(DEFAULTS));
     this.s.adetailer = { ...structuredClone(ADETAILER_DEFAULT), ...(this.s.adetailer || {}) };
+    this.s.adetailer.units = ADETAILER_DEFAULT.units.map((d, i) => ({ ...d, ...(this.s.adetailer.units?.[i] || {}) })); // always both detector slots
     this.s.grid = { ...structuredClone(GRID_DEFAULT), ...(this.s.grid || {}) };
     this.s.guide = { ...structuredClone(DEFAULTS.guide), ...(this.s.guide || {}) };
     this.s.outpaint = { ...structuredClone(DEFAULTS.outpaint), ...(this.s.outpaint || {}) };

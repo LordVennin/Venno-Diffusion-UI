@@ -65,9 +65,12 @@ export class Generator {
     const content = doc.contentBounds();
     const canvasHasContent = !!content && hasAnyNonWhite(doc, rect);
     const strength = g.strength;
-    const txt2img = !sel && (strength >= 0.999 || !canvasHasContent);
+    // regions only: keep the picture, regenerate the region layers' areas one at a time (server-side region pass)
+    const regionAreas = g.regionsOnly ? regionMasks(doc, { mode: g.regionOverlap || "top" }).map((r) => r.mask).filter((m) => hasContentIn(m, rect)) : [];
+    const regionsOnly = regionAreas.length > 0;
+    const txt2img = !regionsOnly && !sel && (strength >= 0.999 || !canvasHasContent);
 
-    return { rect, gw, gh, sel, strength, txt2img, live };
+    return { rect, gw, gh, sel, strength, txt2img, live, regionsOnly, regionAreas };
   }
 
   buildJob(plan) {
@@ -129,6 +132,10 @@ export class Generator {
     job.region_end = g.regionEnd;
     job.region_separation = g.regionSeparation ?? 0.7;
     job.region_refine = g.regionRefine && !plan.live && job.regions.length ? g.regionRefineDenoise : 0;
+    if (plan.regionsOnly && job.regions.length) {
+      job.regions_only = true;
+      job.region_refine = 0;
+    }
 
     // sketch guides (ControlNet / ControlLLLite)
     job.guides = [];
@@ -161,8 +168,9 @@ export class Generator {
   }
 
   // Feathered selection mask cropped to rect (alpha canvas) used to blend results back.
-  blendMask(rect) {
+  blendMask(rect, regionAreas = []) {
     const doc = this.doc;
+    if (regionAreas.length) return this.regionsMask(rect, regionAreas);
     if (!doc.hasSelection) return null;
     const feather = this.state.gen.feather;
     const m = makeCanvas(rect.w, rect.h);
@@ -171,6 +179,34 @@ export class Generator {
     c.drawImage(doc.selection, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
     c.filter = "none";
     return m;
+  }
+
+  // Regions only: the region areas, grown past what the server re-renders (it grows them by 2% and feathers
+  // 1.2% of the long side), so everything else keeps its exact pixels; within the selection, if there is one.
+  regionsMask(rect, areas) {
+    const doc = this.doc;
+    const m = makeCanvas(rect.w, rect.h);
+    const c = ctx2d(m);
+    const grow = Math.max(4, Math.round(Math.max(rect.w, rect.h) * 0.04));
+    for (const area of areas) {
+      for (let a = 0; a < 16; a++) {  // dilate: the mask drawn around a circle
+        const dx = Math.round(Math.cos((a * Math.PI) / 8) * grow), dy = Math.round(Math.sin((a * Math.PI) / 8) * grow);
+        c.drawImage(area, rect.x, rect.y, rect.w, rect.h, dx, dy, rect.w, rect.h);
+      }
+      c.drawImage(area, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+    }
+    const out = makeCanvas(rect.w, rect.h);
+    const o = ctx2d(out);
+    o.filter = `blur(${Math.max(2, Math.round(grow / 4))}px)`;
+    o.drawImage(m, 0, 0);
+    o.filter = "none";
+    const sel = doc.hasSelection ? this.blendMask(rect) : null;
+    if (sel) {
+      o.globalCompositeOperation = "destination-in";
+      o.drawImage(sel, 0, 0);
+      o.globalCompositeOperation = "source-over";
+    }
+    return out;
   }
 
   // ---------- running ----------
@@ -191,7 +227,7 @@ export class Generator {
       this.emit("error", `Could not prepare request: ${e.message}`);
       return;
     }
-    const mask = this.blendMask(plan.rect);
+    const mask = this.blendMask(plan.rect, plan.regionsOnly ? plan.regionAreas : []);
 
     this.busy = true;
     this.currentJob = null;

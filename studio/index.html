@@ -114,6 +114,7 @@
       <div class="strength">
         <label>Strength <input type="range" id="strength" min="1" max="100" value="100"><output id="out-strength">100%</output></label>
         <div class="mode" id="mode-label">Generate</div>
+        <label class="check" id="regions-only-box" title="Keep the picture and regenerate only the areas of your region layers, one region at a time (bottom layer first), each with its own prompt. Strength sets how much they change: 100% draws them anew. Hide a region (eye icon) to leave it alone." hidden><input type="checkbox" id="regions-only"> Only regenerate the regions</label>
       </div>
       <div class="row buttons">
         <button id="btn-generate" class="primary big">Generate</button>

@@ -41,31 +41,58 @@ def is_background(mask: Image.Image) -> bool:
     return (box[2] - box[0]) * (box[3] - box[1]) / (mask.width * mask.height) > regions.RegionalAttention.BACKGROUND_BOX
 
 
-def run(engine, job, progress, image: Image.Image, seed: int, *, src, cache: dict, limit_mask: Optional[Image.Image] = None) -> tuple[Image.Image, int]:
-    """Refine every (non-background) region of `image`. Returns the image and how many regions were refined."""
+def areas(job, src, size: tuple[int, int], *, backgrounds: bool = False, limit_mask: Optional[Image.Image] = None) -> list[tuple[int, Image.Image]]:
+    """(region index, area to re-render) for each region the pass works on, bottom layer first."""
+    W, H = size
+    grow = round(max(W, H) * GROW)
+    lm = np.asarray(limit_mask.resize((W, H), Image.BILINEAR)).astype(np.float32) / 255.0 if limit_mask is not None else None
+    out = []
+    for k, r in enumerate(job.regions):
+        mask = _to_output(job, src, images.load_mask(r.mask), (W, H))
+        if not backgrounds and is_background(mask):
+            continue
+        area = _grow(mask.point(lambda v: 255 if v > 127 else 0), grow)
+        if lm is not None:  # inpainting: only inside the area being regenerated
+            area = Image.fromarray((np.asarray(area) * lm).astype(np.uint8))
+        if area.getbbox() is not None:
+            out.append((k, area))
+    return out
+
+
+def coverage(found: list[tuple[int, Image.Image]], size: tuple[int, int]) -> Optional[Image.Image]:
+    """Everything the pass re-renders, as one mask (None when nothing)."""
+    if not found:
+        return None
+    out = np.zeros((size[1], size[0]), np.uint8)
+    for _, area in found:
+        out = np.maximum(out, np.asarray(area))
+    return Image.fromarray(out)
+
+
+def run(
+    engine, job, progress, image: Image.Image, seed: int, *, src, cache: dict, limit_mask: Optional[Image.Image] = None,
+    denoise: Optional[float] = None, backgrounds: bool = False, on_step=None,
+) -> tuple[Image.Image, int]:
+    """Refine every (non-background) region of `image`. Returns the image and how many regions were refined.
+
+    denoise: instead of job.region_refine; backgrounds: also regions spanning most of the picture;
+    on_step(step, steps): progress over all the regions."""
     W, H = image.size
     long_side = max(W, H)
-    grow, feather, context = round(long_side * GROW), max(2, round(long_side * FEATHER)), round(long_side * CONTEXT)
+    feather, context = max(2, round(long_side * FEATHER)), round(long_side * CONTEXT)
     target_area = min(job.width * job.height, 1024 * 1024)
-    steps_run = sampling.run_steps(job.steps, job.region_refine)
+    denoise = job.region_refine if denoise is None else denoise
+    steps_run = sampling.run_steps(job.steps, denoise)
     from .generate import guide_map
 
     sw, sh = images.snap(job.width), images.snap(job.height)
     guide_images = [(g, _to_output(job, src, guide_map(job, g, src, sw, sh), (W, H))) for g in job.guides]
     known = guides.models() if guide_images else {}
-    lm = np.asarray(limit_mask.resize((W, H), Image.BILINEAR)).astype(np.float32) / 255.0 if limit_mask is not None else None
 
+    found = areas(job, src, (W, H), backgrounds=backgrounds, limit_mask=limit_mask)
     done = 0
-    for k, r in enumerate(job.regions):  # bottom layer first
-        mask = _to_output(job, src, images.load_mask(r.mask), (W, H))
-        if is_background(mask):
-            continue
-        area = _grow(mask.point(lambda v: 255 if v > 127 else 0), grow)
-        if lm is not None:  # inpainting: only inside the area being regenerated
-            area = Image.fromarray((np.asarray(area) * lm).astype(np.uint8))
-        if area.getbbox() is None:
-            continue
-
+    for n, (k, area) in enumerate(found):
+        r = job.regions[k]
         x1, y1, x2, y2 = area.getbbox()
         aspect = min(ASPECTS, key=lambda a: abs(math.log(a) - math.log(max(1, x2 - x1) / max(1, y2 - y1))))
         box = images.crop_region(area, context + 2 * feather, aspect)
@@ -86,9 +113,10 @@ def run(engine, job, progress, image: Image.Image, seed: int, *, src, cache: dic
         latent = vae.encode(engine, crop)
         out = sample_pass(
             engine, job, progress, [seed + 5000 + k], vae.latent_shape(engine, pw, ph), cond, None,
-            steps=job.steps, cfg=job.cfg, init_latent=latent, denoise=job.region_refine,
+            steps=job.steps, cfg=job.cfg, init_latent=latent, denoise=denoise,
             inpaint=sampling.Inpaint(images.latent_mask(crop_mask, pw // 8, ph // 8), differential=True, keep=latent),
-            on_step=lambda i, n, d: None, guides=guide_set, guide_mask=crop_mask if guide_set is not None else None,
+            on_step=lambda i, _, d, n=n: on_step and on_step(n * steps_run + i, len(found) * steps_run),
+            guides=guide_set, guide_mask=crop_mask if guide_set is not None else None,
         )
         generated = vae.decode(engine, out)[0].resize((bw, bh), Image.LANCZOS)
         image = image.copy()
