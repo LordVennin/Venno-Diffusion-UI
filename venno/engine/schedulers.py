@@ -7,13 +7,16 @@ Ported from Forge's sd_schedulers.py, minus the SD-only and other-architecture e
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from math import atan, pi
 from typing import Callable
 
-import k_diffusion.sampling as kd
 import numpy as np
 import torch
 from scipy import stats
+
+import backend  # noqa: F401  (puts backend/vendor, where k_diffusion lives, on sys.path)
+import k_diffusion.sampling as kd
 
 BETA_ALPHA = 0.6
 BETA_BETA = 0.6
@@ -67,9 +70,11 @@ def beta(n, sigma_min, sigma_max, linker, alpha=BETA_ALPHA, beta_=BETA_BETA):
 
 
 def turbo(n, sigma_min, sigma_max, linker):
-    timesteps = torch.flip(torch.arange(1, n + 1) * float(1000.0 / n) - 1, (0,)).round().long().clip(0, 999)
-    sigmas = linker.predictor.sigma(timesteps)
-    return torch.cat([sigmas, sigmas.new_zeros([1])])
+    """SD Turbo's schedule: timesteps 999, 999 - 1000/n, … Read from the model's timestep table (as `uniform`:
+    the flow schedule's `sigma()` takes fractions, not table indices)."""
+    table = linker.sigmas.float()
+    timesteps = torch.flip(torch.arange(1, n + 1) * float(len(table) / n) - 1, (0,)).round().long().clip(0, len(table) - 1)
+    return torch.cat([table[timesteps], table.new_zeros([1])])
 
 
 def linear_quadratic(n, sigma_min, sigma_max, linker, threshold_noise=0.025):
@@ -89,10 +94,12 @@ def linear_quadratic(n, sigma_min, sigma_max, linker, threshold_noise=0.025):
 
 
 def kl_optimal(n, sigma_min, sigma_max, linker):
-    a_min = torch.arctan(torch.tensor(sigma_min))
-    a_max = torch.arctan(torch.tensor(sigma_max))
-    idx = torch.arange(n + 1)
-    return torch.tan(idx / n * a_min + (1.0 - idx / n) * a_max)
+    """n sigmas from sigma_max to sigma_min, then 0 (as ComfyUI)."""
+    if n == 1:
+        return torch.FloatTensor([sigma_max, 0.0])
+    t = torch.arange(n, dtype=torch.float64) / (n - 1)
+    sigmas = torch.tan(t * math.atan(sigma_min) + (1.0 - t) * math.atan(sigma_max))
+    return torch.cat([sigmas.float(), torch.zeros(1)])
 
 
 def _bong(steps, slope, pivot, start, end):
@@ -104,6 +111,8 @@ def _bong(steps, slope, pivot, start, end):
 
 def bong_tangent(n, sigma_min, sigma_max, linker, start=1.0, middle=0.5, end=0.0, pivot_1=0.6, pivot_2=0.6, slope_1=0.2, slope_2=0.2):
     """https://github.com/ClownsharkBatwing/RES4LYF"""
+    if n == 1:  # the two tangent halves need at least two steps
+        return torch.FloatTensor([start, end])
     n += 2
     midpoint = int((n * pivot_1 + n * pivot_2) / 2)
     p1, p2 = int(n * pivot_1), int(n * pivot_2)

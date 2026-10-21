@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import io
+import json
 import os
 import re
 import threading
@@ -16,8 +17,8 @@ _save_lock = threading.Lock()
 
 def infotext(prompt: str, negative: str, params: dict) -> str:
     def fmt(v):
-        v = str(v)
-        return f'"{v}"' if ("," in v or ":" in v) and not v.startswith('"') else v
+        v = str(v)  # quoted like A1111 (a JSON string) when a comma, colon, newline or quote would break the line
+        return json.dumps(v, ensure_ascii=False) if any(c in v for c in ',:\n"') else v
 
     lines = [prompt]
     if negative:

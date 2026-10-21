@@ -7,10 +7,11 @@ import math
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-import k_diffusion.external
-import k_diffusion.sampling as kd
 import torch
 
+import backend  # noqa: F401  (puts backend/vendor, where k_diffusion lives, on sys.path)
+import k_diffusion.external
+import k_diffusion.sampling as kd
 from backend import utils
 from backend.sampling.sampling_function import sampling_cleanup, sampling_function_inner, sampling_prepare
 

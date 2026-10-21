@@ -1,0 +1,2 @@
+# Development tools (not needed to run Venno)
+pytest

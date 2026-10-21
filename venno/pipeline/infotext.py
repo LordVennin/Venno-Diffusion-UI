@@ -7,6 +7,7 @@ PNG: the "parameters" text chunk. JPEG / WebP: EXIF UserComment (how A1111 store
 from __future__ import annotations
 
 import io
+import json
 import re
 from typing import Optional
 
@@ -54,7 +55,10 @@ def parse(text: str) -> dict:
         for k, v in _PARAM.findall(last):
             v = v.strip()
             if v.startswith('"') and v.endswith('"'):
-                v = v[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+                try:  # A1111 quotes values as JSON strings
+                    v = json.loads(v)
+                except ValueError:
+                    v = v[1:-1].replace('\\"', '"').replace("\\\\", "\\")
             params[k.strip()] = v
         lines = lines[:-1]
     prompt, negative, in_neg = [], [], False
