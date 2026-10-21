@@ -183,6 +183,12 @@ The old A1111/Forge `/sdapi` endpoints are gone (see [`docs/PLAN_VENNO_SERVER.md
 | `venno/pipeline/` | Generation: passes, hires, region pass, detailer, grids, image metadata |
 | `venno/engine/` | Model manager, sampling, schedulers, prompts, regions, LoRA, guides, upscalers, detectors, tags, wildcards |
 | `backend/` | Diffusion engine forked from Forge Neo (Anima only); third-party code in `backend/vendor/` |
+| `tests/`, `venno/smoke.py` | Unit tests and the smoke test (see below) |
+
+## Development
+
+- **Unit tests** (no model needed, a few seconds): `pip install -r requirements-dev.txt`, then `python -m pytest`. They cover the prompt parser, schedulers, region / frame weights, masks and resizing, job validation, saved settings (infotext), wildcards, grid values, the LoRA library, token counts, preprocessors and the detailer report.
+- **Smoke test** (runs every mode for real): `python -m venno.smoke` with the usual options (e.g. `--models-dir …`, `--cpu`). It picks an Anima Turbo checkpoint when there is one and runs text to image, seeds and batches, several samplers, image to image, inpainting (whole picture and only masked), hires fix, prompt scheduling and AND, wildcards, regions and the region pass, a LoRA, guides with preprocessors and control modes, ADetailer, consistent sets, reference pictures and a grid, at 256² × 4 steps. Each check verifies what must hold (e.g. inpainting leaves the unmasked pixels untouched, the same seed gives the same picture); checks whose models are missing are skipped. A contact sheet of the results goes to `outputs/smoke/`. A few minutes on a CPU; `--only regions,sets` runs some, `--size` / `--steps` change the size.
 
 ## Credits & licence
 
