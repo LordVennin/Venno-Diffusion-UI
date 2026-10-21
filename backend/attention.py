@@ -118,8 +118,18 @@ if memory_management.ck_enabled():
         return out
 
 
+_failed: set[str] = set()
+
+
+def _log_failure_once(backend: str, message: str):
+    """Venno: a failing attention back end falls back on every call; say so once, not once per layer and step."""
+    if backend not in _failed:
+        _failed.add(backend)
+        logger.error(message)
+
+
 def get_attn_precision(attn_precision: torch.dtype, current_dtype: torch.dtype) -> torch.dtype:
-    memory_management.force_upcast_attention_dtype().get(current_dtype, attn_precision)
+    return memory_management.force_upcast_attention_dtype().get(current_dtype, attn_precision)
 
 
 def exists(val) -> bool:
@@ -250,18 +260,17 @@ def attention_xformers(q, k, v, heads, mask=None, attn_precision=None, skip_resh
         _fallback = False
     except Exception as e:
         if "(too new)" in str(e):
-            logger.warning("xformers does not work on RTX 50s")
+            _log_failure_once("xformers", "xformers does not work on RTX 50s; using PyTorch attention")
         else:
-            logger.error(f"Error running xformers: {e}")
+            _log_failure_once("xformers", f"Error running xformers: {e}; using PyTorch attention")
         _fallback = True
 
-    if _fallback:
-        if not skip_reshape:
-            q, k, v = map(
-                lambda t: t.transpose(1, 2),
-                (q, k, v),
-            )
-        return attention_pytorch(q, k, v, heads, mask=mask, skip_reshape=True, **kwargs)
+    if _fallback:  # q, k, v are (B, S, H, D) here either way; PyTorch attention takes (B, H, S, D)
+        q, k, v = map(
+            lambda t: t.transpose(1, 2),
+            (q, k, v),
+        )
+        return attention_pytorch(q, k, v, heads, mask=mask, skip_reshape=True, skip_output_reshape=skip_output_reshape, **kwargs)
 
     if skip_output_reshape:
         out = out.permute(0, 2, 1, 3)
@@ -338,7 +347,7 @@ def attention_sage(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=
         if not _fallback:
             out = sageattn(q, k, v, attn_mask=mask, is_causal=False, tensor_layout=tensor_layout).to(in_dtype)
     except Exception as e:
-        logger.error(f"Error running sageattn: {e}")
+        _log_failure_once("sage", f"Error running sageattn: {e}; using PyTorch attention")
         _fallback = True
 
     if _fallback:
@@ -392,7 +401,7 @@ def attention_flash(q, k, v, heads, mask=None, attn_precision=None, skip_reshape
         ).transpose(1, 2)
         _fallback = False
     except Exception as e:
-        logger.error(f"Error running flash_attn: {e}")
+        _log_failure_once("flash", f"Error running flash_attn: {e}; using PyTorch attention")
         _fallback = True
 
     if _fallback:

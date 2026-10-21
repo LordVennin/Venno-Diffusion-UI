@@ -100,3 +100,20 @@ def test_reference_key_bias_and_timesteps():
     assert torch.equal(r.timesteps(t, 2), torch.full((2, 2), 0.5))
     r.follow = True
     assert torch.equal(r.timesteps(t, 2), t.expand(-1, 2))
+
+
+def test_contexts_follow_fresh_tensors():
+    """Anima 3.8B resolves region prompts to new tensors on every model call: a freed tensor's id gets
+    reused, which must not return the previous call's cached context."""
+    r = regions.Region(plan=Plan("a"), contexts={"a": {"placeholder": 0}}, mask=torch.ones(H * 8, W * 8))
+    att = regions.RegionalAttention([r])
+    like = torch.zeros(1, L, D)
+    for value in range(20):
+        att.resolve_context = lambda c, v=value: torch.full((1, L, D), float(v))
+        assert att.contexts(like)[0, 0, 0].item() == value
+
+
+def test_contexts_padded_to_the_main_context():
+    att = regions.RegionalAttention([region(True)])
+    assert att.contexts(torch.zeros(1, L, D)).shape == (1, L, D)
+    assert att.contexts(torch.zeros(1, L + 3, D)).shape == (1, L + 3, D)

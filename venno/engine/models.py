@@ -113,6 +113,10 @@ class ModelManager:
             self.key = None
             self.info = {}
             memory_management.unload_all_models()
+            from venno.engine import anima38, guides
+
+            anima38.release()  # Qwen3.5 4B: ~8 GB of RAM
+            guides.release()  # keyed by id() of the old diffusion model, which a new model can reuse
             memory_management.soft_empty_cache()
             gc.collect()
 

@@ -42,7 +42,6 @@ fpunet_group.add_argument("--bf16-unet", action="store_true", help="Store the di
 fpunet_group.add_argument("--fp16-unet", action="store_true", help="Store the diffusion model in fp16")
 fpunet_group.add_argument("--fp8_e4m3fn-unet", action="store_true", help="Store the diffusion model in fp8_e4m3fn")
 fpunet_group.add_argument("--fp8_e5m2-unet", action="store_true", help="Store the diffusion model in fp8_e5m2")
-fpunet_group.add_argument("--fp8_e8m0fnu-unet", action="store_true", help="Store the diffusion model in fp8_e8m0fnu")
 
 fpvae_group = parser.add_mutually_exclusive_group()
 fpvae_group.add_argument("--fp32-vae", action="store_true", help="Store the VAE in full precision fp32")
@@ -68,8 +67,6 @@ parser.add_argument("--force-upcast-attention", action="store_true", help="Alway
 parser.add_argument("--sage", action="store_true", help="install sageattention")
 parser.add_argument("--flash", action="store_true", help="install flash_attn")
 parser.add_argument("--xformers", action="store_true", help="install xformers")
-parser.add_argument("--nunchaku", action="store_true", help="install nunchaku for SVDQ inference")
-parser.add_argument("--onnxruntime-gpu", action="store_true", help="install nightly onnxruntime-gpu with cu130 support")
 parser.add_argument("--pynvml", action="store_true", help="install pyNVML for accurate VRAM tracking")
 
 parser.add_argument("--disable-sage", action="store_true", help="disable sageattention")

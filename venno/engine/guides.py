@@ -47,6 +47,12 @@ def models() -> dict[str, str]:
     return found
 
 
+def release():
+    """Drop the loaded guide models (they are built for one diffusion model)."""
+    with _lock:
+        _nets.clear()
+
+
 def _net(engine, path: str):
     from backend.utils import load_torch_file
 

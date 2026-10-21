@@ -285,10 +285,15 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
                 out_uncond_count[:, :, area[o][2] : area[o][0] + area[o][2], area[o][3] : area[o][1] + area[o][3]] += mult[o]
         del mult
 
-    out_cond /= out_count
-    del out_count
     out_uncond /= out_uncond_count
     del out_uncond_count
+    # Venno: weighted conds (AND) → uncond + sum(w * (cond - uncond)) / |sum(w)|. For positive weight sums
+    # that is the weighted average as before; a negative sum no longer flips the guidance, and a sum of ~0
+    # ("a AND b:-1") no longer divides by ~0 (NaN): it adds the weighted differences, like A1111.
+    divisor = out_count.abs()
+    divisor = torch.where(divisor < 1e-3, torch.ones_like(divisor), divisor)
+    out_cond = out_uncond + (out_cond - out_count * out_uncond) / divisor
+    del out_count, divisor
     return out_cond, out_uncond
 
 

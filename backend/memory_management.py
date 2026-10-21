@@ -202,10 +202,12 @@ ACCELERATOR_ERROR = getattr(torch, "AcceleratorError", None)
 def is_oom(e: Exception) -> bool:
     if OOM_EXCEPTION is not None and isinstance(e, OOM_EXCEPTION):
         return True
-    if (ACCELERATOR_ERROR is not None and isinstance(e, ACCELERATOR_ERROR)) or "out of memory" in str(e).lower():
-        discard_cuda_async_error()
-        return True
-    return False
+    if ACCELERATOR_ERROR is not None and isinstance(e, ACCELERATOR_ERROR):
+        if getattr(e, "error_code", None) == 2:  # cudaErrorMemoryAllocation; other accelerator errors are real failures
+            discard_cuda_async_error()
+            return True
+        return False
+    return "out of memory" in str(e).lower()
 
 
 if args.disable_xformers:
@@ -283,6 +285,7 @@ ENABLE_PYTORCH_ATTENTION = False
 if args.use_pytorch_cross_attention:
     ENABLE_PYTORCH_ATTENTION = True
     XFORMERS_IS_AVAILABLE = False
+    XFORMERS_ENABLED_VAE = args.force_xformers_vae  # Venno: the VAE follows the flag too (unless forced)
     SAGE_IS_AVAILABLE = False
     FLASH_IS_AVAILABLE = False
 
@@ -291,6 +294,8 @@ if is_nvidia() and torch_version_numeric[0] >= 2:
     ENABLE_PYTORCH_ATTENTION = True
 elif is_intel_xpu():
     ENABLE_PYTORCH_ATTENTION = True
+elif cpu_state in (CPUState.CPU, CPUState.MPS) and torch_version_numeric[0] >= 2:
+    ENABLE_PYTORCH_ATTENTION = True  # Venno: same results as basic attention, 4-12x faster on CPU for Anima's shapes
 
 
 SUPPORT_FP8_OPS: bool = None
@@ -821,8 +826,6 @@ def unet_dtype(device: torch.device = None, model_params: int = 0, supported_dty
         return torch.float8_e4m3fn
     if args.fp8_e5m2_unet:
         return torch.float8_e5m2
-    if args.fp8_e8m0fnu_unet:
-        return torch.float8_e8m0fnu
 
     if weight_dtype in FLOAT8_TYPES:
         if supports_fp8_compute(device):
@@ -1144,11 +1147,9 @@ def get_free_memory(dev: torch.device = None, torch_free_too: bool = False) -> i
             mem_free_torch = mem_reserved - mem_active
             mem_free_total = mem_free_cuda + mem_free_torch
 
-            if PYNVML_IS_AVAILABLE:
+            if PYNVML_IS_AVAILABLE:  # Venno: mem_get_info already counts other processes; take the lower free value
                 nvml_mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                torch_reserved = torch.cuda.memory_reserved(dev)
-                external = nvml_mem.used - torch_reserved
-                mem_free_total -= external
+                mem_free_total = min(mem_free_cuda, nvml_mem.free) + mem_free_torch
 
     if torch_free_too:
         return (mem_free_total, mem_free_torch)
@@ -1509,12 +1510,14 @@ if args.pin_shared_memory:
 
 
 def discard_cuda_async_error():
+    if not torch.cuda.is_available():
+        return
     try:
         a = torch.tensor([1], dtype=torch.uint8, device=get_torch_device())
         b = torch.tensor([1], dtype=torch.uint8, device=get_torch_device())
         _ = a + b
         torch.cuda.synchronize()
-    except torch.AcceleratorError:
+    except Exception:
         pass
 
 

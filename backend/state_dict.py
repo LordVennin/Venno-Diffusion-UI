@@ -1,6 +1,9 @@
 import json
+import logging
 
 import torch
+
+logger = logging.getLogger("state_dict")
 
 
 def load_state_dict(model: torch.nn.Module, sd: dict[str, torch.Tensor], ignore_errors: list[str] = [], log_name: str = None, ignore_start: str = None):
@@ -31,9 +34,16 @@ def load_state_dict(model: torch.nn.Module, sd: dict[str, torch.Tensor], ignore_
 
     log_name = log_name or type(model).__name__
     if len(missing) > 0:
-        print(f"{log_name} Missing: {missing}")
+        # Venno: missing weights are filled with zeros above, so a file of the wrong kind would load "fine"
+        # and only produce noise or black images; refuse when most of the model is missing
+        sizes = {name: t.numel() for name, t in [*model.named_parameters(), *model.named_buffers()]}
+        total = sum(sizes.values()) or 1
+        lost = sum(sizes.get(name, 0) for name in missing)
+        if lost / total > 0.5:
+            raise ValueError(f"This file doesn't fit {log_name}: {lost / total:.0%} of its weights are missing (e.g. {', '.join(missing[:3])}). Check that the right model file is selected.")
+        logger.warning(f"{log_name} Missing ({len(missing)}, left at zero): {missing}")
     if len(unexpected) > 0:
-        print(f"{log_name} Unexpected: {unexpected}")
+        logger.info(f"{log_name} Unexpected (ignored): {unexpected}")
 
 
 def state_dict_has(sd, prefix):

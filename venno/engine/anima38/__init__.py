@@ -104,6 +104,8 @@ def tokenizer_path() -> str:
 
 # ---------------------------------------------------------------- Qwen3.5 4B (shared, loaded on demand)
 
+NATIVE = 0  # run id of prompts on the native path (negatives): their context is used as is
+
 _qwen = {"path": None, "model": None, "patcher": None, "tokenizer": None}
 _qwen_lock = threading.Lock()
 
@@ -134,6 +136,12 @@ def _load_qwen35():
         patcher = ModelPatcher(model, load_device=memory_management.text_encoder_device(), offload_device=memory_management.text_encoder_offload_device())
         _qwen.update(path=path, model=model, patcher=patcher, tokenizer=Tokenizer.from_file(tokenizer_path()))
         return _qwen
+
+
+def release():
+    """Drop Qwen3.5 4B (called when the model is switched or unloaded)."""
+    with _qwen_lock:
+        _qwen.update(path=None, model=None, patcher=None, tokenizer=None)
 
 
 def _unload(*patchers):
@@ -274,12 +282,16 @@ class Runtime:
             t = t.repeat((context.shape[0] + t.numel() - 1) // t.numel())[: context.shape[0]]
         out = context.clone()
         for run_id in ids.unique().tolist():
+            if run_id == NATIVE:
+                continue
             rows = (ids == run_id).nonzero().reshape(-1)
             out[rows] = self._context(int(run_id), t[rows], context.device, context.dtype)
         return out
 
     def expand_one(self, cond: dict, timesteps: torch.Tensor, device, dtype) -> torch.Tensor:
         """A region prompt's context at the current step (regions carry the same placeholder + run id)."""
+        if int(cond["vector"].reshape(-1)[0]) == NATIVE:
+            return cond["crossattn"].to(device, dtype)
         return self._context(int(cond["vector"].reshape(-1)[0]), timesteps.reshape(-1)[:1], device, dtype)
 
 

@@ -136,14 +136,15 @@ class RegionalAttention:
         """(R, L, D) region contexts, zero-padded to a common length (Anima pads prompts with zeros)."""
         current = [r.context(self.step, negative) for r in (self.regions if regions is None else regions)]
         current = [self.resolve_context(c) if isinstance(c, dict) else c for c in current]
-        key = (like.device, like.dtype, tuple(id(c) for c in current))
+        key = (like.device, like.dtype, like.shape[1], tuple(id(c) for c in current))
         if key not in self._contexts:
             if len(self._contexts) > 8:  # 3.8B contexts are new tensors every step: keep the cache small
                 self._contexts.clear()
             length = max(max(c.shape[1] for c in current), like.shape[1])
             ctx = [F.pad(c[:1], (0, 0, 0, length - c.shape[1])) for c in current]
-            self._contexts[key] = torch.cat(ctx).to(device=like.device, dtype=like.dtype)
-        return self._contexts[key]
+            # the entry holds its source tensors, so their ids can't be reused by new tensors while it exists
+            self._contexts[key] = (current, torch.cat(ctx).to(device=like.device, dtype=like.dtype))
+        return self._contexts[key][1]
 
     def weights(self, thw: tuple[int, int, int], like: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Per-token blend weights for the block's token grid: base (N, 1) and regions (R, N, 1)."""

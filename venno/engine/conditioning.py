@@ -63,8 +63,12 @@ def encode(engine, prompt: str, batch: int, *, negative: bool, width: int, heigh
         c = c["crossattn"]
     if c.ndim == 2:
         c = c.unsqueeze(0)
-    c = c.reshape(-1, c.shape[-2], c.shape[-1])[:1]
-    return c.repeat(batch, 1, 1)
+    c = c.reshape(-1, c.shape[-2], c.shape[-1])[:1].repeat(batch, 1, 1)
+    if anima38 is not None and anima38.connector is not None:
+        # negatives stay on the native path; run id 0 (= keep this context) gives them the same conditions
+        # as the positive, so both run as one batch instead of two model calls per step
+        return {"crossattn": c, "vector": torch.zeros(batch, 1, dtype=torch.long)}
+    return c
 
 
 class PromptConditioning:
