@@ -63,3 +63,13 @@ def test_surroundings_describe_what_is_painted_below():
     assert region_pass.surroundings(j, 0) == "masterpiece, best quality"
     assert region_pass.surroundings(j, 3) == "masterpiece, best quality, graveyard, night, 1girl, witch"
     assert region_pass.surroundings(SimpleNamespace(prompt="", regions=j.regions), 1) == "graveyard, night"
+
+
+def test_soft_edges_falloff():
+    area = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(area).rectangle((50, 10, 150, 90), fill=255)
+    m = region_pass.falloff_mask(area, 0.35, 0.25, 3)
+    assert m.getpixel((100, 50)) == 255  # middle: drawn anew
+    assert 0.3 * 255 < m.getpixel((51, 50)) < 0.55 * 255  # border: kept, touched up
+    assert m.getpixel((60, 50)) < m.getpixel((70, 50)) < m.getpixel((100, 50)) + 1  # ramps up inwards
+    assert m.getpixel((40, 50)) == 0 and m.getpixel((100, 100 - 1)) == 0  # nothing past the soft edge

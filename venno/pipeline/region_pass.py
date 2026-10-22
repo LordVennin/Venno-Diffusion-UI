@@ -14,7 +14,7 @@ import math
 from typing import Optional
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from venno.engine import guides, images, prompts, regions, sampling, vae
 
@@ -69,6 +69,18 @@ def coverage(found: list[tuple[int, Image.Image]], size: tuple[int, int]) -> Opt
     return Image.fromarray(out)
 
 
+def falloff_mask(area: Image.Image, edge: float, ramp: float = 0.25, feather: float = 4.0) -> Image.Image:
+    """Strength mask for a region used as a placement hint: 1 in its middle, `edge` at its border (reached over
+    `ramp` of the region's smaller side, so it follows any shape), fading out over `feather` pixels outside it
+    (as far as an ordinary soft edge, so the Studio's blend-back covers it)."""
+    x1, y1, x2, y2 = area.getbbox()
+    inside = np.asarray(area) > 127
+    b = np.asarray(area.filter(ImageFilter.GaussianBlur(max(2.0, min(x2 - x1, y2 - y1) * ramp)))).astype(np.float32) / 255.0  # ~0.5 at the border
+    out = np.asarray(area.filter(ImageFilter.GaussianBlur(max(1.0, feather)))).astype(np.float32) / 255.0
+    m = np.where(inside, edge + (1 - edge) * np.clip((b - 0.5) / 0.4, 0, 1), edge * np.clip(out / 0.5, 0, 1))
+    return Image.fromarray(np.round(m * 255).astype(np.uint8))
+
+
 def surroundings(job, k: int) -> str:
     """Prompt for what is around region k: the main prompt and the prompts of the regions below it."""
     parts = [job.prompt.strip()] + [r.prompt.strip() for r in job.regions[:k]]
@@ -89,7 +101,8 @@ def _steering(engine, r, cond, steps_run: int, mask, width: int, height: int, ba
 
 def run(
     engine, job, progress, image: Image.Image, seed: int, *, src, cache: dict, limit_mask: Optional[Image.Image] = None,
-    denoise: Optional[float] = None, backgrounds: bool = False, context_share: Optional[float] = None, steer: Optional[float] = None, on_step=None,
+    denoise: Optional[float] = None, backgrounds: bool = False, context_share: Optional[float] = None, steer: Optional[float] = None,
+    falloff: Optional[float] = None, falloff_ramp: float = 0.25, on_step=None,
 ) -> tuple[Image.Image, int]:
     """Refine every (non-background) region of `image`. Returns the image and how many regions were refined.
 
@@ -101,6 +114,9 @@ def run(
     regional attention (as in a normal generation), with this much of the main prompt inside the region,
     instead of the region's prompt for the whole crop. Drawing regions anew follows their prompts far better
     this way, best with 0 (the main prompt then only describes the surroundings);
+    falloff: the region is a placement hint rather than an area to repaint: full strength in its middle, fading
+    to this share of it at its edges (soft inpainting), so the subject takes a natural size in the middle and
+    the picture around it is kept and touched up near the edges instead of being repainted to the box's edge;
     on_step(step, steps): progress over all the regions."""
     W, H = image.size
     long_side = max(W, H)
@@ -130,6 +146,11 @@ def run(
         soft = images.blur_mask(area, feather)
         crop = image.crop(box).resize((pw, ph), Image.LANCZOS)
         crop_mask = soft.crop(box).resize((pw, ph), Image.BILINEAR)
+        strength_mask, paste = crop_mask, soft  # per-pixel denoising strength in the crop; how the result is blended back
+        if falloff is not None:
+            graded = falloff_mask(area, falloff, falloff_ramp, feather)
+            strength_mask = graded.crop(box).resize((pw, ph), Image.BILINEAR)
+            paste = graded.point(lambda v: min(255, round(v / max(falloff, 0.05))))
 
         guide_set = None
         if guide_images:
@@ -149,12 +170,12 @@ def run(
         out = sample_pass(
             engine, job, progress, [seed + 5000 + k], vae.latent_shape(engine, pw, ph), cond, regional,
             steps=job.steps, cfg=job.cfg, init_latent=latent, denoise=denoise,
-            inpaint=sampling.Inpaint(images.latent_mask(crop_mask, pw // 8, ph // 8), differential=True, keep=latent),
+            inpaint=sampling.Inpaint(images.latent_mask(strength_mask, pw // 8, ph // 8), differential=True, keep=latent),
             on_step=lambda i, _, d, n=n: on_step and on_step(n * steps_run + i, len(found) * steps_run),
             guides=guide_set, guide_mask=crop_mask if guide_set is not None else None,
         )
         generated = vae.decode(engine, out)[0].resize((bw, bh), Image.LANCZOS)
         image = image.copy()
-        image.paste(images.composite(image.crop(box), generated, soft.crop(box)), box[:2])
+        image.paste(images.composite(image.crop(box), generated, paste.crop(box)), box[:2])
         done += 1
     return image, done

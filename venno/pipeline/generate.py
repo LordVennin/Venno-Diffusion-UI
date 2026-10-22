@@ -272,6 +272,7 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
         if regions_only:
             params["Regions only"] = True
             params["Region context"] = job.region_context
+            params["Region edges"] = job.region_edges
         if src.mask is not None:
             params["Mask blur"] = job.mask_blur
             params["Masked content"] = job.fill
@@ -378,6 +379,7 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
                     image, _ = region_pass.run(
                         engine, job, progress, finish(src, src.image, out_size), seed, src=src, cache=tensors, limit_mask=src.full_mask,
                         denoise=job.strength, backgrounds=True, context_share=job.region_context, steer=0.0,
+                        falloff=SOFT_EDGE if job.region_edges == "soft" else None,
                         on_step=lambda i, n, k=k, run_index=run_index: progress.on_step(k * per_image + i, total_steps, run_index, job.count),
                     )
                 except sampling.Cancelled:
@@ -414,6 +416,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
 
 # ---------------------------------------------------------------- passes
 
+
+SOFT_EDGE = 0.35  # regions only, soft edges: denoising strength at a region's border (full strength in its middle)
 
 MODE_NAMES = {"balanced": "Balanced", "prompt": "My prompt is more important", "guide": "ControlNet is more important"}
 

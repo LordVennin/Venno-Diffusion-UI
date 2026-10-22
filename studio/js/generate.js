@@ -136,6 +136,7 @@ export class Generator {
     if (plan.regionsOnly && job.regions.length) {
       job.regions_only = true;
       job.region_context = g.context; // the Canvas's Context setting, as for selections
+      job.region_edges = g.regionEdges || "soft";
       job.region_refine = 0;
     }
 

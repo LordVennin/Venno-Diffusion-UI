@@ -159,6 +159,7 @@ class Job(BaseModel):
     region_refine: float = 0.0  # region pass denoise: re-render each region on its own afterwards (0 = off)
     regions_only: bool = False  # image to image: keep the input and regenerate only the regions, one at a time (denoise = strength)
     region_context: float = Field(0.5, ge=0.0, le=2.0)  # regions only: picture around each region, as a share of its size
+    region_edges: Literal["soft", "hard"] = "soft"  # regions only: soft = the region is a placement hint (edges keep the picture), hard = repaint all of it
     region_separation: float = 0.0  # 0..1: keep regions apart in self-attention in the middle steps
     guides: list[Guide] = []
     # Cosmos time axis (venno/engine/reference.py)
