@@ -271,6 +271,7 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
         params["Denoising strength"] = denoise
         if regions_only:
             params["Regions only"] = True
+            params["Region context"] = job.region_context
         if src.mask is not None:
             params["Mask blur"] = job.mask_blur
             params["Masked content"] = job.fill
@@ -376,7 +377,7 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
                 try:
                     image, _ = region_pass.run(
                         engine, job, progress, finish(src, src.image, out_size), seed, src=src, cache=tensors, limit_mask=src.full_mask,
-                        denoise=job.strength, backgrounds=True,
+                        denoise=job.strength, backgrounds=True, context_share=job.region_context, steer=0.0,
                         on_step=lambda i, n, k=k, run_index=run_index: progress.on_step(k * per_image + i, total_steps, run_index, job.count),
                     )
                 except sampling.Cancelled:

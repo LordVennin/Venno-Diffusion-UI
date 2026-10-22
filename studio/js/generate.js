@@ -123,7 +123,8 @@ export class Generator {
       if (!hasContentIn(source, rect)) continue;
       let rp = l.prompt.trim();
       const shared = withoutCountTags(g.prompt.trim());
-      if (g.regionAppendRoot && shared) rp = `${rp}, ${shared}`;
+      // regions only: the main prompt already reaches the region through the blend (Main prompt inside regions)
+      if (g.regionAppendRoot && shared && !plan.regionsOnly) rp = `${rp}, ${shared}`;
       let rn = (l.negative || "").trim();
       if (rn && g.regionAppendRoot && g.negative.trim()) rn = `${rn}, ${g.negative.trim()}`;
       job.regions.push({ prompt: rp, negative: rn, mask: doc.crop(source, rect, gw, gh).toDataURL("image/png"), strength: l.regionStrength });
@@ -134,6 +135,7 @@ export class Generator {
     job.region_refine = g.regionRefine && !plan.live && job.regions.length ? g.regionRefineDenoise : 0;
     if (plan.regionsOnly && job.regions.length) {
       job.regions_only = true;
+      job.region_context = g.context; // the Canvas's Context setting, as for selections
       job.region_refine = 0;
     }
 
