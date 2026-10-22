@@ -7,11 +7,13 @@ a single worker queue, and a WebSocket event stream for progress and live previe
 
 import asyncio
 import base64
+import hashlib
 import math
 import os
+import re
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from venno import config
@@ -59,6 +61,33 @@ def _adetailer_models() -> list[str]:
     from venno.engine import detect
 
     return [m for m in detect.models() if m != "mediapipe_face_mesh"]
+
+
+class RevalidatedStaticFiles(StaticFiles):
+    """The Studio's files with `Cache-Control: no-cache`: without it browsers may keep using cached scripts for
+    days after an update, and old scripts with a new page fail to start (empty model list). Unchanged files still
+    come from the browser cache (the server answers 304 Not Modified)."""
+
+    def get_path(self, scope) -> str:
+        """`v/<stamp>/js/main.js` → `js/main.js`: the page links its files under a version (see _studio_stamp)."""
+        parts = re.split(r"[\\/]", super().get_path(scope))
+        return os.path.join(*parts[2:]) if len(parts) > 2 and parts[0] == "v" else os.path.join(*parts)
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+def _studio_stamp() -> str:
+    """Changes whenever a Studio file changes, so an updated page loads all its scripts anew, even when the
+    browser still holds old copies (old scripts with a new page fail to start)."""
+    h = hashlib.sha1()
+    for folder, _, files in sorted(os.walk(STUDIO_DIR)):
+        for f in sorted(files):
+            st = os.stat(os.path.join(folder, f))
+            h.update(f"{folder}/{f}:{st.st_mtime_ns}:{st.st_size};".encode())
+    return h.hexdigest()[:12]
 
 
 def _code_stamp() -> tuple:
@@ -418,10 +447,12 @@ def create_app() -> FastAPI:
     app.add_api_route(f"{V}/models/jobs", download_jobs, methods=["GET"])
     app.add_api_route(f"{V}/models/cancel", download_cancel, methods=["POST"])
 
-    app.mount("/studio/assets", StaticFiles(directory=STUDIO_DIR), name="venno_studio_assets")
+    app.mount("/studio/assets", RevalidatedStaticFiles(directory=STUDIO_DIR), name="venno_studio_assets")
 
     def studio_index():
-        return FileResponse(os.path.join(STUDIO_DIR, "index.html"), headers={"Cache-Control": "no-cache"})
+        with open(os.path.join(STUDIO_DIR, "index.html"), encoding="utf-8") as f:
+            page = f.read().replace("/studio/assets/", f"/studio/assets/v/{_studio_stamp()}/")
+        return Response(page, media_type="text/html", headers={"Cache-Control": "no-cache"})
 
     app.add_api_route("/studio", studio_index, methods=["GET"], include_in_schema=False)
     app.add_api_route("/studio/", studio_index, methods=["GET"], include_in_schema=False)
