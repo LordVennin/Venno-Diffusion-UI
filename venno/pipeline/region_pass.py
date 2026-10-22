@@ -69,6 +69,12 @@ def coverage(found: list[tuple[int, Image.Image]], size: tuple[int, int]) -> Opt
     return Image.fromarray(out)
 
 
+def surroundings(job, k: int) -> str:
+    """Prompt for what is around region k: the main prompt and the prompts of the regions below it."""
+    parts = [job.prompt.strip()] + [r.prompt.strip() for r in job.regions[:k]]
+    return ", ".join(p for p in parts if p)
+
+
 def _steering(engine, r, cond, steps_run: int, mask, width: int, height: int, base: float) -> regions.RegionalAttention:
     """Regional attention for one region inside its crop (mask: (H, W) tensor at the crop's processing size)."""
     plan = prompts.PromptPlan(steps_run, r.prompt, allow_and=False)
@@ -133,7 +139,9 @@ def run(
         engine.set_shift(shift=job.shift, width=pw, height=ph)
         regional = None
         if steer is not None:
-            cond = make_conditioning(engine, job, steps_run, pw, ph, cache, switch=None)
+            # the crop's surroundings are described by what is already painted there: the main prompt and the
+            # regions below this one (with only quality tags as the main prompt, Anima puts a girl in the region)
+            cond = make_conditioning(engine, job, steps_run, pw, ph, cache, prompt=surroundings(job, k), switch=None)
             regional = _steering(engine, r, cond, steps_run, images.to_tensor(crop_mask)[0], pw, ph, steer)
         else:
             cond = make_conditioning(engine, job, steps_run, pw, ph, cache, prompt=r.prompt, negative=r.negative.strip() or job.negative, switch=None)

@@ -56,3 +56,10 @@ def test_job_validation():
     assert jobs.unsupported(jobs.Job(mode="img2img", init_image=mask(SMALL), regions=[region], regions_only=True)) is None
     assert "regions" in jobs.unsupported(jobs.Job(mode="img2img", init_image=mask(SMALL), regions_only=True))
     assert "regions" in jobs.unsupported(jobs.Job(mode="txt2img", regions=[region], regions_only=True))
+
+
+def test_surroundings_describe_what_is_painted_below():
+    j = SimpleNamespace(prompt="masterpiece, best quality", regions=[SimpleNamespace(prompt="graveyard, night"), SimpleNamespace(prompt=" "), SimpleNamespace(prompt="1girl, witch"), SimpleNamespace(prompt="bat")])
+    assert region_pass.surroundings(j, 0) == "masterpiece, best quality"
+    assert region_pass.surroundings(j, 3) == "masterpiece, best quality, graveyard, night, 1girl, witch"
+    assert region_pass.surroundings(SimpleNamespace(prompt="", regions=j.regions), 1) == "graveyard, night"
