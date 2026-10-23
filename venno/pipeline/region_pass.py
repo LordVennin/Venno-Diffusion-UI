@@ -69,6 +69,12 @@ def coverage(found: list[tuple[int, Image.Image]], size: tuple[int, int]) -> Opt
     return Image.fromarray(out)
 
 
+def blank_under(image: Image.Image, area: Image.Image) -> bool:
+    """Is the picture under the region one flat colour (an empty canvas)?"""
+    pixels = np.asarray(image.convert("L"))[np.asarray(area) > 127]
+    return pixels.size == 0 or float(pixels.std()) < 2.0
+
+
 def falloff_mask(area: Image.Image, edge: float, ramp: float = 0.25, feather: float = 4.0) -> Image.Image:
     """Strength mask for a region used as a placement hint: 1 in its middle, `edge` at its border (reached over
     `ramp` of the region's smaller side, so it follows any shape), fading out over `feather` pixels outside it
@@ -147,7 +153,9 @@ def run(
         crop = image.crop(box).resize((pw, ph), Image.LANCZOS)
         crop_mask = soft.crop(box).resize((pw, ph), Image.BILINEAR)
         strength_mask, paste = crop_mask, soft  # per-pixel denoising strength in the crop; how the result is blended back
-        if falloff is not None:
+        # soft edges are for subjects placed in a picture: a background region is the scene itself, and where
+        # the picture under a region is still blank there is nothing to keep (it would come out washed out)
+        if falloff is not None and not is_background(area) and not blank_under(image, area):
             graded = falloff_mask(area, falloff, falloff_ramp, feather)
             strength_mask = graded.crop(box).resize((pw, ph), Image.BILINEAR)
             paste = graded.point(lambda v: min(255, round(v / max(falloff, 0.05))))

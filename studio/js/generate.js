@@ -66,7 +66,8 @@ export class Generator {
     const canvasHasContent = !!content && hasAnyNonWhite(doc, rect);
     const strength = g.strength;
     // regions only: keep the picture, regenerate the region layers' areas one at a time (server-side region pass)
-    const regionAreas = g.regionsOnly ? regionMasks(doc, { mode: g.regionOverlap || "top" }).map((r) => r.mask).filter((m) => hasContentIn(m, rect)) : [];
+    // each region in its full shape: painting them bottom up already puts upper regions over lower ones
+    const regionAreas = g.regionsOnly ? regionMasks(doc, { mode: "blend" }).map((r) => r.mask).filter((m) => hasContentIn(m, rect)) : [];
     const regionsOnly = regionAreas.length > 0;
     const txt2img = !regionsOnly && !sel && (strength >= 0.999 || !canvasHasContent);
 
@@ -119,7 +120,7 @@ export class Generator {
 
     // regional prompts: region layers, plus paint / guide layers that carry a prompt (shaped by their strokes)
     job.regions = [];
-    for (const { layer: l, mask: source } of regionMasks(doc, { mode: g.regionOverlap || "top" })) {
+    for (const { layer: l, mask: source } of regionMasks(doc, { mode: plan.regionsOnly ? "blend" : g.regionOverlap || "top" })) {
       if (!hasContentIn(source, rect)) continue;
       let rp = l.prompt.trim();
       const shared = withoutCountTags(g.prompt.trim());

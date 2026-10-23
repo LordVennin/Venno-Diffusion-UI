@@ -73,3 +73,13 @@ def test_soft_edges_falloff():
     assert 0.3 * 255 < m.getpixel((51, 50)) < 0.55 * 255  # border: kept, touched up
     assert m.getpixel((60, 50)) < m.getpixel((70, 50)) < m.getpixel((100, 50)) + 1  # ramps up inwards
     assert m.getpixel((40, 50)) == 0 and m.getpixel((100, 100 - 1)) == 0  # nothing past the soft edge
+
+
+def test_blank_under():
+    area = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(area).rectangle((50, 10, 150, 90), fill=255)
+    assert region_pass.blank_under(Image.new("RGB", (W, H), (255, 255, 255)), area)  # empty canvas: nothing to keep
+    picture = Image.new("RGB", (W, H), (255, 255, 255))
+    ImageDraw.Draw(picture).ellipse((60, 20, 140, 80), fill=(40, 90, 160))
+    assert not region_pass.blank_under(picture, area)
+    assert not region_pass.blank_under(picture.crop((0, 0, W, H)), Image.new("L", (W, H), 255))
