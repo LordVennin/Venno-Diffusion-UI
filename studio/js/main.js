@@ -608,6 +608,7 @@ function updateModeLabel() {
   if (g.regionsOnly && activeRegions) {
     const n = `${activeRegions} region${activeRegions > 1 ? "s" : ""}`;
     label = `${s >= 100 ? "Regenerate" : `Refine ${s}%:`} ${n}${sel ? " inside the selection" : ""}, one at a time (the rest stays)`;
+    if (s < 100) label += `. Keeps ${100 - s}% of what is on the canvas now: to build a new picture from the regions, use 100%`;
   } else if (s >= 100) label = sel ? "Generate inside selection (inpaint)" : "Generate new image (replaces canvas view)";
   else label = sel ? `Refine selection ${s}% (inpaint)` : `Refine canvas ${s}% (image-to-image / sketch)`;
   $("#mode-label").textContent = label;
