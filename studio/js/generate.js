@@ -133,6 +133,7 @@ export class Generator {
     job.region_base = g.regionBase;
     job.region_end = g.regionEnd;
     job.region_separation = g.regionSeparation ?? 0.7;
+    job.region_couple = plan.live ? 0 : g.regionCouple ?? 0.3; // live mode stays fast
     job.region_refine = g.regionRefine && !plan.live && job.regions.length ? g.regionRefineDenoise : 0;
     if (plan.regionsOnly && job.regions.length) {
       job.regions_only = true;

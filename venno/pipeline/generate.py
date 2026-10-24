@@ -304,6 +304,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
         params["Region base"] = job.region_base
         if job.region_separation > 0:
             params["Region separation"] = job.region_separation
+        if job.region_couple > 0:
+            params["Region own passes"] = job.region_couple
         if job.region_refine > 0:
             params["Region pass"] = job.region_refine
         if job.region_end < 1.0:

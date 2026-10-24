@@ -137,6 +137,7 @@ def settings(text: str) -> dict:
     out["region_base"] = _num(prm.get("Region base"))
     out["region_separation"] = _num(prm.get("Region separation"))
     out["region_refine"] = _num(prm.get("Region pass"))
+    out["region_couple"] = _num(prm.get("Region own passes"))
     if frames := _num(prm.get("Frames"), int):
         out["frames"] = frames
         out["frame_prompts"] = [prm.get(f"Frame {k + 1} prompt", "") for k in range(frames)]

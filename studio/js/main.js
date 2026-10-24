@@ -31,7 +31,7 @@ const state = {
   gen: {
     prompt: "", negative: "", loras: [], switchPrompt: "", switchAt: 0.4, strength: 1, batch: 2, steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple",
     seed: 0, seedLocked: false, resolution: 1024, context: 0.5, feather: 12, qualityPrefix: true, saveImages: true, softInpaint: true,
-    regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, regionOverlap: "top", regionSeparation: 0.7, regionRefine: false, regionRefineDenoise: 0.4, regionsOnly: false, regionEdges: "soft", preset: "", ...HIRES_DEFAULT,
+    regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, regionOverlap: "top", regionSeparation: 0.7, regionRefine: false, regionRefineDenoise: 0.4, regionsOnly: false, regionEdges: "soft", regionCouple: 0.3, preset: "", ...HIRES_DEFAULT,
     ...(saved.gen || {}),
   },
   showProgressPreview: saved.showProgressPreview ?? true,
@@ -657,6 +657,7 @@ bindRange("feather", () => g.feather, (v) => (g.feather = v));
 bindRange("region-base", () => Math.round(g.regionBase * 100), (v) => (g.regionBase = v / 100), (v) => `${v}%`);
 bindRange("region-end", () => Math.round(g.regionEnd * 100), (v) => (g.regionEnd = v / 100), (v) => `${v}%`);
 bindRange("region-sep", () => Math.round(g.regionSeparation * 100), (v) => (g.regionSeparation = v / 100), (v) => `${v}%`);
+bindRange("region-couple", () => Math.round((g.regionCouple ?? 0.3) * 100), (v) => { g.regionCouple = v / 100; gen.scheduleLive(); }, (v) => `${v}%`);
 bindRange("region-refine-denoise", () => Math.round(g.regionRefineDenoise * 100), (v) => (g.regionRefineDenoise = v / 100), (v) => `${v}%`);
 const hrCard = new HiresCard($("#canvas-hr-card"), {
   state: () => g, persist, size: () => { const p = gen.plan(); return [p.gw, p.gh]; },

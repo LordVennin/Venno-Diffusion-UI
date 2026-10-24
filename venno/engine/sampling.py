@@ -77,6 +77,7 @@ class SampleRequest:
     inpaint: Optional[Inpaint] = None  # needs init_latent
     regional: Optional[object] = None  # regions.RegionalAttention
     regional_end: float = 1.0  # stop regional prompts after this fraction of the full schedule
+    regional_couple: float = 0.0  # share of the first steps in which each region also gets a model pass of its own (latent couple)
     reference: Optional[object] = None  # reference.Reference, prepared for this pass's size
     step_hooks: list = field(default_factory=list)  # called with the 1-based step before every model call (guides)
     on_step: Callable[[int, int, torch.Tensor], None] = lambda i, n, denoised: None
@@ -87,6 +88,25 @@ class SampleRequest:
 def run_steps(steps: int, denoise: float = 1.0) -> int:
     """Steps actually sampled: the last `denoise` part of the schedule (all of it at 1.0)."""
     return steps if denoise >= 1.0 else max(1, min(steps, math.floor(steps * denoise + 0.5)))  # half up, like Studio
+
+
+def _couple_box(weight: torch.Tensor, h: int, w: int, share: float = 0.5, least: int = 32):
+    """Latent box around a region (weight > 0), grown by `share` of its size and to at least `least` latents
+    a side (even sizes, for the 2×2 patches), inside the picture; None when it would be the whole picture."""
+    ys, xs = torch.nonzero(weight > 0.05, as_tuple=True)
+    if not len(ys):
+        return None
+    y0, y1, x0, x1 = int(ys.min()), int(ys.max()) + 1, int(xs.min()), int(xs.max()) + 1
+
+    def grow(a, b, size):
+        n = min(size, max(least, round((b - a) * (1 + 2 * share))))
+        n -= n % 2
+        start = min(max(0, (a + b - n) // 2), size - n)
+        return start, start + n
+
+    y0, y1 = grow(y0, y1, h)
+    x0, x1 = grow(x0, x1, w)
+    return None if (y1 - y0) * (x1 - x0) >= h * w else (y0, y1, x0, x1)
 
 
 class Denoiser:
@@ -104,6 +124,7 @@ class Denoiser:
             positive = sigmas[sigmas > 0]
             self.sigma_from, self.sigma_to = float(sigmas[0]), float(positive.min()) if len(positive) else 0.0
         self.unet = req.engine.forge_objects.unet
+        self.couple_steps = math.ceil((len(self.sigmas) - 1) * req.regional_couple) if req.regional is not None and req.regional_couple > 0 else 0
 
     def step_at(self, sigma) -> int:
         """1-based step for a model call (also right for samplers that evaluate between steps, e.g. Heun)."""
@@ -135,9 +156,43 @@ class Denoiser:
         for modifier in model_options.get("conditioning_modifiers", []):  # e.g. regional prompting / guides
             _, x, sigma, uncond, cond, _, model_options, _ = modifier(self.unet.model, x, sigma, uncond, cond, self.req.cfg, model_options, self.req.seeds[0])
         denoised = sampling_function_inner(self.unet.model, x, sigma, uncond, cond, self.req.cfg, model_options, self.req.seeds[0])
+        if step <= self.couple_steps and "venno_regional" in venno:
+            denoised = self.couple(x, sigma, step, denoised, uncond, model_options)
         if mask is not None:
             denoised = denoised * mask + self.latent * (1 - mask)
         return denoised
+
+    def couple(self, x, sigma, step: int, denoised, uncond, model_options) -> torch.Tensor:
+        """Early steps of regional prompting: every region also gets a model pass with only its own prompt, used
+        inside the region (latent couple), so each subject starts to form where its region is. Cross-attention
+        blending alone can't add a subject the first steps' layout left out; afterwards it finishes the picture.
+        The pass runs on a crop around the region, so the prompt composes its subject for that space (on the
+        whole picture it would compose a full picture of which the region keeps a slice)."""
+        regional = self.req.regional
+        spatial = [k for k, r in enumerate(regional.regions) if r.frame is None]
+        if not spatial or regional.frames > 1 or x.ndim != 5 or x.shape[2] != 1:
+            return denoised
+        from backend.sampling.condition import compile_conditions
+
+        h, w = x.shape[-2:]
+        base_w, region_w = regional.weights((1, h, w), denoised)  # the same blend weights as the attention, per latent pixel
+        options = {**model_options, "transformer_options": {k: v for k, v in model_options.get("transformer_options", {}).items() if k != "venno_regional"}}
+        out = denoised * base_w.reshape(1, 1, 1, h, w)
+        crop = not self.req.step_hooks and self.req.reference is None  # guides / references are sized for the whole picture
+        for k in spatial:
+            r = regional.regions[k]
+            weight = region_w[k].reshape(h, w)
+            negative = compile_conditions(r.context(step, True)) if r.negative_plan is not None else uncond
+            positive = compile_conditions(r.context(step))
+            box = _couple_box(weight, h, w) if crop else None
+            if box is None:
+                own = sampling_function_inner(self.unet.model, x, sigma, negative, positive, self.req.cfg, options, self.req.seeds[0])
+            else:  # the region's prompt composes its subject for the region's surroundings, not for the whole picture
+                y0, y1, x0, x1 = box
+                own = denoised.clone()
+                own[..., y0:y1, x0:x1] = sampling_function_inner(self.unet.model, x[..., y0:y1, x0:x1], sigma, negative, positive, self.req.cfg, options, self.req.seeds[0])
+            out = out + own * weight.reshape(1, 1, 1, h, w)
+        return out
 
     def mask_at(self, sigma) -> torch.Tensor:
         if not self.req.inpaint.differential:

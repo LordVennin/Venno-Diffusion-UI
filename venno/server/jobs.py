@@ -161,6 +161,7 @@ class Job(BaseModel):
     region_context: float = Field(0.5, ge=0.0, le=2.0)  # regions only: picture around each region, as a share of its size
     region_edges: Literal["soft", "hard"] = "soft"  # regions only: soft = the region is a placement hint (edges keep the picture), hard = repaint all of it
     region_separation: float = 0.0  # 0..1: keep regions apart in self-attention in the middle steps
+    region_couple: float = Field(0.0, ge=0.0, le=1.0)  # share of the first steps where each region gets its own model pass (0 = off)
     guides: list[Guide] = []
     # Cosmos time axis (venno/engine/reference.py)
     frames: int = Field(1, ge=1, le=4)  # consistent set: frames generated together, as one sequence (text to image)

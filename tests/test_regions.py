@@ -117,3 +117,17 @@ def test_contexts_padded_to_the_main_context():
     att = regions.RegionalAttention([region(True)])
     assert att.contexts(torch.zeros(1, L, D)).shape == (1, L, D)
     assert att.contexts(torch.zeros(1, L + 3, D)).shape == (1, L + 3, D)
+
+
+def test_couple_box():
+    """Region own passes run on a crop around the region: grown, at least 32 latents a side, even, inside the picture."""
+    from venno.engine.sampling import _couple_box
+
+    w = torch.zeros(64, 64)
+    w[41:51, 29:55] = 1
+    y0, y1, x0, x1 = _couple_box(w, 64, 64)
+    assert y0 <= 41 and y1 >= 51 and x0 <= 29 and x1 >= 55  # covers the region
+    assert y1 - y0 >= 32 and x1 - x0 >= 32 and (y1 - y0) % 2 == 0 and (x1 - x0) % 2 == 0
+    assert 0 <= y0 and y1 <= 64 and 0 <= x0 and x1 <= 64
+    assert _couple_box(torch.ones(64, 64), 64, 64) is None  # a background region: the whole picture
+    assert _couple_box(torch.zeros(64, 64), 64, 64) is None
