@@ -57,3 +57,31 @@ def _region(box, kind="auto"):
 def test_attention_backgrounds_follow_the_kind():
     assert regions.RegionalAttention([_region(BACKGROUND), _region(SMALL)]).backgrounds() == [0]
     assert regions.RegionalAttention([_region(BACKGROUND, "subject"), _region(SMALL, "scenery")]).backgrounds() == [1]
+
+
+def _det(box, size=(W, H)):
+    from venno.engine.detect import Detection
+
+    m = Image.new("L", size, 0)
+    ImageDraw.Draw(m).rectangle(box, fill=255)
+    return Detection(box, m, 0.9)
+
+
+def test_characters_by_face_or_person():
+    img = Image.new("RGB", (W, H))
+    boxes = {0: (10, 10, 60, 90), 1: (120, 10, 190, 90)}
+    # a face in box 1, a person mostly in box 0, and a face outside both
+    hit, extra = region_pass.characters(img, boxes, faces=[_det((140, 20, 160, 40)), _det((90, 2, 100, 12))], persons=[_det((5, 15, 55, 85))])
+    assert hit == {0, 1} and extra == 1
+    # one big figure sprawling over both boxes counts for one box at most; a face near a box (within 5%) counts
+    hit, extra = region_pass.characters(img, boxes, faces=[_det((62, 20, 70, 30))], persons=[_det((0, 0, 199, 99))])
+    assert hit == {0} and extra == 0
+
+
+def test_missing_only_checks_character_regions(monkeypatch):
+    j = SimpleNamespace(regions=[SimpleNamespace(mask=mask(BACKGROUND), kind="auto", prompt="living room"),
+                                 SimpleNamespace(mask=mask(SMALL), kind="auto", prompt="1girl, sitting"),
+                                 SimpleNamespace(mask=mask((100, 10, 150, 60)), kind="auto", prompt="fireplace"),
+                                 SimpleNamespace(mask=mask((150, 60, 190, 95)), kind="auto", prompt="1boy, lying")], resize_mode=0)
+    monkeypatch.setattr(region_pass, "characters", lambda image, boxes: ({1}, 0))
+    assert region_pass.missing(j, None, Image.new("RGB", (W, H))) == [3]

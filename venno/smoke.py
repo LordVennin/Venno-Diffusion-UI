@@ -174,9 +174,10 @@ class Smoke:
         assert_picture(img, (self.S * 3 // 2 // 16 * 16, self.S))
         s = infotext.settings(r.infotexts[0])
         assert s["regions"] == [x["prompt"] for x in regions] and s["region_negatives"] == ["blue", ""]
-        r = self.run("regions + own passes", prompt="masterpiece, best quality, safe, 2girls, standing, park", regions=regions, region_couple=0.3)
+        r = self.run("regions + own passes + redraw check", prompt="masterpiece, best quality, safe, 2girls, standing, park", regions=regions, region_couple=0.3, region_redraw=True)
         assert_picture(pictures(r)[0], (self.S, self.S))
         assert infotext.settings(r.infotexts[0])["region_couple"] == 0.3
+        print(f"[smoke]       redraw check: {r.detection_notes[0] or 'every character region held a character'}")
 
     def check_region_pass(self):
         left, right = self._halves()

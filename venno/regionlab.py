@@ -14,9 +14,9 @@ with a background prompt that matches it). A JSON scene file looks like
 Variants (see docs/REGIONS_HANDOFF.md):
     single      one pass, regional attention only (Region own passes 0)
     own30/own50 one pass with region own passes in the first 30% / 50% of the steps (the Canvas default is 30%);
-                suffixes: -l48 own-pass crops of at least 48 latents a side, -s0.5 crops grown by half the region's
-                size (venno/engine/sampling.py COUPLE_*), -q quality tags in front of the region prompts, -r40 the
-                region pass afterwards at 40%; e.g. own30-q-r40
+                suffixes: -x character regions found empty are drawn anew (the Canvas's redraw), -l48 own-pass
+                crops of at least 48 latents a side, -s0.5 crops grown by half the region's size, -q quality tags
+                in front of the region prompts, -r40 the region pass afterwards at 40%; e.g. own30-q-x
 Results are cached per scene, variant, seed and settings (outputs/region_lab/cache), so re-running a sheet only
 computes what is new; each run writes a labelled sheet to outputs/region_lab/.
 """
@@ -53,7 +53,6 @@ ap.add_argument("--no-score", action="store_true", help="skip the person-detecto
 ap.add_argument("--help-lab", action="store_true", help="show this help")
 opts, _rest = ap.parse_known_args()  # Venno's own options (folders, --cpu, …) are read by venno.config / backend.args
 
-import numpy as np  # noqa: E402
 import torch  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 
@@ -155,17 +154,19 @@ class Lab:
 
         defaults = {k: getattr(sampling, k) for k in ("COUPLE_SHARE", "COUPLE_LEAST")}
         keys = {"s": "COUPLE_SHARE", "l": "COUPLE_LEAST"}
-        quality, refine = False, 0.0
+        quality, refine, redraw = False, 0.0, False
         try:
             for opt in m.group(2).split("-")[1:]:
                 if opt == "q":
                     quality = True  # quality tags in front of the region prompts
+                elif opt == "x":
+                    redraw = True  # character regions found empty are drawn anew
                 elif opt[0] == "r":
                     refine = float(opt[1:]) / 100  # the region pass afterwards, at this denoise
                 else:
                     key = keys[opt[0]]
                     setattr(sampling, key, type(defaults[key])(float(opt[1:])))
-            return self.run(seed=seed, regions=self.regions(opts.overlap, quality), region_couple=int(m.group(1)) / 100, region_refine=refine)
+            return self.run(seed=seed, regions=self.regions(opts.overlap, quality), region_couple=int(m.group(1)) / 100, region_refine=refine, region_redraw=redraw)
         finally:
             for k, v in defaults.items():
                 setattr(sampling, k, v)
@@ -183,36 +184,14 @@ class Lab:
         return img
 
 
-CHARACTER = re.compile(r"\b(1|2)?(girl|boy|other)s?\b|\bkobold\b|\bcharacter\b|\bwitch\b", re.I)
-
-
 def score(lab: Lab, img: Image.Image) -> str:
-    """Faces and persons found by the detailer's detectors against the character regions: "2/2 +0" = each character
-    region holds a face (or most of a person), and no face lies outside every character region. Regions are only
-    rough placements, so a face anywhere in the box grown by 5% counts; a person counts when 30% of its pixels are
-    inside (one big figure sprawling over two regions counts for one region at most)."""
-    from venno.engine import detect
+    """Character regions holding a character / character regions, and characters outside every region ("2/2 +0"),
+    by region_pass.characters (the same check the Canvas's redraw uses)."""
+    from venno.pipeline import region_pass
 
     S = lab.S
-    img = img.resize((S, S))
-    grow = round(0.05 * S)
-    boxes = [(k, lab.box(r["box"])) for k, r in enumerate(lab.scene["regions"]) if CHARACTER.search(r["prompt"]) and (r["box"][2] - r["box"][0]) * (r["box"][3] - r["box"][1]) < 0.6]
-    hit, extra = set(), 0
-    for d in detect.detect("face_yolov8n.pt", img, 0.3):
-        cx, cy = (d.box[0] + d.box[2]) / 2, (d.box[1] + d.box[3]) / 2
-        inside = [k for k, b in boxes if b[0] - grow <= cx <= b[2] + grow and b[1] - grow <= cy <= b[3] + grow]
-        if inside:
-            hit.add(min(inside, key=lambda k: k in hit))  # a region already hit gives way to another one containing the face
-        else:
-            extra += 1
-    for d in detect.detect("person_yolov8n-seg.pt", img, 0.2):
-        m = np.asarray(d.mask.resize((S, S))) > 127
-        total = m.sum()
-        if total < 0.005 * S * S:
-            continue
-        best = max(boxes, key=lambda kb: m[kb[1][1]:kb[1][3] + 1, kb[1][0]:kb[1][2] + 1].sum(), default=None)
-        if best is not None and m[best[1][1]:best[1][3] + 1, best[1][0]:best[1][2] + 1].sum() >= 0.3 * total:
-            hit.add(best[0])
+    boxes = {k: lab.box(r["box"]) for k, r in enumerate(lab.scene["regions"]) if region_pass.CHARACTER.search(r["prompt"]) and (r["box"][2] - r["box"][0]) * (r["box"][3] - r["box"][1]) < 0.6}
+    hit, extra = region_pass.characters(img.resize((S, S)), boxes)
     return f"{len(hit)}/{len(boxes)} +{extra}"
 
 

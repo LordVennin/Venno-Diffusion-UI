@@ -31,7 +31,7 @@ const state = {
   gen: {
     prompt: "", negative: "", loras: [], switchPrompt: "", switchAt: 0.4, strength: 1, batch: 2, steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple",
     seed: 0, seedLocked: false, resolution: 1024, context: 0.5, feather: 12, qualityPrefix: true, saveImages: true, softInpaint: true,
-    regionSeparation: 0.7, regionRefine: false, regionRefineDenoise: 0.4, regionCouple: 0.3, preset: "", ...HIRES_DEFAULT,
+    regionSeparation: 0.7, regionRefine: false, regionRefineDenoise: 0.4, regionCouple: 0.3, regionRedraw: true, preset: "", ...HIRES_DEFAULT,
     ...(saved.gen || {}),
   },
   showProgressPreview: saved.showProgressPreview ?? true,
@@ -684,7 +684,7 @@ const adCard = new DetailerCard($("#canvas-det-card"), { state: () => g.detailer
 const gridCard = new GridCard($("#canvas-grid-card"), { state: () => g.grid, persist, info: () => state.info, loras: () => g.loras });
 $("#resolution").addEventListener("change", () => hrCard.updateInfo());
 doc.on((what) => { if (what === "reset") hrCard.updateInfo(); });
-for (const [id, key] of [["quality-prefix", "qualityPrefix"], ["save-images", "saveImages"], ["soft-inpaint", "softInpaint"], ["region-refine", "regionRefine"]]) {
+for (const [id, key] of [["quality-prefix", "qualityPrefix"], ["save-images", "saveImages"], ["soft-inpaint", "softInpaint"], ["region-refine", "regionRefine"], ["region-redraw", "regionRedraw"]]) {
   $(`#${id}`).checked = g[key];
   $(`#${id}`).onchange = (e) => { g[key] = e.target.checked; persist(); if (key === "qualityPrefix") refreshTokenCounters(); };
 }
@@ -763,7 +763,8 @@ gen.on((what, data) => {
   } else if (what === "error") {
     toast(data);
   } else if (what === "detected") {  // ADetailer's report: what it found (or that it found nothing)
-    toast(`ADetailer: ${data}${/\d+ found/.test(data) ? "" : " — nothing was refined"}. Right-click the result to see the detections.`, "info");
+    if (/^redrew region/.test(data)) toast(`Regions: ${data}.`, "info");
+    else toast(`ADetailer: ${data}${/\d+ found/.test(data) ? "" : " — nothing was refined"}. Right-click the result to see the detections.`, "info");
   }
 });
 

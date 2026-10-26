@@ -36,14 +36,20 @@ doesn't know "kobold", so leave the LoRA out of tests that don't need it).
    `subject`, the Canvas's *Auto* select). Scenery gives way to subjects where they overlap, is never kept
    apart from them, gets no own-pass crop (its pass runs on the whole picture) and is skipped by the region
    pass.
-5. **Region pass** (optional, off): each subject region re-rendered on its own afterwards at a moderate
+5. **Redraw of empty character regions** (`region_redraw`, the Canvas default): `region_pass.missing` runs the
+   detailer's face and person detectors over every subject region whose prompt names a character
+   (`region_pass.CHARACTER`); `region_pass.redraw` inpaints each empty one on a crop with half the region's
+   size of context around it (`REDRAW_CONTEXT`), at up to ~1 MP, from noise inside the region, with the main
+   prompt and every region's mask cropped into the crop (`generate.make_regional(masks=…)`), own passes
+   included. The same scale effect the user found at 2048², applied only where the picture failed.
+6. **Region pass** (optional, off): each subject region re-rendered on its own afterwards at a moderate
    denoise (`venno/pipeline/region_pass.py`). Detail only; it doesn't move anything.
 
 What the Canvas sends (`studio/js/generate.js` `buildJob`): region prompt = the region's text with the quality
 tags in front (when *Add Anima quality tags* is on), never the main prompt; region negative = its own text
 plus the main negative; masks with *higher layer wins* (upper regions cut out of lower ones, feathered);
-`kind` from the layer. Settings left: *Region own passes*, *Keep regions apart*, *Region pass* and its
-denoise. Removed in the rework: *Main prompt inside regions*, *Region guidance until*, *Add the main prompts
+`kind` from the layer. Settings left: *Region own passes*, *Keep regions apart*, *Redraw regions that came
+out empty*, *Region pass* and its denoise. Removed in the rework: *Main prompt inside regions*, *Region guidance until*, *Add the main prompts
 to region prompts*, *Overlapping regions* (blend), *Region edges*, *Only regenerate the regions* (and the
 server's `regions_only` / `region_context` / `region_edges` fields, `region_pass.falloff_mask`, `blank_under`,
 `surroundings`, `_steering`).
@@ -66,6 +72,11 @@ girl lying on a rug in a thin strip at the bottom. 8 seeds unless noted.
 | own30, own pass reaching 25% past the box | 9/16 | 2 | subjects wander and duplicate |
 | own30, 25% past the box with a soft edge | 11/16 | 1 | |
 | own30 + region pass 0.4 | 13/16 | 0 | same placements, sharper |
+| **own30 + redraw of empty character regions** (default) | **15/16** | 0 | seeds 5 and 6 fixed by the redraw, seed 3 (wide-shot room, tiny rug) still empty after it |
+| own30 with the own passes at CFG 6 | 13/16 | 0 | |
+| own30 with count tags in every subject's negative | 10/16 | 0 | |
+| **2048²**, single pass (4 seeds) | 4/8 | 0 | 95–110 s a picture |
+| **2048²**, own30 (4 seeds) | 7/8 | 0 | the same hits as own30 at 1024² on these seeds, but the subjects come out at a proper size and detail; one seed had a black band at the bottom |
 
 With the furry LoRA at 0.8 on the user's reported layout (2 seeds × 2 scenes): single pass drew one big
 character from a low angle in 4/4 (exactly the complaint), own30 drew both characters in their boxes in 7/8.
@@ -76,8 +87,18 @@ changed nothing with own passes: not worth building.
 
 The remaining failure is a subject whose natural size is bigger than its region: a girl lying in a strip 16%
 of the picture high comes out small, sketchy or child-like, and wide-shot scenery makes it worse (the rug is
-far away). Everything tried to let her grow past the box scored worse. The honest advice is in the README:
-make the region as big as the subject.
+far away). Everything tried to let her grow past the box scored worse. The user found that 2048² places
+subjects properly far more often; the lab agrees on the subjects' size and detail (same hit count on the
+seeds run). The redraw of empty character regions brings that scale to the failed region only: its crop is
+inpainted at up to ~1 MP, which fixed 2 of the 3 own30 failures. The advice in the README stands: make the
+region as big as the subject.
+
+## The detectors on the user's style
+
+The face / person detectors are what the score and the redraw rely on. On anime characters they agree with
+the eye (checked on 16 pictures). With the furry LoRA on the `reported` layout they found the lying black
+kobold (no visible face) in only 2 of 4 pictures where it was there, so on anthro characters the redraw can
+fire on a region that was fine; the README says so. A detector trained on anthro characters would fix it.
 
 ## Open ideas (untested)
 
@@ -100,14 +121,15 @@ python -m venno.regionlab --help-lab
 - Defaults match the user's settings (1024², 32 steps, CFG 4, ER SDE / Beta, main prompt inside regions 10%,
   keep regions apart 75%); `--checkpoint` picks the model (the first found otherwise; here the 2.9B sorts first,
   so pass `anima_baseV10.safetensors`). `--lora` can't be used: the server's own parser reads it as `--lora-dir`.
-- Variants: `single`, `ownNN` with suffixes `-l48` (crop at least 48 latents), `-s0.5` (crop grow share), `-q`
-  (quality tags on region prompts), `-rNN` (region pass at NN%). The Canvas sends own30 with `-q`.
+- Variants: `single`, `ownNN` with suffixes `-x` (redraw empty character regions), `-l48` (crop at least 48
+  latents), `-s0.5` (crop grow share), `-q` (quality tags on region prompts), `-rNN` (region pass at NN%).
+  The Canvas sends own30 with `-q-x`. `--size 2048` for the user's high-resolution finding.
 - Scenes: `witch`, `living`, `reported` (the user's layout as reported), or a JSON file (format in the script's
   docstring; boxes are fractions of the picture, bottom layer first, the first region usually the scenery).
-- Every picture is scored with the detailer's face and person detectors (`face_yolov8n.pt`,
-  `person_yolov8n-seg.pt` in `models/adetailer`, downloaded on first use): a character region counts when a
-  face lies in its box (grown by 5%) or at least 30% of a detected person's pixels do; a face outside every
-  character region is an extra. `--no-score` skips it. The summary line per variant is the number to compare;
+- Every picture is scored with `region_pass.characters`, the same check the redraw uses (the detailer's
+  `face_yolov8n.pt` and `person_yolov8n-seg.pt` in `models/adetailer`, downloaded on first use): a character
+  region counts when a face lies in its box (grown by 5%) or at least 30% of a detected person's pixels do; a
+  face outside every character region is an extra. `--no-score` skips it. The summary line per variant is the number to compare;
   ±2 over 16 is noise.
 - Results are cached per scene, variant, seed and settings in `outputs/region_lab/cache`, and each run writes
   a labelled sheet with the region boxes drawn in to `outputs/region_lab/`. About 20 s per picture on the 4090.

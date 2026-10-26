@@ -297,6 +297,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
             params["Region own passes"] = job.region_couple
         if job.region_refine > 0:
             params["Region pass"] = job.region_refine
+        if job.region_redraw:
+            params["Region redraw check"] = True
         if job.region_end < 1.0:
             params["Region end"] = job.region_end
         for k, r in enumerate(job.regions, start=1):
@@ -364,6 +366,15 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
         for k, generated in enumerate(vae.decode(engine, latents)):  # frames of an image are consecutive
             seed, frame = seeds[k // frames], k % frames
             image = finish(src, generated, out_size)
+            redrawn: list[int] = []
+            if job.region_redraw and job.regions:  # a character region the detectors find empty is drawn anew
+                try:
+                    redrawn = region_pass.missing(job, src, image)
+                    if redrawn:
+                        image = region_pass.redraw(engine, job, progress, image, seed, src=src, cache=tensors, which=redrawn)
+                except sampling.Cancelled:
+                    result.cancelled = True
+                    return result
             if job.region_refine > 0 and job.regions:
                 try:
                     image, _ = region_pass.run(engine, job, progress, image, seed, src=src, cache=tensors, limit_mask=src.full_mask if src is not None else None)
@@ -380,7 +391,11 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
                 except sampling.Cancelled:
                     result.cancelled = True
                     return result
-            info = metadata.infotext(metadata.with_lora_tags(job.prompt, loras), job.negative, {**params, "Seed": seed, **({"Frame": frame + 1} if frames > 1 else {})})
+            if redrawn:
+                note = f"{note}; " if note else ""
+                note += "redrew region " + ", ".join(str(k + 1) for k in redrawn) + " (no character found there)"
+            extra = {**({"Frame": frame + 1} if frames > 1 else {}), **({"Region redraw": ", ".join(str(k + 1) for k in redrawn)} if redrawn else {})}
+            info = metadata.infotext(metadata.with_lora_tags(job.prompt, loras), job.negative, {**params, "Seed": seed, **extra})
             if job.save:
                 metadata.save(image, info, job.mode, seed)
             result.images.append(metadata.png_bytes(image, info))
@@ -409,7 +424,8 @@ def make_reference(job) -> Optional[reference.Reference]:
     return reference.Reference(pictures, noise=job.reference_noise, follow=job.reference_follow, strength=job.reference_strength)
 
 
-def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int, height: int, cond, frames: int = 1):
+def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int, height: int, cond, frames: int = 1, masks: Optional[list] = None):
+    """masks: (H, W) tensors at processing size to use instead of the job's region masks (a crop of the picture)."""
     frame_prompts = [(k, fp) for k, fp in enumerate(job.frame_prompts[:frames]) if fp.strip()] if frames > 1 else []
     if not job.regions and not frame_prompts:
         return None
@@ -418,11 +434,12 @@ def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int
         plan = prompts.PromptPlan(steps_run, f"{fp}, {job.prompt}", switch=f"{fp}, {job.switch_prompt}" if job.switch_prompt else None, switch_at=job.switch_at, allow_and=False)
         texts = {t for step in range(1, steps_run + 1) for t, _ in plan.parts(step)}
         region_list.append(regions.Region(plan=plan, contexts={t: cond.tensor(engine, t, False, width, height) for t in texts}, mask=None, frame=k))
-    for r in job.regions:
+    for k, r in enumerate(job.regions):
         plan = prompts.PromptPlan(steps_run, r.prompt, allow_and=False)
         texts = {t for step in range(1, steps_run + 1) for t, _ in plan.parts(step)}
         contexts = {t: cond.tensor(engine, t, False, width, height) for t in texts}
-        region = regions.Region(plan=plan, contexts=contexts, mask=region_mask(job, src, r.mask, width, height), strength=r.strength, kind=r.kind)
+        mask = masks[k] if masks is not None else region_mask(job, src, r.mask, width, height)
+        region = regions.Region(plan=plan, contexts=contexts, mask=mask, strength=r.strength, kind=r.kind)
         if r.negative.strip():
             region.negative_plan = prompts.PromptPlan(steps_run, r.negative, allow_and=False)
             texts = {t for step in range(1, steps_run + 1) for t, _ in region.negative_plan.parts(step)}

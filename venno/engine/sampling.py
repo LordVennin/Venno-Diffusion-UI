@@ -91,8 +91,8 @@ def run_steps(steps: int, denoise: float = 1.0) -> int:
 
 
 # Own passes (Denoiser.couple): the crop around a region. Measured in venno/regionlab.py (docs/REGIONS_HANDOFF.md):
-# growing the crop further, forcing a trained aspect, upscaling small crops, fading the passes out and letting a
-# subject's pass reach past its box all scored the same or worse than this.
+# growing the crop further, forcing a trained aspect, upscaling small crops, fading the passes out, letting a
+# subject's pass reach past its box and a higher CFG in the passes all scored the same or worse than this.
 COUPLE_SHARE = 0.5  # the box grows by this share of its size on every side
 COUPLE_LEAST = 32  # and to at least this many latents a side
 
