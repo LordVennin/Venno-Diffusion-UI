@@ -87,7 +87,26 @@ class RegionalAttention:
             m = F.interpolate(r.mask[None, None].float(), size=(h, w), mode="area")
             m = F.avg_pool2d(F.pad(m, (1, 1, 1, 1), mode="replicate"), kernel_size=3, stride=1)  # soften by one token
             masks.append(m[0, 0])
-        return torch.stack(masks)
+        masks = torch.stack(masks)
+        background = self.backgrounds()
+        subjects = [k for k, r in enumerate(self.regions) if r.mask is not None and k not in background]
+        if background and subjects:  # a background never shares a subject's area, whatever the overlap mode:
+            masks[background] = masks[background] * (1.0 - masks[subjects].sum(0).clamp(max=1.0))  # blended, it halves the subject's prompt
+        return masks
+
+    def backgrounds(self) -> list[int]:
+        """Spatial regions whose bounding box spans most of the picture (BACKGROUND_BOX): scenery, not subjects."""
+        if not hasattr(self, "_background_list"):
+            out = []
+            for k, r in enumerate(self.regions):
+                if r.frame is not None or r.mask is None:
+                    continue
+                ys, xs = torch.nonzero(r.mask > 0.5, as_tuple=True)
+                box = 0.0 if not len(ys) else float((ys.max() - ys.min() + 1) * (xs.max() - xs.min() + 1)) / r.mask.numel()
+                if box > self.BACKGROUND_BOX:
+                    out.append(k)
+            self._background_list = out
+        return self._background_list
 
     def self_bias(self, thw: tuple[int, int, int], like: torch.Tensor):
         """Additive self-attention bias (1, 1, N, N) that keeps regions apart, or None when not separating now."""
@@ -97,14 +116,8 @@ class RegionalAttention:
         if key not in self._bias:
             _, h, w = thw
             masks = self.token_masks(h, w)
-            keep = []
-            for k, r in enumerate(self.regions):
-                if r.frame is not None:
-                    continue
-                ys, xs = torch.nonzero(r.mask > 0.5, as_tuple=True)
-                box = 0.0 if not len(ys) else float((ys.max() - ys.min() + 1) * (xs.max() - xs.min() + 1)) / r.mask.numel()
-                if box <= self.BACKGROUND_BOX:
-                    keep.append(k)
+            background = self.backgrounds()
+            keep = [k for k, r in enumerate(self.regions) if r.frame is None and k not in background]
             if len(keep) < 2:
                 self._bias[key] = None
             else:

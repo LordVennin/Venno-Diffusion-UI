@@ -131,3 +131,15 @@ def test_couple_box():
     assert 0 <= y0 and y1 <= 64 and 0 <= x0 and x1 <= 64
     assert _couple_box(torch.ones(64, 64), 64, 64) is None  # a background region: the whole picture
     assert _couple_box(torch.zeros(64, 64), 64, 64) is None
+
+
+def test_background_gives_way_to_subjects():
+    """A region over the whole picture (scenery) never shares a subject's area, even with Blend prompts."""
+    full = regions.Region(plan=Plan("room"), contexts={"room": torch.randn(1, L, D)}, mask=torch.ones(H * 8, W * 8))
+    att = regions.RegionalAttention([full, region(True)], base_strength=0.1)
+    assert att.backgrounds() == [0]
+    base, reg = att.weights((1, H, W), LIKE)
+    inside, outside = 0, W - 1  # token columns inside / outside the left-half subject
+    grid = reg.reshape(2, H, W)
+    assert grid[1, :, inside].min() > 0.85 and grid[0, :, inside].max() < 0.05  # the subject's prompt rules its area
+    assert grid[0, :, outside].min() > 0.85  # the scenery everywhere else
