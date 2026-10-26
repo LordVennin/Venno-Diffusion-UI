@@ -1,4 +1,4 @@
-import { Doc, LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, ctx2d, hasContentIn, loadImage, makeCanvas, strokeRegionMask } from "./doc.js";
+import { Doc, LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, autoRegionKind, ctx2d, hasContentIn, loadImage, makeCanvas, strokeRegionMask } from "./doc.js";
 import { Generator } from "./generate.js";
 import { jobProgress } from "./jobs.js";
 import { TOOLS, View } from "./view.js";
@@ -31,7 +31,7 @@ const state = {
   gen: {
     prompt: "", negative: "", loras: [], switchPrompt: "", switchAt: 0.4, strength: 1, batch: 2, steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple",
     seed: 0, seedLocked: false, resolution: 1024, context: 0.5, feather: 12, qualityPrefix: true, saveImages: true, softInpaint: true,
-    regionBase: 0.25, regionEnd: 1, regionAppendRoot: true, regionOverlap: "top", regionSeparation: 0.7, regionRefine: false, regionRefineDenoise: 0.4, regionsOnly: false, regionEdges: "soft", regionCouple: 0.3, preset: "", ...HIRES_DEFAULT,
+    regionSeparation: 0.7, regionRefine: false, regionRefineDenoise: 0.4, regionCouple: 0.3, preset: "", ...HIRES_DEFAULT,
     ...(saved.gen || {}),
   },
   showProgressPreview: saved.showProgressPreview ?? true,
@@ -349,6 +349,7 @@ function renderLayerProps() {
     color.appendChild(ci);
     box.appendChild(color);
     box.appendChild(rangeField("Region strength", Math.round(l.regionStrength * 100), 10, 200, (v) => (l.regionStrength = v / 100), "%"));
+    box.appendChild(regionKindField(l));
     hint(box, "Paint with Brush/Fill to mark where this prompt applies. Areas outside every region use the main prompt.");
   } else if (l.type === LAYER_CONTROL) {
     const lab = document.createElement("label");
@@ -485,6 +486,20 @@ function updateRegionCount() {
   updateModeLabel();
 }
 
+/** Region kind select: scenery (the picture around the subjects, shared with everything, never refined) or subject. */
+function regionKindField(l) {
+  const lab = document.createElement("label");
+  lab.textContent = "Region kind";
+  lab.title = "Scenery is the picture around the subjects: it gives way to every subject region, is never kept apart from them and is not refined by the region pass. Auto: scenery when the region spans most of the canvas.";
+  const sel = document.createElement("select");
+  sel.className = "r-kind";
+  sel.innerHTML = `<option value="auto">Auto</option><option value="scenery">Scenery</option><option value="subject">Subject</option>`;
+  sel.value = l.regionKind || "auto";
+  sel.onchange = () => { l.regionKind = sel.value; doc.emit("region-prompt"); renderRegions(); gen.scheduleLive(); };
+  lab.appendChild(sel);
+  return lab;
+}
+
 /** "Region negative" textarea for the layer panel (the Regions list has its own). */
 function regionNegativeField(l) {
   const lab = document.createElement("label");
@@ -521,6 +536,7 @@ function renderRegions() {
       </div>
       <div class="r-side">
         <button class="r-edit" title="Edit its area (selects the layer and the rectangle tool)">${painted ? "Area" : "Draw area"}</button>
+        <select class="r-kind" title="Scenery: the picture around the subjects (gives way to every subject region, shared with everything). Subject: a character or object. Auto: scenery when the region spans most of the canvas."><option value="auto">Auto</option><option value="scenery">Scenery</option><option value="subject">Subject</option></select>
         <label title="Region strength">×<input type="number" class="r-str" min="0.1" max="2" step="0.1"></label>
         <button class="r-eye" title="Use / ignore this region">${l.visible ? "👁" : "—"}</button>
         ${l.type === LAYER_REGION ? `<button class="r-del" title="Delete region">✕</button>` : ""}
@@ -540,6 +556,10 @@ function renderRegions() {
     attachTokenCounter(nta);
     li.querySelector(".r-str").value = l.regionStrength;
     li.querySelector(".r-str").onchange = (e) => { l.regionStrength = Math.max(0.1, Number(e.target.value) || 1); gen.scheduleLive(); };
+    const kind = li.querySelector(".r-kind");
+    kind.value = l.regionKind || "auto";
+    kind.querySelector("option").textContent = `Auto: ${painted ? autoRegionKind(l.type === LAYER_REGION ? l.canvas : strokeRegionMask(l.canvas, l.regionSpread, l.regionFill)) : "subject"}`;
+    kind.onchange = () => { l.regionKind = kind.value; doc.emit("region-prompt"); if (doc.activeId === l.id) renderLayerProps(); gen.scheduleLive(); };
     li.querySelector(".r-edit").onclick = () => { doc.activeId = l.id; doc.emit("active"); setTool(l.type === LAYER_REGION ? "shape-rect" : "brush"); };
     li.querySelector(".r-eye").onclick = () => { l.visible = !l.visible; doc.emit("layer-props"); };
     li.querySelector(".r-del")?.addEventListener("click", () => { doc.removeLayer(l); });
@@ -564,7 +584,12 @@ doc.on((what) => {
   if (what === "active") $$("#region-list li").forEach((li) => li.classList.toggle("on", li.dataset.id === String(doc.activeId)));
   if (what === "pixels") setTimeout(() => $$("#region-list li").forEach((li) => {
     const l = doc.layers.find((x) => String(x.id) === li.dataset.id);
-    if (l) { const p = hasContentIn(l.canvas, { x: 0, y: 0, w: doc.width, h: doc.height }); li.classList.toggle("unpainted", !p); li.querySelector(".r-edit").textContent = p ? "Area" : "Draw area"; }
+    if (l) {
+      const p = hasContentIn(l.canvas, { x: 0, y: 0, w: doc.width, h: doc.height });
+      li.classList.toggle("unpainted", !p);
+      li.querySelector(".r-edit").textContent = p ? "Area" : "Draw area";
+      li.querySelector(".r-kind option").textContent = `Auto: ${p ? autoRegionKind(l.type === LAYER_REGION ? l.canvas : strokeRegionMask(l.canvas, l.regionSpread, l.regionFill)) : "subject"}`;
+    }
   }) || updateRegionCount(), 160);
   if (what === "region-prompt") updateRegionCount();
   if (["layers", "reset", "active", "layer-props"].includes(what)) renderLayers();
@@ -603,19 +628,13 @@ $("#batch").onchange = (e) => { g.batch = Math.max(1, Math.min(8, Number(e.targe
 function updateModeLabel() {
   const sel = doc.hasSelection;
   const s = Math.round(g.strength * 100);
-  $("#regions-only-box").hidden = !activeRegions;
+  const regions = activeRegions ? ` with ${activeRegions} region${activeRegions > 1 ? "s" : ""}` : "";
   let label;
-  if (g.regionsOnly && activeRegions) {
-    const n = `${activeRegions} region${activeRegions > 1 ? "s" : ""}`;
-    label = `${s >= 100 ? "Regenerate" : `Refine ${s}%:`} ${n}${sel ? " inside the selection" : ""}, one at a time (the rest stays)`;
-    if (s < 100) label += `. Keeps ${100 - s}% of what is on the canvas now: to build a new picture from the regions, use 100%`;
-  } else if (s >= 100) label = sel ? "Generate inside selection (inpaint)" : "Generate new image (replaces canvas view)";
-  else label = sel ? `Refine selection ${s}% (inpaint)` : `Refine canvas ${s}% (image-to-image / sketch)`;
+  if (s >= 100) label = sel ? `Generate inside selection${regions} (inpaint)` : `Generate new image${regions} (replaces canvas view)`;
+  else label = sel ? `Refine selection ${s}%${regions} (inpaint)` : `Refine canvas ${s}%${regions} (image-to-image / sketch)`;
   $("#mode-label").textContent = label;
   $("#btn-generate").textContent = s >= 100 ? "Generate" : "Refine";
 }
-$("#regions-only").checked = !!g.regionsOnly;
-$("#regions-only").onchange = (e) => { g.regionsOnly = e.target.checked; persist(); updateModeLabel(); gen.scheduleLive(); };
 
 $("#btn-generate").onclick = () => gen.run();
 $("#btn-cancel").onclick = () => gen.interrupt();
@@ -654,8 +673,6 @@ $("#seed-lock").checked = g.seedLocked;
 $("#seed-lock").onchange = (e) => { g.seedLocked = e.target.checked; persist(); };
 bindRange("context", () => Math.round(g.context * 100), (v) => (g.context = v / 100), (v) => `${v}%`);
 bindRange("feather", () => g.feather, (v) => (g.feather = v));
-bindRange("region-base", () => Math.round(g.regionBase * 100), (v) => (g.regionBase = v / 100), (v) => `${v}%`);
-bindRange("region-end", () => Math.round(g.regionEnd * 100), (v) => (g.regionEnd = v / 100), (v) => `${v}%`);
 bindRange("region-sep", () => Math.round(g.regionSeparation * 100), (v) => (g.regionSeparation = v / 100), (v) => `${v}%`);
 bindRange("region-couple", () => Math.round((g.regionCouple ?? 0.3) * 100), (v) => { g.regionCouple = v / 100; gen.scheduleLive(); }, (v) => `${v}%`);
 bindRange("region-refine-denoise", () => Math.round(g.regionRefineDenoise * 100), (v) => (g.regionRefineDenoise = v / 100), (v) => `${v}%`);
@@ -667,12 +684,7 @@ const adCard = new DetailerCard($("#canvas-det-card"), { state: () => g.detailer
 const gridCard = new GridCard($("#canvas-grid-card"), { state: () => g.grid, persist, info: () => state.info, loras: () => g.loras });
 $("#resolution").addEventListener("change", () => hrCard.updateInfo());
 doc.on((what) => { if (what === "reset") hrCard.updateInfo(); });
-$("#region-overlap").value = g.regionOverlap;
-$("#region-edges").value = g.regionEdges || "soft";
-$("#region-edges").onchange = (e) => { g.regionEdges = e.target.value; persist(); gen.scheduleLive(); };
-view.regionOverlap = g.regionOverlap;
-$("#region-overlap").onchange = (e) => { g.regionOverlap = view.regionOverlap = e.target.value; persist(); view.render(); gen.scheduleLive(); };
-for (const [id, key] of [["quality-prefix", "qualityPrefix"], ["save-images", "saveImages"], ["soft-inpaint", "softInpaint"], ["region-append", "regionAppendRoot"], ["region-refine", "regionRefine"]]) {
+for (const [id, key] of [["quality-prefix", "qualityPrefix"], ["save-images", "saveImages"], ["soft-inpaint", "softInpaint"], ["region-refine", "regionRefine"]]) {
   $(`#${id}`).checked = g[key];
   $(`#${id}`).onchange = (e) => { g[key] = e.target.checked; persist(); if (key === "qualityPrefix") refreshTokenCounters(); };
 }

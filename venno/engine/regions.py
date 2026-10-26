@@ -51,6 +51,7 @@ class Region:
     negative_plan: object = None  # PromptPlan of the region's own negative, None = the main negative
     negative_contexts: dict = field(default_factory=dict)
     frame: Optional[int] = None  # a frame prompt for this frame of a consistent set (0-based)
+    kind: str = "auto"  # "scenery" / "subject", or "auto": scenery when the box spans most of the picture
 
     def context(self, step: int, negative: bool = False):
         """The encoded prompt for a step: a (1, L, D) tensor, or an Anima 3.8B placeholder dict resolved per model call."""
@@ -95,11 +96,15 @@ class RegionalAttention:
         return masks
 
     def backgrounds(self) -> list[int]:
-        """Spatial regions whose bounding box spans most of the picture (BACKGROUND_BOX): scenery, not subjects."""
+        """Scenery regions: declared so, or (auto) spatial regions whose bounding box spans most of the picture (BACKGROUND_BOX)."""
         if not hasattr(self, "_background_list"):
             out = []
             for k, r in enumerate(self.regions):
                 if r.frame is not None or r.mask is None:
+                    continue
+                if r.kind != "auto":
+                    if r.kind == "scenery":
+                        out.append(k)
                     continue
                 ys, xs = torch.nonzero(r.mask > 0.5, as_tuple=True)
                 box = 0.0 if not len(ys) else float((ys.max() - ys.min() + 1) * (xs.max() - xs.min() + 1)) / r.mask.numel()

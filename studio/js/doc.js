@@ -32,6 +32,7 @@ export class Layer {
     this.negative = ""; // the region's own negative prompt ("" = the main negative)
     this.color = REGION_COLORS[(doc.layers.filter((l) => l.type === LAYER_REGION).length) % REGION_COLORS.length];
     this.regionStrength = 1;
+    this.regionKind = "auto"; // "scenery" (the picture around the subjects) / "subject", or auto: scenery when it spans most of the canvas
     // control layers
     this.controlModel = "";
     this.controlWeight = 0.8;
@@ -159,7 +160,7 @@ export class Doc {
     const c = makeCanvas(this.width, this.height);
     ctx2d(c).drawImage(layer.canvas, 0, 0);
     const copy = this.addLayer(layer.type, { name: `${layer.name} copy`, canvas: c, above: layer });
-    Object.assign(copy, { prompt: layer.prompt, negative: layer.negative, opacity: layer.opacity, controlModel: layer.controlModel, controlWeight: layer.controlWeight, controlStart: layer.controlStart, controlEnd: layer.controlEnd, controlInvert: layer.controlInvert, regionSpread: layer.regionSpread, regionFill: layer.regionFill, regionStrength: layer.regionStrength });
+    Object.assign(copy, { prompt: layer.prompt, negative: layer.negative, opacity: layer.opacity, controlModel: layer.controlModel, controlWeight: layer.controlWeight, controlStart: layer.controlStart, controlEnd: layer.controlEnd, controlInvert: layer.controlInvert, regionSpread: layer.regionSpread, regionFill: layer.regionFill, regionStrength: layer.regionStrength, regionKind: layer.regionKind });
     return copy;
   }
 
@@ -350,6 +351,16 @@ export function unionRect(a, b) {
   if (!b) return a;
   const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
   return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+}
+
+/** What "auto" resolves to for a region mask: "scenery" when its box spans most of the canvas (the server's rule), else "subject". */
+export function autoRegionKind(canvas) {
+  const t = makeCanvas(64, 64);
+  ctx2d(t).drawImage(canvas, 0, 0, 64, 64);
+  const d = ctx2d(t).getImageData(0, 0, 64, 64).data;
+  let x0 = 64, y0 = 64, x1 = -1, y1 = -1;
+  for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) if (d[(y * 64 + x) * 4 + 3] > 127) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  return x1 >= 0 && (x1 - x0 + 1) * (y1 - y0 + 1) > 0.6 * 64 * 64 ? "scenery" : "subject";
 }
 
 export function hasContentIn(canvas, rect, threshold = 8) {

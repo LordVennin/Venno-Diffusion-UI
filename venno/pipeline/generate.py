@@ -213,10 +213,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
 
     # everything below is the same for every run of the job: prepare once
     src = prepare_source(job, W, H) if job.mode == "img2img" and job.init_image else None
-    # regions only: the input is kept and only the regions are regenerated, one at a time (no whole-image pass)
-    regions_only = job.regions_only and src is not None and bool(job.regions)
     init_latent = keep_latent = latent_mask = None
-    if src is not None and not regions_only:
+    if src is not None:
         keep_latent = vae.encode(engine, src.image)
         init_latent = keep_latent
         if src.mask is not None:
@@ -236,15 +234,10 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
 
     tensors: dict = {}  # encoded prompt texts, shared by every pass of the job
     steps_run = sampling.run_steps(job.steps, denoise if src is not None else 1.0)
-    cond = regional = guide_set = None
-    if not regions_only:
-        cond = make_conditioning(engine, job, steps_run, W, H, tensors)
-        regional = make_regional(engine, job, src, steps_run, W, H, cond, frames)
-        guide_set = make_guides(engine, job, src, W, H)
+    cond = make_conditioning(engine, job, steps_run, W, H, tensors)
+    regional = make_regional(engine, job, src, steps_run, W, H, cond, frames)
+    guide_set = make_guides(engine, job, src, W, H)
     guide_mask = src.hard_mask if src is not None and src.mask is not None else None
-    region_areas = region_pass.areas(job, src, out_size, backgrounds=True, limit_mask=src.full_mask) if regions_only else []
-    if regions_only:  # progress: every region's steps, for every image of the run
-        steps_run = len(region_areas) * sampling.run_steps(job.steps, job.strength) * job.batch
 
     hires = job.hires if job.mode == "txt2img" else None
     if hires is not None:
@@ -269,10 +262,6 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
     }
     if src is not None:
         params["Denoising strength"] = denoise
-        if regions_only:
-            params["Regions only"] = True
-            params["Region context"] = job.region_context
-            params["Region edges"] = job.region_edges
         if src.mask is not None:
             params["Mask blur"] = job.mask_blur
             params["Masked content"] = job.fill
@@ -314,6 +303,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
             params[f"Region {k}"] = r.prompt
             if r.negative.strip():
                 params[f"Region {k} negative"] = r.negative
+            if r.kind != "auto":
+                params[f"Region {k} kind"] = r.kind
     for k, g in enumerate(job.guides, start=1):
         extra = (f", {preprocess.PREPROCESSORS[g.preprocessor]}" if g.preprocessor != "none" else "") + (f", {MODE_NAMES[g.mode]}" if g.mode != "balanced" else "")
         params[f"Guide {k}"] = f"{g.model}, weight {g.weight:g}, steps {g.start:g}-{g.end:g}{extra}"
@@ -350,46 +341,30 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
 
             return on_step
 
-        latents = None
-        if not regions_only:
-            try:
-                engine.set_shift(shift=job.shift, width=W, height=H)
+        try:
+            engine.set_shift(shift=job.shift, width=W, height=H)
+            latents = sample_pass(
+                engine, job, progress, seeds, shape, cond, regional,
+                steps=job.steps, cfg=job.cfg, init_latent=init_latent, denoise=denoise,
+                inpaint=sampling.Inpaint(latent_mask, differential=job.soft_inpaint, keep=keep_latent) if latent_mask is not None else None,
+                on_step=stepper(0), guides=guide_set, guide_mask=guide_mask, reference=refs,
+            )
+            if hires is not None:
+                latents = upscale_latents(engine, latents, hires.upscaler, TW, TH)
+                engine.set_shift(shift=hires.shift or job.shift, width=TW, height=TH)  # shift follows the new resolution
                 latents = sample_pass(
-                    engine, job, progress, seeds, shape, cond, regional,
-                    steps=job.steps, cfg=job.cfg, init_latent=init_latent, denoise=denoise,
-                    inpaint=sampling.Inpaint(latent_mask, differential=job.soft_inpaint, keep=keep_latent) if latent_mask is not None else None,
-                    on_step=stepper(0), guides=guide_set, guide_mask=guide_mask, reference=refs,
+                    engine, job, progress, seeds, with_frames(vae.latent_shape(engine, TW, TH), frames), cond2, regional2,
+                    steps=hires_steps, cfg=hires.cfg or job.cfg, init_latent=latents, denoise=hires.denoise,
+                    on_step=stepper(steps_run), guides=guide_set, reference=refs,
                 )
-                if hires is not None:
-                    latents = upscale_latents(engine, latents, hires.upscaler, TW, TH)
-                    engine.set_shift(shift=hires.shift or job.shift, width=TW, height=TH)  # shift follows the new resolution
-                    latents = sample_pass(
-                        engine, job, progress, seeds, with_frames(vae.latent_shape(engine, TW, TH), frames), cond2, regional2,
-                        steps=hires_steps, cfg=hires.cfg or job.cfg, init_latent=latents, denoise=hires.denoise,
-                        on_step=stepper(steps_run), guides=guide_set, reference=refs,
-                    )
-            except sampling.Cancelled:
-                result.cancelled = True
-                break
+        except sampling.Cancelled:
+            result.cancelled = True
+            break
 
-        outputs = [None] * len(seeds) if regions_only else vae.decode(engine, latents)
-        for k, generated in enumerate(outputs):  # frames of an image are consecutive
+        for k, generated in enumerate(vae.decode(engine, latents)):  # frames of an image are consecutive
             seed, frame = seeds[k // frames], k % frames
-            if regions_only:
-                per_image = steps_run // job.batch
-                try:
-                    image, _ = region_pass.run(
-                        engine, job, progress, finish(src, src.image, out_size), seed, src=src, cache=tensors, limit_mask=src.full_mask,
-                        denoise=job.strength, backgrounds=True, context_share=job.region_context, steer=0.0,
-                        falloff=SOFT_EDGE if job.region_edges == "soft" else None,
-                        on_step=lambda i, n, k=k, run_index=run_index: progress.on_step(k * per_image + i, total_steps, run_index, job.count),
-                    )
-                except sampling.Cancelled:
-                    result.cancelled = True
-                    return result
-            else:
-                image = finish(src, generated, out_size)
-            if job.region_refine > 0 and job.regions and not regions_only:
+            image = finish(src, generated, out_size)
+            if job.region_refine > 0 and job.regions:
                 try:
                     image, _ = region_pass.run(engine, job, progress, image, seed, src=src, cache=tensors, limit_mask=src.full_mask if src is not None else None)
                 except sampling.Cancelled:
@@ -399,7 +374,7 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
             if units:
                 try:
                     before = image
-                    limit = region_pass.coverage(region_areas, out_size) if regions_only else src.full_mask if src is not None else None
+                    limit = src.full_mask if src is not None else None
                     image, report = detail.run(engine, job, progress, image, seed, units, job_loras=loras, cache=tensors, limit_mask=limit)
                     found, note = detail.preview_png(before, report), detail.summary(report)
                 except sampling.Cancelled:
@@ -418,8 +393,6 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
 
 # ---------------------------------------------------------------- passes
 
-
-SOFT_EDGE = 0.35  # regions only, soft edges: denoising strength at a region's border (full strength in its middle)
 
 MODE_NAMES = {"balanced": "Balanced", "prompt": "My prompt is more important", "guide": "ControlNet is more important"}
 
@@ -449,7 +422,7 @@ def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int
         plan = prompts.PromptPlan(steps_run, r.prompt, allow_and=False)
         texts = {t for step in range(1, steps_run + 1) for t, _ in plan.parts(step)}
         contexts = {t: cond.tensor(engine, t, False, width, height) for t in texts}
-        region = regions.Region(plan=plan, contexts=contexts, mask=region_mask(job, src, r.mask, width, height), strength=r.strength)
+        region = regions.Region(plan=plan, contexts=contexts, mask=region_mask(job, src, r.mask, width, height), strength=r.strength, kind=r.kind)
         if r.negative.strip():
             region.negative_plan = prompts.PromptPlan(steps_run, r.negative, allow_and=False)
             texts = {t for step in range(1, steps_run + 1) for t, _ in region.negative_plan.parts(step)}

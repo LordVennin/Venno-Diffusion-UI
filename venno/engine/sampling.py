@@ -90,16 +90,23 @@ def run_steps(steps: int, denoise: float = 1.0) -> int:
     return steps if denoise >= 1.0 else max(1, min(steps, math.floor(steps * denoise + 0.5)))  # half up, like Studio
 
 
-def _couple_box(weight: torch.Tensor, h: int, w: int, share: float = 0.5, least: int = 32):
-    """Latent box around a region (weight > 0), grown by `share` of its size and to at least `least` latents
-    a side (even sizes, for the 2×2 patches), inside the picture; None when it would be the whole picture."""
+# Own passes (Denoiser.couple): the crop around a region. Measured in venno/regionlab.py (docs/REGIONS_HANDOFF.md):
+# growing the crop further, forcing a trained aspect, upscaling small crops, fading the passes out and letting a
+# subject's pass reach past its box all scored the same or worse than this.
+COUPLE_SHARE = 0.5  # the box grows by this share of its size on every side
+COUPLE_LEAST = 32  # and to at least this many latents a side
+
+
+def _couple_box(weight: torch.Tensor, h: int, w: int):
+    """Latent box around a region (weight > 0), grown by COUPLE_SHARE of its size and to at least COUPLE_LEAST
+    latents a side (even sizes, for the 2×2 patches), inside the picture; None when it would be the whole picture."""
     ys, xs = torch.nonzero(weight > 0.05, as_tuple=True)
     if not len(ys):
         return None
     y0, y1, x0, x1 = int(ys.min()), int(ys.max()) + 1, int(xs.min()), int(xs.max()) + 1
 
     def grow(a, b, size):
-        n = min(size, max(least, round((b - a) * (1 + 2 * share))))
+        n = min(size, max(COUPLE_LEAST, round((b - a) * (1 + 2 * COUPLE_SHARE))))
         n -= n % 2
         start = min(max(0, (a + b - n) // 2), size - n)
         return start, start + n

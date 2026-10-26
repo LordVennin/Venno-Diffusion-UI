@@ -1,16 +1,11 @@
 // Turns the canvas state into Venno jobs and manages results / live mode.
 
-import { LAYER_CONTROL, LAYER_PAINT, LAYER_REGION, alphaToMask, ctx2d, hasContentIn, loadImage, makeCanvas, regionMasks, strokeRegionMask } from "./doc.js";
+import { LAYER_CONTROL, LAYER_PAINT, alphaToMask, ctx2d, hasContentIn, loadImage, makeCanvas, regionMasks } from "./doc.js";
 import { withQualityPrefix } from "./common.js";
 import { detailerJob, hiresJob } from "./cards.js";
 import { gridJob } from "./gridui.js";
 import { cancelJob, jobModel, runJob } from "./jobs.js";
 import { jobLoras } from "./loras.js";
-
-// Count / group tags describe the whole picture, not one region: "4girls" in every region prompt makes
-// each region draw a group. They are left out when the main prompt is added to region prompts.
-const COUNT_TAG = /^\s*(([2-9]|\d{2,})\+?\s*(girls|boys|others|people|persons|women|men)|multiple (girls|boys|others|people|views)|group( photo| shot)?|crowd|everyone)\s*$/i;
-export const withoutCountTags = (prompt) => prompt.split(",").filter((t) => !COUNT_TAG.test(t)).join(",").replace(/^[\s,]+|[\s,]+$/g, "");
 
 // Choose a model resolution for a canvas area: ~targetPixels, multiples of 64, Anima-friendly bounds.
 export function fitResolution(w, h, targetPixels) {
@@ -28,6 +23,10 @@ function expandRect(r, pad, W, H) {
 }
 
 const randomSeed = () => Math.floor(Math.random() * 2 ** 31);
+
+// How much the main prompt still applies inside regions. Low: a region shows its own prompt; the main prompt
+// (mostly quality tags when a picture is built from regions) keeps a say in style.
+export const REGION_BASE = 0.1;
 
 export class Generator {
   constructor(doc, view, state) {
@@ -65,13 +64,9 @@ export class Generator {
     const content = doc.contentBounds();
     const canvasHasContent = !!content && hasAnyNonWhite(doc, rect);
     const strength = g.strength;
-    // regions only: keep the picture, regenerate the region layers' areas one at a time (server-side region pass)
-    // each region in its full shape: painting them bottom up already puts upper regions over lower ones
-    const regionAreas = g.regionsOnly ? regionMasks(doc, { mode: "blend" }).map((r) => r.mask).filter((m) => hasContentIn(m, rect)) : [];
-    const regionsOnly = regionAreas.length > 0;
-    const txt2img = !regionsOnly && !sel && (strength >= 0.999 || !canvasHasContent);
+    const txt2img = !sel && (strength >= 0.999 || !canvasHasContent);
 
-    return { rect, gw, gh, sel, strength, txt2img, live, regionsOnly, regionAreas };
+    return { rect, gw, gh, sel, strength, txt2img, live };
   }
 
   buildJob(plan) {
@@ -118,29 +113,24 @@ export class Generator {
       }
     }
 
-    // regional prompts: region layers, plus paint / guide layers that carry a prompt (shaped by their strokes)
+    // regional prompts: region layers, plus paint / guide layers that carry a prompt (shaped by their strokes).
+    // A region's prompt is its own text (plus the quality tags): the main prompt reaches it through the blend
+    // (region_base), and its own negative gets the main negative added, so it only needs what is specific.
+    // Higher layers win where regions overlap (a character over the scenery takes its area).
     job.regions = [];
-    for (const { layer: l, mask: source } of regionMasks(doc, { mode: plan.regionsOnly ? "blend" : g.regionOverlap || "top" })) {
+    for (const { layer: l, mask: source } of regionMasks(doc, { mode: "top" })) {
       if (!hasContentIn(source, rect)) continue;
-      let rp = l.prompt.trim();
-      const shared = withoutCountTags(g.prompt.trim());
-      // regions only: the main prompt already reaches the region through the blend (Main prompt inside regions)
-      if (g.regionAppendRoot && shared && !plan.regionsOnly) rp = `${rp}, ${shared}`;
       let rn = (l.negative || "").trim();
-      if (rn && g.regionAppendRoot && g.negative.trim()) rn = `${rn}, ${g.negative.trim()}`;
-      job.regions.push({ prompt: rp, negative: rn, mask: doc.crop(source, rect, gw, gh).toDataURL("image/png"), strength: l.regionStrength });
+      if (rn && g.negative.trim()) rn = `${rn}, ${g.negative.trim()}`;
+      job.regions.push({
+        prompt: withQualityPrefix(l.prompt, g.qualityPrefix, st.info), negative: rn, kind: l.regionKind || "auto",
+        mask: doc.crop(source, rect, gw, gh).toDataURL("image/png"), strength: l.regionStrength,
+      });
     }
-    job.region_base = g.regionBase;
-    job.region_end = g.regionEnd;
+    job.region_base = REGION_BASE;
     job.region_separation = g.regionSeparation ?? 0.7;
-    job.region_couple = plan.live ? 0 : g.regionCouple ?? 0.3; // live mode stays fast
+    job.region_couple = g.regionCouple ?? 0.3; // live mode too: without it the preview shows a different picture
     job.region_refine = g.regionRefine && !plan.live && job.regions.length ? g.regionRefineDenoise : 0;
-    if (plan.regionsOnly && job.regions.length) {
-      job.regions_only = true;
-      job.region_context = g.context; // the Canvas's Context setting, as for selections
-      job.region_edges = g.regionEdges || "soft";
-      job.region_refine = 0;
-    }
 
     // sketch guides (ControlNet / ControlLLLite)
     job.guides = [];
@@ -173,9 +163,8 @@ export class Generator {
   }
 
   // Feathered selection mask cropped to rect (alpha canvas) used to blend results back.
-  blendMask(rect, regionAreas = []) {
+  blendMask(rect) {
     const doc = this.doc;
-    if (regionAreas.length) return this.regionsMask(rect, regionAreas);
     if (!doc.hasSelection) return null;
     const feather = this.state.gen.feather;
     const m = makeCanvas(rect.w, rect.h);
@@ -184,34 +173,6 @@ export class Generator {
     c.drawImage(doc.selection, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
     c.filter = "none";
     return m;
-  }
-
-  // Regions only: the region areas, grown past what the server re-renders (it grows them by 2% and feathers
-  // 1.2% of the long side), so everything else keeps its exact pixels; within the selection, if there is one.
-  regionsMask(rect, areas) {
-    const doc = this.doc;
-    const m = makeCanvas(rect.w, rect.h);
-    const c = ctx2d(m);
-    const grow = Math.max(4, Math.round(Math.max(rect.w, rect.h) * 0.04));
-    for (const area of areas) {
-      for (let a = 0; a < 16; a++) {  // dilate: the mask drawn around a circle
-        const dx = Math.round(Math.cos((a * Math.PI) / 8) * grow), dy = Math.round(Math.sin((a * Math.PI) / 8) * grow);
-        c.drawImage(area, rect.x, rect.y, rect.w, rect.h, dx, dy, rect.w, rect.h);
-      }
-      c.drawImage(area, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
-    }
-    const out = makeCanvas(rect.w, rect.h);
-    const o = ctx2d(out);
-    o.filter = `blur(${Math.max(2, Math.round(grow / 4))}px)`;
-    o.drawImage(m, 0, 0);
-    o.filter = "none";
-    const sel = doc.hasSelection ? this.blendMask(rect) : null;
-    if (sel) {
-      o.globalCompositeOperation = "destination-in";
-      o.drawImage(sel, 0, 0);
-      o.globalCompositeOperation = "source-over";
-    }
-    return out;
   }
 
   // ---------- running ----------
@@ -232,7 +193,7 @@ export class Generator {
       this.emit("error", `Could not prepare request: ${e.message}`);
       return;
     }
-    const mask = this.blendMask(plan.rect, plan.regionsOnly ? plan.regionAreas : []);
+    const mask = this.blendMask(plan.rect);
 
     this.busy = true;
     this.currentJob = null;

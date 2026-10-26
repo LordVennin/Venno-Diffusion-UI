@@ -183,17 +183,6 @@ class Smoke:
         r = self.run("region pass", prompt="2girls", regions=[{"prompt": "1girl, red hair", "mask": left}, {"prompt": "1girl, blue hair", "mask": right}], region_refine=0.4)
         assert_picture(pictures(r)[0], (self.S, self.S))
 
-    def check_regions_only(self):
-        mask = Image.new("L", (self.S, self.S), 0)
-        ImageDraw.Draw(mask).rectangle((self.S // 8, self.S // 4, self.S * 3 // 8, self.S * 3 // 4), fill=255)
-        r = self.run("regions only", mode="img2img", init_image=data_url(self.source()), strength=1.0, regions_only=True,
-                     regions=[{"prompt": "a red apple", "mask": data_url(mask)}])
-        out, src = np.asarray(pictures(r)[0], int), np.asarray(self.source(), int)
-        assert (out[:, self.S // 2:] == src[:, self.S // 2:]).all(), "pixels outside the region changed"
-        c = slice(self.S * 3 // 8, self.S * 5 // 8)
-        assert np.abs(out[c, self.S // 6:self.S // 3] - src[c, self.S // 6:self.S // 3]).mean() > 1, "the region did not change"
-        assert infotext.settings(r.infotexts[0]).get("regions") == ["a red apple"]
-
     def check_lora(self):
         names = list(lora.scan())
         if not names:
@@ -267,7 +256,7 @@ def main() -> int:
         return 0
     smoke = Smoke()
     checks = [n[len("check_"):] for n in dir(Smoke) if n.startswith("check_")]
-    order = ["txt2img", "seed", "batch", "samplers", "img2img", "inpaint", "hires", "prompts", "wildcards", "regions", "region_pass", "regions_only", "lora", "guides", "detailer", "sets", "references", "grid"]
+    order = ["txt2img", "seed", "batch", "samplers", "img2img", "inpaint", "hires", "prompts", "wildcards", "regions", "region_pass", "lora", "guides", "detailer", "sets", "references", "grid"]
     checks = sorted(checks, key=lambda c: order.index(c) if c in order else 99)
     if opts.only:
         wanted = {c.strip() for c in opts.only.split(",")}

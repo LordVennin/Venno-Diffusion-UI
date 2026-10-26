@@ -13,9 +13,10 @@ with a background prompt that matches it). A JSON scene file looks like
 
 Variants (see docs/REGIONS_HANDOFF.md):
     single      one pass, regional attention only (Region own passes 0)
-    own30/own50 one pass with region own passes in the first 30% / 50% of the steps (the Canvas default is 30%)
-    refine75    single, then Only regenerate the regions at 75% with soft edges
-    build       Only regenerate the regions at 100% with soft edges, from an empty canvas
+    own30/own50 one pass with region own passes in the first 30% / 50% of the steps (the Canvas default is 30%);
+                suffixes: -l48 own-pass crops of at least 48 latents a side, -s0.5 crops grown by half the region's
+                size (venno/engine/sampling.py COUPLE_*), -q quality tags in front of the region prompts, -r40 the
+                region pass afterwards at 40%; e.g. own30-q-r40
 Results are cached per scene, variant, seed and settings (outputs/region_lab/cache), so re-running a sheet only
 computes what is new; each run writes a labelled sheet to outputs/region_lab/.
 """
@@ -28,6 +29,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sys
 import time
 
@@ -42,14 +44,16 @@ ap.add_argument("--cfg", type=float, default=4.0)
 ap.add_argument("--shift", type=float, default=3.0)
 ap.add_argument("--sampler", default="ER SDE")
 ap.add_argument("--scheduler", default="Beta")
-ap.add_argument("--lora", action="append", default=[], help="name:weight, may be repeated")
-ap.add_argument("--overlap", choices=["top", "blend"], default="top", help="Overlapping regions on the Canvas")
-ap.add_argument("--region-base", type=float, default=0.1, help="Main prompt inside regions")
+ap.add_argument("--with-lora", dest="lora", action="append", default=[], help="name:weight, may be repeated (not --lora: the server reads that as --lora-dir)")
+ap.add_argument("--overlap", choices=["top", "blend"], default="top", help="top: upper regions cut out of lower ones, as the Canvas sends them; blend: full shapes")
+ap.add_argument("--region-base", type=float, default=0.1, help="job region_base: how much the main prompt applies inside regions (the Canvas sends 0.1)")
 ap.add_argument("--separation", type=float, default=0.75, help="Keep regions apart")
-ap.add_argument("--context", type=float, default=0.5, help="Context (regions only)")
+ap.add_argument("--region-quality", action="store_true", help="put the quality tags in front of every region prompt too")
+ap.add_argument("--no-score", action="store_true", help="skip the person-detector score")
 ap.add_argument("--help-lab", action="store_true", help="show this help")
 opts, _rest = ap.parse_known_args()  # Venno's own options (folders, --cpu, …) are read by venno.config / backend.args
 
+import numpy as np  # noqa: E402
 import torch  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 
@@ -129,8 +133,9 @@ class Lab:
             out.append(url(m))
         return out
 
-    def regions(self, overlap: str) -> list[dict]:
-        return [{"prompt": r["prompt"], "negative": r.get("negative", ""), "mask": m} for r, m in zip(self.scene["regions"], self.masks(overlap))]
+    def regions(self, overlap: str, quality: bool = False) -> list[dict]:
+        prefix = QUALITY + ", " if quality or opts.region_quality else ""
+        return [{"prompt": prefix + r["prompt"], "negative": r.get("negative", ""), "mask": m} for r, m in zip(self.scene["regions"], self.masks(overlap))]
 
     def run(self, **kw) -> Image.Image:
         with torch.inference_mode():
@@ -140,21 +145,30 @@ class Lab:
     def single(self, seed: int, couple: float) -> Image.Image:
         return self.run(seed=seed, regions=self.regions(opts.overlap), region_couple=couple)
 
-    def regions_only(self, init: Image.Image, seed: int, strength: float) -> Image.Image:
-        """Only regenerate the regions: each region in its full shape, bottom up, as the Canvas sends it."""
-        return self.run(seed=seed, mode="img2img", init_image=url(init), strength=strength, regions_only=True, region_edges="soft",
-                        region_context=opts.context, regions=self.regions("blend"))
-
     def variant(self, name: str, seed: int) -> Image.Image:
         if name == "single":
             return self.single(seed, 0.0)
-        if name.startswith("own") and name[3:].isdigit():
-            return self.single(seed, int(name[3:]) / 100)
-        if name == "refine75":
-            return self.regions_only(self.cached("single", seed), seed, 0.75)
-        if name == "build":
-            return self.regions_only(Image.new("RGB", (self.S, self.S), (255, 255, 255)), seed, 1.0)
-        sys.exit(f"Unknown variant {name}")
+        m = re.fullmatch(r"own(\d+)((?:-[a-z][\d.]*)*)", name)
+        if not m:
+            sys.exit(f"Unknown variant {name}")
+        from venno.engine import sampling
+
+        defaults = {k: getattr(sampling, k) for k in ("COUPLE_SHARE", "COUPLE_LEAST")}
+        keys = {"s": "COUPLE_SHARE", "l": "COUPLE_LEAST"}
+        quality, refine = False, 0.0
+        try:
+            for opt in m.group(2).split("-")[1:]:
+                if opt == "q":
+                    quality = True  # quality tags in front of the region prompts
+                elif opt[0] == "r":
+                    refine = float(opt[1:]) / 100  # the region pass afterwards, at this denoise
+                else:
+                    key = keys[opt[0]]
+                    setattr(sampling, key, type(defaults[key])(float(opt[1:])))
+            return self.run(seed=seed, regions=self.regions(opts.overlap, quality), region_couple=int(m.group(1)) / 100, region_refine=refine)
+        finally:
+            for k, v in defaults.items():
+                setattr(sampling, k, v)
 
     def cached(self, name: str, seed: int) -> Image.Image:
         key = json.dumps([self.scene, name, seed, {k: v for k, v in vars(opts).items() if k not in ("variants", "seeds", "scene", "help_lab")}], sort_keys=True)
@@ -167,6 +181,39 @@ class Lab:
         img.save(path)
         print(f"[lab] {name} seed {seed}: {time.time() - t:.0f}s", flush=True)
         return img
+
+
+CHARACTER = re.compile(r"\b(1|2)?(girl|boy|other)s?\b|\bkobold\b|\bcharacter\b|\bwitch\b", re.I)
+
+
+def score(lab: Lab, img: Image.Image) -> str:
+    """Faces and persons found by the detailer's detectors against the character regions: "2/2 +0" = each character
+    region holds a face (or most of a person), and no face lies outside every character region. Regions are only
+    rough placements, so a face anywhere in the box grown by 5% counts; a person counts when 30% of its pixels are
+    inside (one big figure sprawling over two regions counts for one region at most)."""
+    from venno.engine import detect
+
+    S = lab.S
+    img = img.resize((S, S))
+    grow = round(0.05 * S)
+    boxes = [(k, lab.box(r["box"])) for k, r in enumerate(lab.scene["regions"]) if CHARACTER.search(r["prompt"]) and (r["box"][2] - r["box"][0]) * (r["box"][3] - r["box"][1]) < 0.6]
+    hit, extra = set(), 0
+    for d in detect.detect("face_yolov8n.pt", img, 0.3):
+        cx, cy = (d.box[0] + d.box[2]) / 2, (d.box[1] + d.box[3]) / 2
+        inside = [k for k, b in boxes if b[0] - grow <= cx <= b[2] + grow and b[1] - grow <= cy <= b[3] + grow]
+        if inside:
+            hit.add(min(inside, key=lambda k: k in hit))  # a region already hit gives way to another one containing the face
+        else:
+            extra += 1
+    for d in detect.detect("person_yolov8n-seg.pt", img, 0.2):
+        m = np.asarray(d.mask.resize((S, S))) > 127
+        total = m.sum()
+        if total < 0.005 * S * S:
+            continue
+        best = max(boxes, key=lambda kb: m[kb[1][1]:kb[1][3] + 1, kb[1][0]:kb[1][2] + 1].sum(), default=None)
+        if best is not None and m[best[1][1]:best[1][3] + 1, best[1][0]:best[1][2] + 1].sum() >= 0.3 * total:
+            hit.add(best[0])
+    return f"{len(hit)}/{len(boxes)} +{extra}"
 
 
 def sheet(lab: Lab, cells: list[tuple[str, Image.Image]], cols: int, path: str, cell: int = 400):
@@ -194,6 +241,17 @@ def main() -> int:
     lab = Lab(load_scene(opts.scene))
     variants = [v.strip() for v in opts.variants.split(",") if v.strip()]
     cells = [(f"{v} · seed {s}", lab.cached(v, s)) for s in (int(x) for x in opts.seeds.split(",")) for v in variants]
+    if not opts.no_score:
+        scores = {}
+        for k, (label, img) in enumerate(cells):
+            sc = score(lab, img)
+            cells[k] = (f"{label} · {sc}", img)
+            scores.setdefault(label.split(" · ")[0], []).append(sc)
+        for v, found in scores.items():
+            hits = sum(int(x.split("/")[0]) for x in found)
+            wanted = sum(int(x.split("/")[1].split()[0]) for x in found)
+            extra = sum(int(x.split("+")[1]) for x in found)
+            print(f"[lab] {v}: characters in their regions {hits}/{wanted}, extra persons {extra}  ({' '.join(found)})")
     name = os.path.splitext(os.path.basename(opts.scene))[0]
     path = os.path.join(config.outputs_path(), "region_lab", f"{name}-{time.strftime('%Y%m%d-%H%M%S')}.png")
     sheet(lab, cells, len(variants), path)

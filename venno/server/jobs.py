@@ -33,6 +33,9 @@ class Region(BaseModel):
     mask: str  # PNG (data URL or base64); white / opaque = region
     strength: float = 1.0
     negative: str = ""  # the region's own negative prompt ("" = the main negative)
+    # scenery: the picture around the subjects (shared with every other region, never kept apart, not refined);
+    # auto: scenery when the region's box spans most of the picture (regions.RegionalAttention.BACKGROUND_BOX)
+    kind: Literal["auto", "scenery", "subject"] = "auto"
 
 
 class Guide(BaseModel):
@@ -154,12 +157,9 @@ class Job(BaseModel):
     soft_inpaint: bool = True
     # extras
     regions: list[Region] = []
-    region_base: float = 0.25
+    region_base: float = 0.1  # how much the main prompt still applies inside regions
     region_end: float = 1.0
     region_refine: float = 0.0  # region pass denoise: re-render each region on its own afterwards (0 = off)
-    regions_only: bool = False  # image to image: keep the input and regenerate only the regions, one at a time (denoise = strength)
-    region_context: float = Field(0.5, ge=0.0, le=2.0)  # regions only: picture around each region, as a share of its size
-    region_edges: Literal["soft", "hard"] = "soft"  # regions only: soft = the region is a placement hint (edges keep the picture), hard = repaint all of it
     region_separation: float = 0.0  # 0..1: keep regions apart in self-attention in the middle steps
     region_couple: float = Field(0.0, ge=0.0, le=1.0)  # share of the first steps where each region gets its own model pass (0 = off)
     guides: list[Guide] = []
@@ -369,8 +369,6 @@ def unsupported(job: Job) -> Optional[str]:
         name = job.hires.upscaler
         if not (upscale.is_latent(name) or name in upscale.RESAMPLE or name in upscale.models()):
             return f'hires upscaler "{name}"'
-    if job.regions_only and (job.mode != "img2img" or not job.regions):
-        return "regenerating only the regions without an input image and region layers"
     if job.frames > 1 and job.mode != "txt2img":
         return "consistent sets (several frames) outside text to image"
     if job.sampler not in sampling.SAMPLERS:
