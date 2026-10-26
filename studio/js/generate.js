@@ -132,6 +132,7 @@ export class Generator {
     job.region_couple = g.regionCouple ?? 0.3; // live mode too: without it the preview shows a different picture
     job.region_refine = g.regionRefine && !plan.live && job.regions.length ? g.regionRefineDenoise : 0;
     job.region_redraw = (g.regionRedraw ?? true) && !plan.live && job.regions.length > 0;
+    job.region_compose = (g.regionCompose ?? true) && job.regions.length > 0;
 
     // sketch guides (ControlNet / ControlLLLite)
     job.guides = [];

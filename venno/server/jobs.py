@@ -161,6 +161,7 @@ class Job(BaseModel):
     region_end: float = 1.0
     region_refine: float = 0.0  # region pass denoise: re-render each region on its own afterwards (0 = off)
     region_redraw: bool = False  # draw a character region anew when the detectors find no character in it
+    region_compose: bool = False  # the main prompt becomes a structured one composed from the regions (venno/pipeline/compose.py)
     region_separation: float = 0.0  # 0..1: keep regions apart in self-attention in the middle steps
     region_couple: float = Field(0.0, ge=0.0, le=1.0)  # share of the first steps where each region gets its own model pass (0 = off)
     guides: list[Guide] = []

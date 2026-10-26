@@ -15,7 +15,7 @@ from PIL import Image
 from venno.engine import conditioning, guides, images, lora, preprocess, prompts, reference, regions, rng, sampling, upscale, vae, wildcards
 from venno.engine.models import manager
 
-from . import detail, metadata, region_pass
+from . import compose, detail, metadata, region_pass
 from .passes import make_conditioning, sample_pass
 
 
@@ -233,6 +233,9 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
     out_size = src.original.size if src is not None and src.box is not None else (job.width, job.height)
 
     tensors: dict = {}  # encoded prompt texts, shared by every pass of the job
+    main_prompt = job.prompt
+    if job.region_compose and job.regions:  # the composition in the main prompt, from the regions
+        job = job.model_copy(update={"prompt": compose.compose(job.prompt, region_pass.layout(job, src, out_size), escape=COMPOSE_ESCAPE)})
     steps_run = sampling.run_steps(job.steps, denoise if src is not None else 1.0)
     cond = make_conditioning(engine, job, steps_run, W, H, tensors)
     regional = make_regional(engine, job, src, steps_run, W, H, cond, frames)
@@ -299,6 +302,9 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
             params["Region pass"] = job.region_refine
         if job.region_redraw:
             params["Region redraw check"] = True
+        if job.region_compose:
+            params["Region compose"] = True
+            params["Main prompt"] = main_prompt
         if job.region_end < 1.0:
             params["Region end"] = job.region_end
         for k, r in enumerate(job.regions, start=1):
@@ -410,6 +416,7 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
 
 
 MODE_NAMES = {"balanced": "Balanced", "prompt": "My prompt is more important", "guide": "ControlNet is more important"}
+COMPOSE_ESCAPE = False  # composed prompts with real braces (escaped past the wildcard syntax) or without (venno/regionlab.py)
 
 
 def with_frames(shape: tuple[int, ...], frames: int) -> tuple[int, ...]:

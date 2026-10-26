@@ -21,6 +21,16 @@ doesn't know "kobold", so leave the LoRA out of tests that don't need it).
 
 ## The method (one, with tuned defaults)
 
+0. **Composed main prompt** (`region_compose`, the Canvas default; `venno/pipeline/compose.py`): the main
+   prompt is rebuilt from the regions in the structured form the Qwen encoder follows (the reddit thread
+   "Anima seems to do impressively well on json formatted prompt"): `tags` (the user's main prompt + the
+   subject count), `characters` (one `{"girl1": "…"}` per subject region, named by its leading tag),
+   `background` (scenery regions and objects), `composition` (every name placed by its box: left / right,
+   top / bottom, small / large). Braces are stripped by the wildcard syntax before encoding; measured with
+   real braces (escaped) it scored the same, so nothing is escaped. A separate `objects` list made the
+   model draw comic panels; objects live in `background` now. The user's original prompt is saved as
+   *Main prompt* in the settings and the Canvas loads it back.
+
 1. **Regional attention** at every step: each block's text cross-attention runs once with the main prompt and
    once per region prompt, blended per image token by the region masks (`venno/engine/regions.py`,
    `RegionalAttention`, hooked in `backend/nn/anima.py`). The main prompt applies inside regions at 10%
@@ -77,6 +87,17 @@ girl lying on a rug in a thin strip at the bottom. 8 seeds unless noted.
 | own30 with count tags in every subject's negative | 10/16 | 0 | |
 | **2048²**, single pass (4 seeds) | 4/8 | 0 | 95–110 s a picture |
 | **2048²**, own30 (4 seeds) | 7/8 | 0 | the same hits as own30 at 1024² on these seeds, but the subjects come out at a proper size and detail; one seed had a black band at the bottom |
+| quality tags alone, **no regions** | 3/16 | 6 | the control |
+| key:value structured main prompt alone, no regions | 9/16 | 5 | |
+| **JSON structured main prompt alone, no regions** (hand-written) | **14/16** | 4 | both girls in place in every seed by eye; the extras are a third girl now and then |
+| the same with real braces (escaped past the wildcard parser) | 14/16 | 2 | braces make no difference |
+| JSON main prompt + regions, attention only | 10/16 | 0 | regions fight the prompt's composition |
+| JSON main prompt + own passes 15% | 10/16 | 0 | |
+| JSON main prompt + own30 + redraw | 14/16 | 0 | |
+| **composed (automatic) main prompt alone** | 14/16 | 3 | first version with an `objects` list: 12/16 and 9 extras, comic-panel splits |
+| **composed main prompt + own30 + redraw** (default) | 13/16 | 0 | |
+| witch (3 subjects): composed alone / composed + own30 + redraw / plain own30 + redraw | 8/8 each | 0 | |
+| reported layout with the furry LoRA (4 seeds), by eye | 4/4 in all three forms | | the detectors score 3–6/8 there: they miss faceless black kobolds |
 
 With the furry LoRA at 0.8 on the user's reported layout (2 seeds × 2 scenes): single pass drew one big
 character from a low angle in 4/4 (exactly the complaint), own30 drew both characters in their boxes in 7/8.
@@ -84,6 +105,12 @@ character from a low angle in 4/4 (exactly the complaint), own30 drew both chara
 ignored" from the CPU tests does not hold on the real model. A main prompt describing the layout in words
 ("two girls, one sitting on the left, …") added the second girl in the single pass but didn't place her, and
 changed nothing with own passes: not worth building.
+
+Where this leaves the choice: on the living-room layout the plain pipeline (quality tags + own passes +
+redraw, 15/16), the composed prompt alone (14/16, 1× cost, a stray figure in 3 of 8 seeds) and composed +
+pipeline (13–14/16, no strays) are within noise of each other; the default is composed + pipeline because
+it gives the model the scene's semantics and keeps the safety nets, and it is what worked on the furry
+layout by eye. A user who wants speed turns own passes to 0 and the redraw off and relies on the prompt.
 
 The remaining failure is a subject whose natural size is bigger than its region: a girl lying in a strip 16%
 of the picture high comes out small, sketchy or child-like, and wide-shot scenery makes it worse (the rug is
@@ -121,7 +148,9 @@ python -m venno.regionlab --help-lab
 - Defaults match the user's settings (1024², 32 steps, CFG 4, ER SDE / Beta, main prompt inside regions 10%,
   keep regions apart 75%); `--checkpoint` picks the model (the first found otherwise; here the 2.9B sorts first,
   so pass `anima_baseV10.safetensors`). `--lora` can't be used: the server's own parser reads it as `--lora-dir`.
-- Variants: `single`, `ownNN` with suffixes `-x` (redraw empty character regions), `-l48` (crop at least 48
+- `--compose` composes the main prompt from the scene's regions as the Canvas does (`none` then runs the
+  composed prompt without regions); the composed text is part of the cache key.
+- Variants: `none` (the main prompt alone), `single`, `ownNN` with suffixes `-x` (redraw empty character regions), `-l48` (crop at least 48
   latents), `-s0.5` (crop grow share), `-q` (quality tags on region prompts), `-rNN` (region pass at NN%).
   The Canvas sends own30 with `-q-x`. `--size 2048` for the user's high-resolution finding.
 - Scenes: `witch`, `living`, `reported` (the user's layout as reported), or a JSON file (format in the script's

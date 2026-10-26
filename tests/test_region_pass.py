@@ -85,3 +85,25 @@ def test_missing_only_checks_character_regions(monkeypatch):
                                  SimpleNamespace(mask=mask((150, 60, 190, 95)), kind="auto", prompt="1boy, lying")], resize_mode=0)
     monkeypatch.setattr(region_pass, "characters", lambda image, boxes: ({1}, 0))
     assert region_pass.missing(j, None, Image.new("RGB", (W, H))) == [3]
+
+
+def test_composed_prompt_names_places_and_counts():
+    from venno.pipeline import compose
+
+    text = compose.compose("masterpiece, safe", [
+        ("living room, night", "scenery", (0, 0, 1, 1)),
+        ("fireplace, fire", "subject", (0.61, 0.29, 0.80, 0.64)),
+        ("1girl, black hair, sitting on couch", "subject", (0.12, 0.24, 0.35, 0.80)),
+        ("1girl, blonde hair, lying on stomach", "subject", (0.45, 0.64, 0.86, 0.80)),
+        ("bat \\(animal\\), flying", "subject", (0.70, 0.08, 0.96, 0.29)),
+        ("", "subject", None),
+    ])
+    import json
+    d = json.loads(text)
+    assert d["tags"] == "masterpiece, safe, 2girls"
+    assert d["characters"] == [{"girl1": "black hair, sitting on couch"}, {"girl2": "blonde hair, lying on stomach"}]
+    assert "objects" not in d
+    assert d["background"] == "living room, night, fireplace, fire, bat \\(animal\\), flying"
+    assert d["composition"] == "the fireplace on the right, girl1 on the left, girl2 at the bottom right, the bat at the top right, small"
+    assert compose.compose("x", [("1boy, kobold", "subject", (0.4, 0.4, 0.6, 0.6))], escape=True).startswith("\\{\n")
+    assert '"tags": "x, 1boy"' in compose.compose("x", [("1boy, kobold", "subject", None)])

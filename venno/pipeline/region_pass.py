@@ -65,6 +65,18 @@ def _masks(job, src, size: tuple[int, int]) -> list[tuple[int, Image.Image]]:
     return out
 
 
+def layout(job, src, size: tuple[int, int]) -> list[tuple[str, str, Optional[tuple[float, float, float, float]]]]:
+    """(prompt, kind, box as fractions of the picture or None) for every region, in layer order (compose.compose)."""
+    W, H = size
+    out = []
+    for r in job.regions:
+        mask = _to_output(job, src, images.load_mask(r.mask), size)
+        kind = "scenery" if is_scenery(mask, r.kind) else "subject"
+        b = mask.point(lambda v: 255 if v > 127 else 0).getbbox()
+        out.append((r.prompt, kind, (b[0] / W, b[1] / H, b[2] / W, b[3] / H) if b else None))
+    return out
+
+
 def areas(job, src, size: tuple[int, int], *, limit_mask: Optional[Image.Image] = None) -> list[tuple[int, Image.Image]]:
     """(region index, area to re-render) for each subject region, bottom layer first."""
     W, H = size

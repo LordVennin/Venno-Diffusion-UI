@@ -12,6 +12,7 @@ with a background prompt that matches it). A JSON scene file looks like
                  {"box": [0.1, 0.2, 0.35, 0.8], "prompt": "1girl, sitting on couch", "negative": ""}]}
 
 Variants (see docs/REGIONS_HANDOFF.md):
+    none        no regions: the main prompt alone (for scenes whose main prompt describes the layout)
     single      one pass, regional attention only (Region own passes 0)
     own30/own50 one pass with region own passes in the first 30% / 50% of the steps (the Canvas default is 30%);
                 suffixes: -x character regions found empty are drawn anew (the Canvas's redraw), -l48 own-pass
@@ -49,6 +50,7 @@ ap.add_argument("--overlap", choices=["top", "blend"], default="top", help="top:
 ap.add_argument("--region-base", type=float, default=0.1, help="job region_base: how much the main prompt applies inside regions (the Canvas sends 0.1)")
 ap.add_argument("--separation", type=float, default=0.75, help="Keep regions apart")
 ap.add_argument("--region-quality", action="store_true", help="put the quality tags in front of every region prompt too")
+ap.add_argument("--compose", action="store_true", help="the main prompt composed from the regions (job region_compose)")
 ap.add_argument("--no-score", action="store_true", help="skip the person-detector score")
 ap.add_argument("--help-lab", action="store_true", help="show this help")
 opts, _rest = ap.parse_known_args()  # Venno's own options (folders, --cpu, …) are read by venno.config / backend.args
@@ -147,6 +149,13 @@ class Lab:
     def variant(self, name: str, seed: int) -> Image.Image:
         if name == "single":
             return self.single(seed, 0.0)
+        if name == "none":  # the main prompt alone: what the model places by itself (with --compose: composed, regions not sent)
+            if opts.compose:
+                from venno.pipeline import compose, region_pass
+
+                job = Job(**{**self.base, "seed": seed, "regions": self.regions(opts.overlap)})
+                return self.run(seed=seed, prompt=compose.compose(self.base["prompt"], region_pass.layout(job, None, (self.S, self.S))))
+            return self.run(seed=seed)
         m = re.fullmatch(r"own(\d+)((?:-[a-z][\d.]*)*)", name)
         if not m:
             sys.exit(f"Unknown variant {name}")
@@ -166,13 +175,18 @@ class Lab:
                 else:
                     key = keys[opt[0]]
                     setattr(sampling, key, type(defaults[key])(float(opt[1:])))
-            return self.run(seed=seed, regions=self.regions(opts.overlap, quality), region_couple=int(m.group(1)) / 100, region_refine=refine, region_redraw=redraw)
+            return self.run(seed=seed, regions=self.regions(opts.overlap, quality), region_couple=int(m.group(1)) / 100, region_refine=refine, region_redraw=redraw, region_compose=opts.compose)
         finally:
             for k, v in defaults.items():
                 setattr(sampling, k, v)
 
     def cached(self, name: str, seed: int) -> Image.Image:
-        key = json.dumps([self.scene, name, seed, {k: v for k, v in vars(opts).items() if k not in ("variants", "seeds", "scene", "help_lab")}], sort_keys=True)
+        extra = ""
+        if opts.compose:  # the composed prompt is part of the result: a change to the composer must not hit the cache
+            from venno.pipeline import compose, region_pass
+
+            extra = compose.compose(self.base["prompt"], region_pass.layout(Job(**{**self.base, "regions": self.regions(opts.overlap)}), None, (self.S, self.S)))
+        key = json.dumps([self.scene, name, seed, extra, {k: v for k, v in vars(opts).items() if k not in ("variants", "seeds", "scene", "help_lab")}], sort_keys=True)
         path = os.path.join(config.outputs_path(), "region_lab", "cache", hashlib.sha1(key.encode()).hexdigest()[:16] + ".png")
         if os.path.exists(path):
             return Image.open(path).convert("RGB")
