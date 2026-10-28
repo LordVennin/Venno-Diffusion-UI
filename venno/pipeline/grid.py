@@ -97,6 +97,7 @@ AXES: dict[str, AxisType] = {a.key: a for a in [
     AxisType("frame_separation", "Frame separation", "float", lambda j, v, t: {"frame_separation": v}),
     AxisType("reference_strength", "Reference strength", "float", lambda j, v, t: {"reference_strength": v}),
     AxisType("reference_noise", "Reference noise", "float", lambda j, v, t: {"reference_noise": v}),
+    AxisType("reference_guidance", "Reference guidance", "float", lambda j, v, t: {"reference_guidance": v}),
     AxisType("detailer_denoise", "Detailer denoise", "float", _detailer_denoise),
 ]}
 

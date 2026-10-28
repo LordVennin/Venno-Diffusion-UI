@@ -4,7 +4,7 @@
 import { $, $$, escapeHtml, toast } from "./common.js";
 
 export const SET_DEFAULT = { enabled: false, frames: 3, prompts: ["", "", "", ""], separation: 0.2 };
-export const REFERENCE_DEFAULT = { enabled: false, useInput: false, follow: false, noise: 0.5, strength: 1 };
+export const REFERENCE_DEFAULT = { enabled: false, useInput: false, follow: false, noise: 0.5, strength: 1, adapter: false, guidance: 4.5 };
 const MAX_REFERENCES = 3;
 
 const readDataURL = (blob) => new Promise((ok, fail) => {
@@ -98,7 +98,9 @@ export class ReferenceCard {
       ${opts.input ? `<label class="check"><input type="checkbox" class="ref-input"> Use the input image as a reference</label>` : ""}
       <div class="ref-list"></div>
       <div class="row"><button class="ref-add">Add picture…</button><span class="muted">or drop one here · up to ${MAX_REFERENCES}</span></div>
-      <label class="check" title="The references get the same noise level as the picture at every step. This is how the Anima Edit LoRAs were trained."><input type="checkbox" class="ref-follow"> Follow the steps (Anima Edit LoRAs)</label>
+      <label class="check ref-adapter-row" title="ElectronGirl's Anima reference adapter: a LoRA trained to take the character (hair, eyes, outfit, accessories) from one reference picture while the prompt sets the scene and pose. Describe only the scene; no character tags needed. Made for Anima Base v1.0; best with about 30 steps and CFG 4.5."><input type="checkbox" class="ref-adapter"> Reference adapter <span class="ref-adapter-note muted"></span></label>
+      <label class="slider ref-guidance-row" title="How strongly the picture follows the reference with the adapter. 1 is plain CFG (cheapest, weakest); 4.5–6 brings over more detail (hair texture, eyes, small accessories). Above 1 each step makes one more model call.">Reference guidance <input type="range" class="ref-guidance" min="1" max="8" step="0.5"><span class="ref-guidance-v"></span></label>
+      <label class="check ref-follow-row" title="The references get the same noise level as the picture at every step. This is how the Anima Edit LoRAs were trained."><input type="checkbox" class="ref-follow"> Follow the steps (Anima Edit LoRAs)</label>
       <label class="slider ref-strength-row" title="How much the new picture looks at the references. Lower lets the prompt decide pose and scene, and keeps the character from the references.">Reference strength <input type="range" class="ref-strength" min="50" max="100" step="5"><span class="ref-strength-v"></span></label>
       <label class="slider ref-noise-row">Reference noise <input type="range" class="ref-noise" min="0" max="100" step="5"><span class="ref-noise-v"></span></label>
       <div class="hint ref-hint"></div>`;
@@ -107,6 +109,8 @@ export class ReferenceCard {
     on.onclick = (e) => e.stopPropagation();
     on.onchange = () => { s().enabled = on.checked; if (on.checked) el.open = true; this.changed(); };
     $(".ref-follow", el).onchange = (e) => { s().follow = e.target.checked; this.changed(); };
+    $(".ref-adapter", el).onchange = (e) => { s().adapter = e.target.checked; this.changed(); };
+    $(".ref-guidance", el).oninput = (e) => { s().guidance = Number(e.target.value); this.changed(); };
     $(".ref-noise", el).oninput = (e) => { s().noise = Number(e.target.value) / 100; this.changed(); };
     $(".ref-strength", el).oninput = (e) => { s().strength = Number(e.target.value) / 100; this.changed(); };
     const useInput = $(".ref-input", el);
@@ -165,6 +169,8 @@ export class ReferenceCard {
     const useInput = $(".ref-input", el);
     if (useInput) useInput.checked = s.useInput;
     $(".ref-follow", el).checked = s.follow;
+    $(".ref-adapter", el).checked = s.adapter;
+    $(".ref-guidance", el).value = s.guidance;
     $(".ref-noise", el).value = Math.round(s.noise * 100);
     $(".ref-strength", el).value = Math.round(s.strength * 100);
     const list = $(".ref-list", el);
@@ -173,16 +179,32 @@ export class ReferenceCard {
     this.updateInfo();
   }
 
+  /** Studio info: whether the reference adapter is installed. */
+  setInfo(info) {
+    this.adapterFile = info.reference_adapter || "";
+    this.updateInfo();
+  }
+
+  adapterOn() { return this.o.state().adapter && !!this.adapterFile; }
+
   updateInfo() {
     const s = this.o.state(), el = this.el;
     const n = this.pictures.length + (this.usesInput() ? 1 : 0);
-    $(".ref-sum", el).textContent = s.enabled ? (n ? `(${n} picture${n > 1 ? "s" : ""}${s.follow ? ", follow" : ""})` : "(add a picture)") : "";
+    const adapter = this.adapterOn();
+    $(".ref-sum", el).textContent = s.enabled ? (n ? `(${n} picture${n > 1 ? "s" : ""}${adapter ? ", adapter" : s.follow ? ", follow" : ""})` : "(add a picture)") : "";
+    $(".ref-adapter", el).disabled = !this.adapterFile;
+    $(".ref-adapter-note", el).textContent = this.adapterFile ? (adapter && n > 1 ? "· uses the first picture only" : "") : "· not installed: ⚙ Settings → Models";
+    $(".ref-guidance-row", el).hidden = !adapter;
+    $(".ref-guidance-v", el).textContent = Number(s.guidance).toFixed(1);
+    for (const row of [".ref-follow-row", ".ref-strength-row", ".ref-noise-row"]) $(row, el).hidden = adapter;
     $(".ref-sum", el).classList.toggle("warn", s.enabled && !n);
     $(".ref-noise", el).disabled = s.follow;
     $(".ref-noise-row", el).classList.toggle("muted", s.follow);
     $(".ref-noise-v", el).textContent = s.follow ? "follows the steps" : s.noise.toFixed(2);
     $(".ref-strength-v", el).textContent = `${Math.round(s.strength * 100)}%`;
-    $(".ref-hint", el).innerHTML = s.follow
+    $(".ref-hint", el).innerHTML = adapter
+      ? "The adapter takes who the character is from the picture; write only the scene in the prompt (no character or outfit tags). Strongly painted styles, small patterns, scars and unusual skin colours carry over less."
+      : s.follow
       ? "For an Edit LoRA: add it under LoRAs, use the input image as the reference and Denoising 1, and write the change you want in the prompt."
       : "How noisy the model is told the references are. Lower copies them more closely (below about 0.3 a dotted pattern can appear); higher follows the prompt more. 0.5 is a good start.";
   }
@@ -193,6 +215,7 @@ export class ReferenceCard {
     if (!s.enabled) return {};
     const refs = [...(this.usesInput() && this.o.input() ? [this.o.input()] : []), ...this.pictures];
     if (!refs.length) return {};
+    if (this.adapterOn()) return { references: refs.slice(0, 1), reference_adapter: true, reference_guidance: s.guidance };
     return { references: refs, reference_noise: s.noise, reference_follow: s.follow, reference_strength: s.strength };
   }
 
@@ -201,5 +224,7 @@ export class ReferenceCard {
     if (x.reference_follow !== undefined) s.follow = x.reference_follow;
     if (x.reference_noise !== undefined) s.noise = x.reference_noise;
     if (x.reference_strength !== undefined) s.strength = x.reference_strength;
+    if (x.reference_adapter !== undefined || x.reference_follow !== undefined) s.adapter = !!x.reference_adapter; // only when it used references
+    if (x.reference_guidance !== undefined) s.guidance = x.reference_guidance;
   }
 }

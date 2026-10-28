@@ -70,6 +70,7 @@ def model_folder(kind: str) -> str:
         "controlnet": args.controlnet_dir or os.path.join(m, "ControlNet"),
         "upscaler": args.esrgan_models_path or os.path.join(m, "ESRGAN"),
         "adetailer": os.path.join(m, "adetailer"),
+        "reference_adapter": os.path.join(m, "reference_adapter"),
     }[kind]
     os.makedirs(folder, exist_ok=True)
     return folder
@@ -86,6 +87,7 @@ def model_folders(kind: str) -> list[str]:
         "controlnet": [args.controlnet_dir, *args.controlnet_dirs, os.path.join(m, "ControlNet"), os.path.join(m, "controlnet")],
         "upscaler": [args.esrgan_models_path, *(os.path.join(m, d) for d in ("ESRGAN", "RealESRGAN", "DAT", "SwinIR", "HAT", "upscale_models"))],
         "adetailer": [os.path.join(m, "adetailer")],
+        "reference_adapter": [os.path.join(m, "reference_adapter")],
     }[kind]
     return _existing(dirs)
 

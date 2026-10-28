@@ -209,7 +209,7 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
     base_seed = rng.resolve_seed(job.seed)
     frames = job.frames if job.mode == "txt2img" else 1  # consistent set: frames sampled together on the time axis
     shape = with_frames(vae.latent_shape(engine, W, H), frames)
-    refs = make_reference(job)
+    refs = make_reference(job, engine, result)
 
     # everything below is the same for every run of the job: prepare once
     src = prepare_source(job, W, H) if job.mode == "img2img" and job.init_image else None
@@ -424,11 +424,29 @@ def with_frames(shape: tuple[int, ...], frames: int) -> tuple[int, ...]:
     return shape if frames == 1 else (shape[0], frames, *shape[2:])
 
 
-def make_reference(job) -> Optional[reference.Reference]:
+def make_reference(job, engine=None, result: Optional[Result] = None) -> Optional[reference.Reference]:
     if not job.references:
         return None
     pictures = [images.load_rgb(r) for r in job.references]
-    return reference.Reference(pictures, noise=job.reference_noise, follow=job.reference_follow, strength=job.reference_strength)
+    if not job.reference_adapter:
+        return reference.Reference(pictures, noise=job.reference_noise, follow=job.reference_follow, strength=job.reference_strength)
+    from venno.engine import ref_adapter
+
+    adapter = ref_adapter.get()
+    unet = engine.forge_objects.unet
+    adapter.attach(unet.model.diffusion_model)
+    if result is not None:
+        if len(pictures) > 1:
+            result.warnings.append("The reference adapter reads one picture: only the first reference is used")
+        if unet.model.computation_dtype == torch.float16:
+            result.warnings.append("The reference adapter was made for bf16; in fp16 it can overflow (black or noisy pictures)")
+    guidance = job.reference_guidance
+    if job.cfg <= 1.0 and guidance != 1.0:  # it amplifies a negative-prompt prediction, which CFG 1 models (Turbo) don't make
+        guidance = 1.0
+        if result is not None:
+            result.warnings.append("Reference guidance needs CFG above 1: used 1 (plain reference)")
+    return reference.Reference(pictures[:1], noise=0.0, strength=1.0, adapter=adapter, guidance=guidance,
+                               correction=job.reference_correction, offset=ref_adapter.OFFSET)
 
 
 def make_regional(engine, job, src: Optional[Source], steps_run: int, width: int, height: int, cond, frames: int = 1, masks: Optional[list] = None):

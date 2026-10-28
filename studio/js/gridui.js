@@ -26,6 +26,7 @@ export const AXES = [
   { key: "frame_separation", label: "Frame separation", hint: "0, 0.2, 0.4 (consistent sets with frame texts)" },
   { key: "reference_strength", label: "Reference strength", hint: "1, 0.6, 0.3 (with reference pictures)" },
   { key: "reference_noise", label: "Reference noise", hint: "0.3, 0.5, 0.8 (with reference pictures)" },
+  { key: "reference_guidance", label: "Reference guidance", hint: "1, 3, 4.5, 6 (with the reference adapter)" },
 ];
 
 export const GRID_DEFAULT = {

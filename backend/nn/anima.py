@@ -5,6 +5,7 @@
 # Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # References: https://github.com/nvidia-cosmos/cosmos-predict2
 
+import contextlib
 import math
 import threading
 from typing import Callable, Final, Optional
@@ -64,8 +65,10 @@ class VideoRopePosition3DEmb(nn.Module):
         self.w_ntk_factor = w_extrapolation_ratio ** (dim_w / (dim_w - 2))
         self.t_ntk_factor = t_extrapolation_ratio ** (dim_t / (dim_t - 2))
 
-    def forward(self, x_B_T_H_W_C: torch.Tensor, device: torch.device) -> torch.Tensor:
+    def forward(self, x_B_T_H_W_C: torch.Tensor, device: torch.device, h_offsets: Optional[list] = None) -> torch.Tensor:
         B, T, H, W, _ = x_B_T_H_W_C.shape
+        if h_offsets is not None:
+            return self.shifted(T, H, W, h_offsets, device)
 
         h_theta = 10000.0 * self.h_ntk_factor
         w_theta = 10000.0 * self.w_ntk_factor
@@ -95,6 +98,21 @@ class VideoRopePosition3DEmb(nn.Module):
         )
 
         return rearrange(em_T_H_W_D, "t h w d (i j) -> (t h w) d i j", i=2, j=2).float()
+
+    def shifted(self, T: int, H: int, W: int, h_offsets: list, device: torch.device) -> torch.Tensor:
+        """Venno: the embedding with each frame's h positions shifted by h_offsets[t] (the reference adapter places
+        its reference frame below the picture: venno/engine/ref_adapter.py). Frequencies in fp32, as it was trained."""
+
+        def rotations(pos, ratio, freq_range):
+            angle = torch.outer(pos.float(), 1.0 / ((10000.0 * ratio) ** freq_range.to(device)))
+            return torch.stack([angle.cos(), -angle.sin(), angle.sin(), angle.cos()], dim=-1)
+
+        t = torch.arange(T, device=device)[:, None, None].expand(T, H, W)
+        h = (torch.arange(H, device=device)[None, :, None] + torch.tensor(h_offsets, device=device)[:, None, None]).expand(T, H, W)
+        w = torch.arange(W, device=device)[None, None, :].expand(T, H, W)
+        emb = torch.cat([rotations(t.flatten(), self.t_ntk_factor, self.dim_temporal_range), rotations(h.flatten(), self.h_ntk_factor, self.dim_spatial_range),
+                         rotations(w.flatten(), self.w_ntk_factor, self.dim_spatial_range)], dim=-2)
+        return emb.reshape(*emb.shape[:-1], 2, 2).float()
 
 
 class GPT2FeedForward(nn.Module):
@@ -476,7 +494,7 @@ class Anima(nn.Module):
         # Venno: Anima 3.8B rebuilds its text context at every step (venno/engine/anima38.Runtime: expand / expand_one)
         self.venno_context_expander = None
 
-    def prepare_embedded_sequence(self, x_B_C_T_H_W: torch.Tensor, padding_mask: Optional[torch.Tensor] = None) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    def prepare_embedded_sequence(self, x_B_C_T_H_W: torch.Tensor, padding_mask: Optional[torch.Tensor] = None, h_offsets: Optional[list] = None) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         if padding_mask is None:
             padding_mask = torch.zeros(x_B_C_T_H_W.shape[0], 1, x_B_C_T_H_W.shape[3], x_B_C_T_H_W.shape[4], dtype=x_B_C_T_H_W.dtype, device=x_B_C_T_H_W.device)
         else:
@@ -484,7 +502,7 @@ class Anima(nn.Module):
         x_B_C_T_H_W = torch.cat([x_B_C_T_H_W, padding_mask.unsqueeze(1).expand(-1, -1, x_B_C_T_H_W.shape[2], -1, -1)], dim=1)
         x_B_T_H_W_D = self.x_embedder(x_B_C_T_H_W)
 
-        return x_B_T_H_W_D, self.pos_embedder(x_B_T_H_W_D, device=x_B_C_T_H_W.device), None
+        return x_B_T_H_W_D, self.pos_embedder(x_B_T_H_W_D, device=x_B_C_T_H_W.device, h_offsets=h_offsets), None
 
     def unpatchify(self, x_B_T_H_W_M: torch.Tensor) -> torch.Tensor:
         x_B_C_Tt_Hp_Wp = rearrange(
@@ -531,7 +549,8 @@ class Anima(nn.Module):
 
                 regional.resolve_context = resolve
 
-        x_B_T_H_W_D, rope_emb_L_1_1_D, extra_pos_emb_None = self.prepare_embedded_sequence(x_B_C_T_H_W, padding_mask=padding_mask)
+        h_offsets = reference.h_offsets(x_B_C_T_H_W.shape[2], x_B_C_T_H_W.shape[3] // self.patch_spatial) if reference is not None else None
+        x_B_T_H_W_D, rope_emb_L_1_1_D, extra_pos_emb_None = self.prepare_embedded_sequence(x_B_C_T_H_W, padding_mask=padding_mask, h_offsets=h_offsets)
 
         if timesteps_B_T.ndim == 1:
             timesteps_B_T = timesteps_B_T.unsqueeze(1)
@@ -549,13 +568,15 @@ class Anima(nn.Module):
         if x_B_T_H_W_D.dtype is torch.float16:
             x_B_T_H_W_D = x_B_T_H_W_D.float()
 
-        for block in self.blocks:
-            x_B_T_H_W_D = block(
-                x_B_T_H_W_D,
-                t_embedding_B_T_D,
-                crossattn_emb,
-                **block_kwargs,
-            )
+        adapter = getattr(reference, "adapter", None) if reference is not None else None  # Venno: reference adapter LoRA, on these calls only
+        with adapter.active() if adapter is not None else contextlib.nullcontext():
+            for block in self.blocks:
+                x_B_T_H_W_D = block(
+                    x_B_T_H_W_D,
+                    t_embedding_B_T_D,
+                    crossattn_emb,
+                    **block_kwargs,
+                )
 
         x_B_T_H_W_O = self.final_layer(x_B_T_H_W_D.to(crossattn_emb.dtype), t_embedding_B_T_D, adaln_lora_B_T_3D=adaln_lora_B_T_3D)
         x_B_C_Tt_Hp_Wp = self.unpatchify(x_B_T_H_W_O)[:, :, : orig_shape[-3], : orig_shape[-2], : orig_shape[-1]]

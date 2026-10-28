@@ -525,6 +525,7 @@ export class GenForm {
     this.loras.setAvailable(info.loras.map((l) => l.name));
     this.hrCard?.setInfo(info);
     this.adCard.setInfo(info);
+    this.refCard.setInfo(info);
     this.cnCard.setInfo(info);
     const gsel = this.q(".f-guide-model");
     if (gsel) {

@@ -30,6 +30,7 @@ KINDS = {
     "controlnet": "Guide (ControlNet / ControlLLLite)",
     "upscaler": "Upscaler",
     "adetailer": "ADetailer detector",
+    "reference_adapter": "Reference adapter",
 }
 
 # (id, kind, name, description, url, size in bytes)
@@ -52,6 +53,7 @@ CATALOG = [
     ("up-animesharp", "upscaler", "4x AnimeSharp", "Sharp 4× anime upscaler.", f"{HF}/Kim2091/AnimeSharp/resolve/main/4x-AnimeSharp.pth", 67010245),
     ("up-realesrgan-anime", "upscaler", "4x RealESRGAN anime 6B", "Small, soft 4× anime upscaler.", "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth", 17938799),
     ("up-ultrasharp", "upscaler", "4x UltraSharp", "General purpose 4× upscaler.", f"{HF}/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.pth", 66961958),
+    ("ref-adapter", "reference_adapter", "Anima reference adapter (pilot, community)", "By ElectronGirl: with one reference picture of a character, the prompt only needs the scene; the pose comes from the prompt, not the picture. Turn it on in the Reference card. Made for Anima Base v1.0 (28-block Anima only); CircleStone non-commercial license, like Anima.", f"{HF}/ElectronGirl/anima-ref-adapter/resolve/main/anima_ref_adapter_pilot_r32.safetensors", 91853888),
     ("ad-face-v9c", "adetailer", "face_yolov9c", "More accurate face detector than the bundled yolov8 ones.", f"{HF}/Bingsu/adetailer/resolve/main/face_yolov9c.pt", 51648019),
 ]
 

@@ -227,6 +227,21 @@ class Smoke:
             r = self.run(name, prompt="masterpiece, best quality, safe, 1girl, standing, city at night", references=[ref], **extra)
             assert_picture(pictures(r)[0], (self.S, self.S))
 
+    def check_reference_adapter(self):
+        from venno.engine import ref_adapter
+
+        if ref_adapter.find() is None:
+            raise Skip("no reference adapter (Settings → Models)")
+        ref = data_url(self.source())
+        for name, guidance, cfg in [("ref adapter", 1.0, 1.0), ("ref adapter (guidance 4.5)", 4.5, 3.0)]:  # reference guidance needs CFG > 1
+            r = self.run(name, prompt="masterpiece, best quality, safe, 1girl, solo, standing, city at night", references=[ref],
+                         reference_adapter=True, reference_guidance=guidance, cfg=cfg)
+            assert_picture(pictures(r)[0], (self.S, self.S))
+            s = infotext.settings(r.infotexts[0])
+            assert s.get("reference_adapter") and s.get("reference_guidance") == guidance
+        again = self.run()  # the adapter's LoRA must only act on the calls with the reference
+        assert np.array_equal(np.asarray(pictures(again)[0]), np.asarray(self.source())), "a plain job changed after using the reference adapter"
+
     def check_grid(self):
         r = self.run("grid", grid={"x": {"type": "cfg", "values": "1, 2"}, "y": {"type": "steps", "values": f"{max(2, opts.steps - 1)}, {opts.steps}"}})
         assert len(r.images) == 1 and 'Grid: "' in r.infotexts[0]
@@ -258,7 +273,7 @@ def main() -> int:
         return 0
     smoke = Smoke()
     checks = [n[len("check_"):] for n in dir(Smoke) if n.startswith("check_")]
-    order = ["txt2img", "seed", "batch", "samplers", "img2img", "inpaint", "hires", "prompts", "wildcards", "regions", "region_pass", "lora", "guides", "detailer", "sets", "references", "grid"]
+    order = ["txt2img", "seed", "batch", "samplers", "img2img", "inpaint", "hires", "prompts", "wildcards", "regions", "region_pass", "lora", "guides", "detailer", "sets", "references", "reference_adapter", "grid"]
     checks = sorted(checks, key=lambda c: order.index(c) if c in order else 99)
     if opts.only:
         wanted = {c.strip() for c in opts.only.split(",")}

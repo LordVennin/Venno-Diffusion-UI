@@ -57,6 +57,14 @@ def _controlnets() -> list[str]:
         return []
 
 
+def _reference_adapter() -> str:
+    """File name of the installed reference adapter ("" when there is none)."""
+    from venno.engine import ref_adapter
+
+    path = ref_adapter.find()
+    return os.path.basename(path) if path else ""
+
+
 def _adetailer_models() -> list[str]:
     from venno.engine import detect
 
@@ -123,6 +131,7 @@ def _info() -> dict:
         "preprocessors": _preprocessors(),
         "upscalers": _upscalers(),
         "adetailer_models": _adetailer_models(),
+        "reference_adapter": _reference_adapter(),
         "wildcards": _wildcards(),
         "engine_samplers": _engine_list("samplers"),
         "engine_schedulers": _engine_list("schedulers"),
@@ -167,7 +176,7 @@ def _upscalers() -> list[str]:
         return ["Latent", "Lanczos"]
 
 
-KIND_LABELS = {"checkpoint": "Checkpoints", "text_encoder": "Text encoders", "vae": "VAE", "lora": "LoRAs", "controlnet": "Guides", "upscaler": "Upscalers", "adetailer": "Detectors"}
+KIND_LABELS = {"checkpoint": "Checkpoints", "text_encoder": "Text encoders", "vae": "VAE", "lora": "LoRAs", "controlnet": "Guides", "upscaler": "Upscalers", "adetailer": "Detectors", "reference_adapter": "Reference adapter"}
 
 
 def _system() -> dict:

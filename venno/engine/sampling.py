@@ -162,12 +162,30 @@ class Denoiser:
             x = x * mask + known * (1 - mask)
         for modifier in model_options.get("conditioning_modifiers", []):  # e.g. regional prompting / guides
             _, x, sigma, uncond, cond, _, model_options, _ = modifier(self.unet.model, x, sigma, uncond, cond, self.req.cfg, model_options, self.req.seeds[0])
-        denoised = sampling_function_inner(self.unet.model, x, sigma, uncond, cond, self.req.cfg, model_options, self.req.seeds[0])
+        reference = self.req.reference
+        if reference is not None and reference.adapter is not None and reference.guidance != 1.0:
+            denoised = self.reference_guidance(x, sigma, cond, uncond, model_options)
+        else:
+            denoised = sampling_function_inner(self.unet.model, x, sigma, uncond, cond, self.req.cfg, model_options, self.req.seeds[0])
         if step <= self.couple_steps and "venno_regional" in venno:
             denoised = self.couple(x, sigma, step, denoised, uncond, model_options)
         if mask is not None:
             denoised = denoised * mask + self.latent * (1 - mask)
         return denoised
+
+    def reference_guidance(self, x, sigma, cond, uncond, model_options) -> torch.Tensor:
+        """Reference adapter with its own guidance: prompt and negative with the reference (one batched call), and
+        the negative without the reference and without the adapter, combined by ref_adapter.guidance."""
+        from backend.sampling.sampling_function import calc_cond_uncond_batch
+
+        from .ref_adapter import guidance
+
+        ref = self.req.reference
+        options = {**model_options, "disable_cfg1_optimization": True}
+        pos, neg = calc_cond_uncond_batch(self.unet.model, cond, uncond, x, sigma, options)
+        plain = {**options, "transformer_options": {k: v for k, v in options.get("transformer_options", {}).items() if k != "venno_reference"}}
+        base, _ = calc_cond_uncond_batch(self.unet.model, uncond, None, x, sigma, plain)
+        return guidance(pos, neg, base, self.req.cfg, ref.guidance, ref.correction)
 
     def couple(self, x, sigma, step: int, denoised, uncond, model_options) -> torch.Tensor:
         """Early steps of regional prompting: every region also gets a model pass with only its own prompt, used

@@ -40,7 +40,7 @@ def scan() -> dict[str, str]:
             continue
         for dirpath, _, filenames in os.walk(root, followlinks=True):
             for f in sorted(filenames):
-                if f.lower().endswith(EXTENSIONS):
+                if f.lower().endswith(EXTENSIONS) and not f.lower().startswith("anima_ref_adapter"):  # used by the Reference card, not as a LoRA
                     found.setdefault(os.path.splitext(f)[0], os.path.join(dirpath, f))
     with _lock:
         _files.clear()

@@ -173,6 +173,9 @@ class Job(BaseModel):
     reference_noise: float = Field(0.5, ge=0.0, le=1.0)  # the timestep the clean references are given
     reference_follow: bool = False  # their timestep follows the steps instead (Anima Edit LoRAs)
     reference_strength: float = Field(1.0, ge=0.0, le=1.0)  # how much the picture attends to them (1 = fully)
+    reference_adapter: bool = False  # the reference adapter LoRA reads the first reference (venno/engine/ref_adapter.py)
+    reference_guidance: float = Field(4.5, ge=0.0, le=20.0)  # with the adapter: how strongly the reference is followed (1 = plain CFG)
+    reference_correction: Literal["apg", "rescale", "none"] = "apg"  # keeps high reference guidance from over-saturating
     hires: Optional[Hires] = None
     detailer: list[Detailer] = []
     grid: Optional[Grid] = None  # comparison grid (X/Y/Z plot): runs every combination
@@ -371,6 +374,8 @@ def unsupported(job: Job) -> Optional[str]:
         name = job.hires.upscaler
         if not (upscale.is_latent(name) or name in upscale.RESAMPLE or name in upscale.models()):
             return f'hires upscaler "{name}"'
+    if job.reference_adapter and not job.references:
+        return "the reference adapter without a reference picture"
     if job.frames > 1 and job.mode != "txt2img":
         return "consistent sets (several frames) outside text to image"
     if job.sampler not in sampling.SAMPLERS:
