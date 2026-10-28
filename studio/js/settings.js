@@ -79,6 +79,11 @@ export class SettingsPage {
     const row = (k, v) => `<tr><th>${k}</th><td>${v}</td></tr>`;
     const path = (p) => `<code>${escapeHtml(p)}</code>`;
     box.innerHTML = `
+      <section class="card s-updates">
+        <h3>Updates</h3>
+        <div class="row"><button class="s-check">Check for updates</button><span class="muted s-update-state">Venno ${escapeHtml(s.version)} · updates come from the <code>main</code> branch on GitHub</span></div>
+        <div class="s-update-result"></div>
+      </section>
       <section class="card">
         <h3>Venno</h3>
         <table class="kv">
@@ -105,5 +110,49 @@ export class SettingsPage {
         <div class="row"><button class="s-rescan">Rescan model folders</button><span class="muted">after adding files by hand</span></div>
       </section>`;
     $(".s-rescan", box).onclick = async () => { await this.o.onRescan(); toast("Model folders rescanned", "info"); };
+    $(".s-check", box).onclick = () => this.checkUpdates();
+  }
+
+  async checkUpdates() {
+    const box = $(".s-update-result", this.root);
+    const button = $(".s-check", this.root);
+    button.disabled = true;
+    box.innerHTML = `<p class="muted">Checking GitHub…</p>`;
+    let u;
+    try {
+      u = await api("/venno/v1/update");
+    } catch (e) {
+      box.innerHTML = `<p class="warn">${escapeHtml(e.message)}</p>`;
+      return;
+    } finally {
+      button.disabled = false;
+    }
+    const notes = u.changes.map((c) => `<h4>${escapeHtml(c.version)}</h4><pre class="s-notes">${escapeHtml(c.notes)}</pre>`).join("");
+    const commits = u.commits?.length
+      ? `<details><summary>${u.commits.length}${u.commits.length >= 50 ? "+" : ""} change${u.commits.length > 1 ? "s" : ""}</summary><ul class="s-commits">${u.commits.map((c) => `<li><code>${escapeHtml(c.id)}</code> ${escapeHtml(c.title)}</li>`).join("")}</ul></details>`
+      : "";
+    if (!u.update_available) {
+      box.innerHTML = `<p>Venno ${escapeHtml(u.version)} is up to date.</p>${u.reason && u.reason !== "Up to date." ? `<p class="muted">${escapeHtml(u.reason)}</p>` : ""}`;
+      return;
+    }
+    const title = u.latest && u.latest !== u.version ? `Venno ${escapeHtml(u.latest)} is available (you have ${escapeHtml(u.version)}).` : "Updates are available.";
+    const action = u.can_update
+      ? `<div class="row"><button class="primary s-update">Update</button><span class="muted">Downloads the new version with git; restart Venno afterwards to use it.</span></div>`
+      : u.download ? `<p><a href="${escapeHtml(u.download)}" target="_blank" rel="noopener">Download the new version</a></p>` : "";
+    box.innerHTML = `<p><b>${title}</b></p>${notes}${commits}${u.reason ? `<p class="muted">${escapeHtml(u.reason)}</p>` : ""}${action}`;
+    const update = $(".s-update", box);
+    if (update) update.onclick = async () => {
+      update.disabled = true;
+      update.textContent = "Updating…";
+      try {
+        const r = await api("/venno/v1/update", {});
+        box.innerHTML = `<p><b>Updated to ${escapeHtml(r.to || r.commit)}.</b> Restart Venno (close it and start it again) to use the new version; changed requirements are installed on that start.</p>`;
+        toast("Updated: restart Venno to use the new version", "info");
+      } catch (e) {
+        update.disabled = false;
+        update.textContent = "Update";
+        toast(e.message);
+      }
+    };
   }
 }

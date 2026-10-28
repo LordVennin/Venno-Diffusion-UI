@@ -12,7 +12,7 @@ import math
 import os
 import re
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -193,7 +193,7 @@ def _system() -> dict:
     device = memory_management.get_torch_device()
     gpu = torch.cuda.get_device_name(device) if device.type == "cuda" else ""
     folders = [{"kind": label, "new_files": config.model_folder(kind), "searched": config.model_folders(kind)} for kind, label in KIND_LABELS.items()]
-    version = metadata.VERSION
+    version = metadata.VERSION.removeprefix("venno ")
     try:  # the commit, when running from a git checkout
         import subprocess
 
@@ -233,6 +233,28 @@ def create_app() -> FastAPI:
 
     app.add_api_route(f"{V}/refresh", refresh, methods=["POST"])
     app.add_api_route(f"{V}/system", _system, methods=["GET"])
+
+    # ---- updates (only when the user asks: Settings → System) ----
+    def update_check():
+        from venno import updates
+
+        try:
+            return updates.check()
+        except Exception as e:  # offline, GitHub unreachable, git missing
+            raise HTTPException(502, f"Could not check for updates: {e}")
+
+    def update_apply(request: Request):
+        from venno import updates
+
+        if request.client is None or request.client.host not in ("127.0.0.1", "::1", "localhost"):
+            raise HTTPException(403, "Update Venno from the computer it runs on")
+        try:
+            return updates.apply()
+        except Exception as e:
+            raise HTTPException(409, str(e))
+
+    app.add_api_route(f"{V}/update", update_check, methods=["GET"])
+    app.add_api_route(f"{V}/update", update_apply, methods=["POST"])
 
     # ---- generation jobs ----
     def submit_job(job: jobs.Job):

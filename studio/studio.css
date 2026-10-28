@@ -547,3 +547,7 @@ html, body { overflow-x: hidden; }
 #lora-browser .lb-tagedit span b { color: var(--muted); font-weight: 400; }
 #lora-browser .lb-tagedit input { flex: 1; min-width: 80px; border: 0; background: transparent; padding: 2px; outline: none; }
 @media (max-width: 900px) { #lora-browser .lb-side { display: none; } #lora-browser .lb-edit { position: absolute; right: 0; top: 0; bottom: 0; } }
+.s-updates h4 { margin: 10px 0 4px; font-size: 13px; }
+.s-updates .s-notes { white-space: pre-wrap; font-family: inherit; font-size: 12.5px; margin: 0; color: var(--text); }
+.s-updates .s-commits { margin: 6px 0; padding-left: 18px; font-size: 12px; max-height: 220px; overflow: auto; }
+.s-updates details { margin: 8px 0; }

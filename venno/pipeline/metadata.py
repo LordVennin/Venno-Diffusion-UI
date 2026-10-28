@@ -11,7 +11,9 @@ import threading
 
 from PIL import Image, PngImagePlugin
 
-VERSION = "venno"
+from venno.version import VERSION as _VERSION
+
+VERSION = f"venno {_VERSION}"  # the "Version" field of saved pictures
 _save_lock = threading.Lock()
 
 
