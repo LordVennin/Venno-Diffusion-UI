@@ -41,9 +41,9 @@ Venno is a standalone app built for Anima: its own server and generation pipelin
 ## Install
 
 1. Install [git](https://git-scm.com/downloads) and Python 3.10 or newer (3.12 / 3.13 recommended).
-2. Clone:
+2. Clone the `main` branch (releases):
    ```bash
-   git clone https://github.com/LordVennin/Venno-Diffusion-UI
+   git clone -b main https://github.com/LordVennin/Venno-Diffusion-UI
    cd Venno-Diffusion-UI
    ```
 3. Run `venno.bat` (Windows) or `./venno.sh` (Linux/macOS). The first start creates `venv/` and installs PyTorch (CUDA 13 build; set `TORCH_INDEX_URL` / `TORCH_COMMAND` for other GPUs) and the requirements, then Studio runs at **http://127.0.0.1:7860/** (add `--autolaunch` to open the browser). Later starts only check that everything is in place.
