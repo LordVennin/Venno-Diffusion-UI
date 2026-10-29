@@ -3,7 +3,7 @@
 import { $, api, escapeHtml, formatBytes, toast } from "./common.js";
 
 export class ModelsPage {
-  constructor(root, { onInstalled }) {
+  constructor(root, { onInstalled, onSetup }) {
     this.root = root;
     this.onInstalled = onInstalled; // refresh model lists after a download finishes
     this.data = null;
@@ -14,6 +14,7 @@ export class ModelsPage {
         <section class="card intro">
           <h3>Models</h3>
           <p>Anima needs three files: a <b>checkpoint</b>, the <b>Qwen3 text encoder</b> and the <b>Qwen-Image VAE</b>. Guides (ControlLLLite) make the Canvas sketch guides work; upscalers are used by hires fix. ADetailer's standard face / hand / person detectors download by themselves the first time they are used.</p>
+          <button class="m-setup">First-time setup…</button>
         </section>
         <div class="catalog"></div>
         <section class="card custom">
@@ -32,6 +33,7 @@ export class ModelsPage {
         </section>
       </div>`;
     $(".u-go", root).onclick = () => this.downloadURL();
+    $(".m-setup", root).onclick = () => onSetup?.();
   }
 
   async load() {

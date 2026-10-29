@@ -132,6 +132,41 @@ def _memory() -> dict:
     }
 
 
+SETUP_MODELS = ("anima-turbo", "anima-aesthetic", "anima-base")  # catalog ids offered by the first-run setup (first = recommended)
+SETUP_REQUIRED = {"text_encoder": "qwen3-te", "vae": "qwen-vae"}  # what every Anima checkpoint needs
+
+
+def _setup() -> dict:
+    """What a new install is missing to make a first picture, and what the setup dialog offers."""
+    import shutil
+
+    from venno.engine import models
+
+    names = lambda kind: [os.path.basename(t).lower() for t in models._scan(kind)]  # noqa: E731
+    have = {  # by name, as Studio picks them (other encoders and VAEs from a Forge / ComfyUI install don't count)
+        "checkpoint": bool(models.checkpoints()),
+        "text_encoder": any(re.search(r"qwen_?3[._-]?0?6b|qwen3(?![._-]?5)|0\.6b", n) for n in names("text_encoder")),
+        "vae": any("qwen" in n or "image_vae" in n for n in names("vae")),
+    }
+    catalog = {c["id"]: c for c in downloads.catalog()}
+    memory = _memory()
+    vram_gb = memory["total_vram_mb"] / 1024
+    try:
+        free = shutil.disk_usage(config.model_folder("checkpoint")).free
+    except OSError:
+        free = None
+    return {
+        "complete": all(have.values()),
+        "have": have,
+        "models": [catalog[i] for i in SETUP_MODELS if i in catalog],
+        "required": {k: catalog[i] for k, i in SETUP_REQUIRED.items() if i in catalog},
+        "free_bytes": free,
+        "folders": {kind: config.model_folder(kind) for kind in ("checkpoint", "text_encoder", "vae")},
+        "memory": memory,
+        "suggested_vram_mode": "lowvram" if 0 < vram_gb < 7 else "auto",  # below ~7 GB the 2B model plus encoders don't fit at once
+    }
+
+
 def _restart_reason() -> str:
     """Why the running server is out of date: "update" (code changed on disk), "settings" (saved for the next start) or ""."""
     if _code_stamp() != STARTED_WITH:
@@ -280,6 +315,12 @@ def create_app() -> FastAPI:
             return updates.apply()
         except Exception as e:
             raise HTTPException(409, str(e))
+
+    # ---- first-run setup (Studio's welcome dialog) ----
+    def setup_state():
+        return _setup()
+
+    app.add_api_route(f"{V}/setup", setup_state, methods=["GET"])
 
     # ---- settings that apply from the next start (Settings → System) ----
     def settings_get():

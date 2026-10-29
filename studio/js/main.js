@@ -8,6 +8,7 @@ import { DetailerCard, HIRES_DEFAULT, HiresCard } from "./cards.js";
 import { GRID_DEFAULT, GridCard } from "./gridui.js";
 import { ModelsPage } from "./models.js";
 import { SettingsPage } from "./settings.js";
+import { SetupDialog } from "./setup.js";
 import { InfoPage } from "./info.js";
 import { LoraChips } from "./loras.js";
 import { describeSettings, hasQualityTags, offerSettings } from "./params.js";
@@ -97,7 +98,8 @@ const infoPage = new InfoPage($("#page-info"), {
   },
 });
 const settingsPage = new SettingsPage($("#page-settings"), { modelsPage: null, onRescan: () => loadInfo(true) });
-const modelsPage = new ModelsPage(settingsPage.modelsRoot, { onInstalled: () => loadInfo(true) });
+const setup = new SetupDialog({ onDone: finishSetup });
+const modelsPage = new ModelsPage(settingsPage.modelsRoot, { onInstalled: () => loadInfo(true), onSetup: () => setup.open(true) });
 settingsPage.o.modelsPage = modelsPage;
 
 // ---------------- toast / status ----------------
@@ -856,7 +858,7 @@ async function loadInfo(refresh = false) {
     hrCard.setInfo(info);
     adCard.setInfo(info);
     gridCard.render();
-    if (!ckpts.length && !refresh) showTab("settings", "models");
+    if (!refresh) setup.open().then((shown) => { if (!shown && !ckpts.length) showTab("settings", "models"); });
     setStatus(ckpts.length ? `${ckpts.length} model(s) · ${info.loras.length} LoRA(s) · ${info.controlnets.length} guide model(s)` : "No Anima checkpoint yet — download one in ⚙ Settings → Models");
   } catch (e) {
     setStatus("Backend unreachable");
@@ -881,6 +883,12 @@ function selectCheckpoint(name) {
   state.model.checkpoint = opt.value;
   persist();
   return true;
+}
+
+/** First-run setup finished: rescan, and switch to the checkpoint it downloaded (with that model's settings). */
+async function finishSetup(checkpoint) {
+  await loadInfo(true);
+  if (checkpoint && selectCheckpoint(checkpoint)) applyPreset(presetForCheckpoint(state.model.checkpoint));
 }
 
 /** Canvas: apply settings read from an image. */

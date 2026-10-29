@@ -3,6 +3,13 @@
 Releases are the `main` branch; each one raises `venno/version.py`. Settings → System → *Check for updates*
 shows the sections newer than the installed version.
 
+## Unreleased (development branch)
+
+- First-run setup: a welcome window downloads a checkpoint with the text encoder and VAE in one go, selects it
+  with its settings, and offers Low VRAM mode on small graphics cards (again from Settings → Models).
+- Memory mode (Automatic / Low VRAM / No VRAM) in Settings → System, used from the next start; Venno falls back
+  to the CPU instead of stopping when no graphics card is usable.
+
 ## 0.9.0 — 2026-10-28
 
 First numbered release, and the start of the `main` branch.
