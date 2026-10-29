@@ -112,14 +112,19 @@ function toast(msg, kind = "error") {
 view.onToast = (m) => toast(m, "info");
 const setStatus = (s) => ($("#status").textContent = s);
 
-/** Venno's files were updated after the server started: new options in the Studio would be ignored until a restart. */
-function showRestartBanner(on) {
+/** The running server is out of date: Venno's files were updated ("update") or a setting for the next start
+ * was changed ("settings"). */
+function showRestartBanner(on, reason = "update") {
   let el = $("#restart-note");
   if (!on) return el?.remove();
-  if (el) return;
+  if (el?.dataset.reason === reason) return;
+  el?.remove();
   el = document.createElement("div");
   el.id = "restart-note";
-  el.innerHTML = `Venno was updated after it started. <b>Restart Venno</b> (close it and run venno.bat / venno.sh again): until then the server runs the old version and ignores new options. <button title="Hide">×</button>`;
+  el.dataset.reason = reason;
+  el.innerHTML = reason === "settings"
+    ? `A setting changed that applies from the next start. <b>Restart Venno</b> (close it and run venno.bat / venno.sh again) to use it. <button title="Hide">×</button>`
+    : `Venno was updated after it started. <b>Restart Venno</b> (close it and run venno.bat / venno.sh again): until then the server runs the old version and ignores new options. <button title="Hide">×</button>`;
   el.querySelector("button").onclick = () => el.remove();
   document.body.prepend(el);
 }
@@ -821,7 +826,7 @@ async function loadInfo(refresh = false) {
     setStatus(refresh ? "Rescanning models…" : "Connecting…");
     const info = refresh ? await api("/venno/v1/refresh", {}) : await api("/venno/v1/info");
     state.info = info;
-    showRestartBanner(info.restart_needed);
+    showRestartBanner(info.restart_needed, info.restart_reason);
     refreshTokenCounters(); // the quality prefix comes with the info
     const ckpts = info.checkpoints.map((c) => ({ value: c.title, label: c.name }));
     const mods = info.modules.filter((m) => !/qwen3[._-]?5[._-]?4b|qwen35_4b/i.test(m.name)); // Anima 3.8B's second encoder is picked automatically

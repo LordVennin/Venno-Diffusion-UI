@@ -9,6 +9,7 @@ given on the same line.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -36,6 +37,51 @@ folders.add_argument("--controlnet-dirs", type=str, nargs="*", default=[], help=
 folders.add_argument("--esrgan-models-path", type=str, default=None, help="extra upscaler folder")
 
 args, _unknown = parser.parse_known_args()
+
+
+# ---------------------------------------------------------------- settings made in the Studio
+
+SETTINGS_FILE = "venno-settings.json"  # in the data folder; settings that apply from the next start
+VRAM_MODES = {"auto": None, "lowvram": "--lowvram", "novram": "--novram"}  # Settings → System → Memory
+VRAM_FLAGS = ("--gpu-only", "--highvram", "--lowvram", "--novram", "--cpu")  # the engine's mutually exclusive memory options
+startup = {"vram_mode": "auto", "vram_from": "default"}  # what this run started with (set by apply_saved_settings)
+
+
+def settings_path() -> str:
+    return os.path.join(data_path(), SETTINGS_FILE)
+
+
+def load_settings() -> dict:
+    try:
+        with open(settings_path(), encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(**updates) -> dict:
+    """Merge `updates` into the settings file (written atomically) and return all settings."""
+    data = {**load_settings(), **updates}
+    tmp = settings_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, settings_path())
+    return data
+
+
+def apply_saved_settings(argv: list[str]) -> None:
+    """At server start, before the engine reads its options: add the saved memory mode to `argv`, unless the
+    command line already sets one (the command line wins)."""
+    given = next((a for a in argv[1:] if a in VRAM_FLAGS), None)
+    if given:
+        startup.update(vram_mode=given.lstrip("-"), vram_from="command line")  # e.g. lowvram, highvram, cpu
+        return
+    mode = load_settings().get("vram_mode", "auto")
+    flag = VRAM_MODES.get(mode)
+    if flag:
+        argv.append(flag)
+        startup.update(vram_mode=mode, vram_from="settings")
 
 
 def data_path() -> str:

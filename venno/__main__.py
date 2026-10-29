@@ -33,6 +33,7 @@ def main():
     for var in ("HF_HOME", "HF_HUB_CACHE", "HF_DATASETS_CACHE", "HUGGINGFACE_HUB_CACHE", "HUGGINGFACE_ASSETS_CACHE"):
         os.environ.setdefault(var, hf_cache)
 
+    config.apply_saved_settings(sys.argv)  # the memory mode chosen in Settings, unless given on the command line
     from backend.args import args as engine_args
 
     if engine_args.gpu_device_id is not None:

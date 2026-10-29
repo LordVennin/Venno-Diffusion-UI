@@ -76,6 +76,8 @@ An install from before the `main` branch (on the branch `ccr-7369d750-va6fhe`) m
 - `--port 7860`, `--listen` (serve on the network), `--autolaunch`
 - `--models-dir PATH`: use an existing models folder, e.g. your Forge / A1111 `models` (same sub-folders: `Stable-diffusion`, `text_encoder`, `VAE`, `Lora`, `ControlNet`, `ESRGAN`, `adetailer`); `--data-dir`, `--outputs-dir`; extra folders with `--ckpt-dirs`, `--lora-dir`, `--controlnet-dir`, …
 - engine: `--lowvram` / `--novram` / `--highvram` / `--cpu`, precision (`--fp8_e4m3fn-unet`, `--bf16-vae`, …), attention (`--sage`, `--flash`, `--xformers` also install the package on first use), `--cuda-malloc`, …
+
+**Memory mode** without the command line: ⚙ Settings → System → *Memory* (Automatic, Low VRAM, No VRAM). It is saved in `venno-settings.json` and applies from the next start; a memory option on the command line wins over it. Without a GPU that PyTorch can use, Venno runs on the CPU by itself (with a warning); `--cpu` skips that check.
 - `--skip-install`: don't check / install packages on start (you manage the environment yourself)
 
 With `--listen`, downloading from custom URLs is disabled unless you add `--allow-custom-downloads`. Catalog downloads keep working.

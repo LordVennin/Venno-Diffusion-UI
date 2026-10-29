@@ -114,12 +114,39 @@ def _code_stamp() -> tuple:
 STARTED_WITH = _code_stamp()  # Venno updated (e.g. git pull) without a restart → the Studio says so
 
 
+def _memory() -> dict:
+    """The memory mode this run uses and the one saved for the next start (Settings → System)."""
+    from backend import memory_management
+
+    saved = config.load_settings().get("vram_mode", "auto")
+    running = config.startup["vram_mode"]
+    from_command_line = config.startup["vram_from"] == "command line"
+    return {
+        "saved": saved,
+        "running": running,
+        "from_command_line": from_command_line,
+        "state": memory_management.vram_state.name,
+        "total_vram_mb": round(memory_management.total_vram) if memory_management.cpu_state is memory_management.CPUState.GPU else 0,
+        "total_ram_mb": round(memory_management.total_ram),
+        "restart_needed": not from_command_line and saved != running,
+    }
+
+
+def _restart_reason() -> str:
+    """Why the running server is out of date: "update" (code changed on disk), "settings" (saved for the next start) or ""."""
+    if _code_stamp() != STARTED_WITH:
+        return "update"
+    return "settings" if _memory()["restart_needed"] else ""
+
+
 def _info() -> dict:
     from venno.engine import models
 
     loaded = models.manager.info
+    reason = _restart_reason()
     return {
-        "restart_needed": _code_stamp() != STARTED_WITH,
+        "restart_needed": bool(reason),
+        "restart_reason": reason,
         "checkpoints": [{"title": t, "name": models.checkpoint_name(os.path.basename(t))} for t in models.checkpoints()],
         "modules": [{"name": k, "filename": v} for k, v in models.modules().items()],
         "current_checkpoint": loaded.get("name", ""),
@@ -215,6 +242,7 @@ def _system() -> dict:
         "listen": config.listen_host(),
         "port": config.args.port,
         "command_line": " ".join(sys.argv[1:]),
+        "memory": _memory(),
     }
 
 
@@ -252,6 +280,23 @@ def create_app() -> FastAPI:
             return updates.apply()
         except Exception as e:
             raise HTTPException(409, str(e))
+
+    # ---- settings that apply from the next start (Settings → System) ----
+    def settings_get():
+        return {"settings": config.load_settings(), "memory": _memory(), "vram_modes": list(config.VRAM_MODES)}
+
+    def settings_set(req: dict, request: Request):
+        if request.client is None or request.client.host not in ("127.0.0.1", "::1", "localhost"):
+            raise HTTPException(403, "Change Venno's settings from the computer it runs on")
+        mode = req.get("vram_mode")
+        if mode is not None and mode not in config.VRAM_MODES:
+            raise HTTPException(400, f"Unknown memory mode {mode!r}")
+        if mode is not None:
+            config.save_settings(vram_mode=mode)
+        return settings_get()
+
+    app.add_api_route(f"{V}/settings", settings_get, methods=["GET"])
+    app.add_api_route(f"{V}/settings", settings_set, methods=["POST"])
 
     app.add_api_route(f"{V}/update", update_check, methods=["GET"])
     app.add_api_route(f"{V}/update", update_apply, methods=["POST"])

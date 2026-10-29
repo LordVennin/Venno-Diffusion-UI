@@ -84,6 +84,10 @@ export class SettingsPage {
         <div class="row"><button class="s-check">Check for updates</button><span class="muted s-update-state">Venno ${escapeHtml(s.version)} · updates come from the <code>main</code> branch on GitHub</span></div>
         <div class="s-update-result"></div>
       </section>
+      <section class="card s-memory">
+        <h3>Memory</h3>
+        ${memoryCard(s.memory)}
+      </section>
       <section class="card">
         <h3>Venno</h3>
         <table class="kv">
@@ -111,6 +115,15 @@ export class SettingsPage {
       </section>`;
     $(".s-rescan", box).onclick = async () => { await this.o.onRescan(); toast("Model folders rescanned", "info"); };
     $(".s-check", box).onclick = () => this.checkUpdates();
+    $$(".s-memory input[name=vram]", box).forEach((input) => (input.onchange = async () => {
+      try {
+        const r = await api("/venno/v1/settings", { vram_mode: input.value });
+        $(".s-memory-state", box).innerHTML = memoryState(r.memory);
+        await this.o.onRescan(); // refreshes the restart banner
+      } catch (e) {
+        toast(e.message);
+      }
+    }));
   }
 
   async checkUpdates() {
@@ -155,4 +168,28 @@ export class SettingsPage {
       }
     };
   }
+}
+
+const VRAM_CHOICES = [
+  ["auto", "Automatic", "Loads as much of a model as fits in VRAM and streams the rest when it runs short. Right for most cards."],
+  ["lowvram", "Low VRAM", "Always splits the diffusion model and keeps only the part being used on the GPU. For about 6–8 GB, or larger models (Anima 3.8B) on mid-size cards. Slower."],
+  ["novram", "No VRAM", "Keeps almost nothing on the GPU between uses. For 4 GB or less, or when other programs need the VRAM. Slowest."],
+];
+
+/** Settings → System → Memory: the memory mode for the next start. */
+function memoryCard(m) {
+  const gb = (mb) => `${(mb / 1024).toFixed(1)} GB`;
+  const choices = VRAM_CHOICES.map(([value, label, hint]) => `
+    <label class="s-choice"><input type="radio" name="vram" value="${value}"${m.saved === value ? " checked" : ""}${m.from_command_line ? " disabled" : ""}>
+      <span><b>${label}</b><br><span class="muted">${hint}</span></span></label>`).join("");
+  return `<p class="muted">How models use the graphics card's memory (${m.total_vram_mb ? `${gb(m.total_vram_mb)} VRAM` : "no graphics card memory found"}, ${gb(m.total_ram_mb)} RAM). Applies from the next start.</p>
+    <div class="s-choices">${choices}</div>
+    <p class="s-memory-state">${memoryState(m)}</p>`;
+}
+
+function memoryState(m) {
+  const name = (v) => (VRAM_CHOICES.find(([value]) => value === v) || [v, v])[1];
+  if (m.from_command_line) return `<span class="muted">Set on the command line (<code>--${escapeHtml(m.running)}</code>), which overrides this setting: remove it from the command line (or VENNO_ARGS) to choose here.</span>`;
+  if (m.saved !== m.running) return `<span class="warn">Saved: restart Venno to switch from ${escapeHtml(name(m.running))} to ${escapeHtml(name(m.saved))}.</span>`;
+  return `<span class="muted">In use now: ${escapeHtml(name(m.running))}.</span>`;
 }

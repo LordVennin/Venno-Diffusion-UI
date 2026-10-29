@@ -127,6 +127,10 @@ except Exception:
 
 if args.cpu:
     cpu_state = CPUState.CPU
+elif cpu_state is CPUState.GPU and not directml_enabled and not xpu_available and not torch.cuda.is_available():
+    # Venno: no usable GPU (a CPU-only PyTorch, or no NVIDIA / AMD card): run on the CPU instead of failing at start
+    logger.warning("No GPU found that PyTorch can use: running on the CPU (slow). Start with --cpu to skip this check.")
+    cpu_state = CPUState.CPU
 
 
 def is_intel_xpu() -> bool:

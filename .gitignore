@@ -30,3 +30,5 @@ __pycache__
 /webui-user.bat
 /webui-user.sh
 notification.mp3
+/venno-settings.json
+/venno-settings.json.tmp
