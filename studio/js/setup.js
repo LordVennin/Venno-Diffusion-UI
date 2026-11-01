@@ -25,7 +25,9 @@ export class SetupDialog {
     if (!force && sessionStorage.getItem(LATER)) return false;
     try {
       this.state = await api("/venno/v1/setup");
-    } catch {
+    } catch (e) {
+      console.warn("[Venno] setup check failed:", e); // Studio falls back to Settings → Models
+      if (force) toast(`Could not open the setup: ${e.message}`);
       return false;
     }
     if (this.state.complete && !force) return false;
