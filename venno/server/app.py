@@ -370,6 +370,11 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown or finished job")
         return {"ok": True}
 
+    def skip_job(job_id: str):
+        if not jobs.skip(job_id):
+            raise HTTPException(status_code=404, detail="Unknown or finished job")
+        return {"ok": True}
+
     def list_jobs():
         return [r.summary() for r in reversed(jobs.all_records())]
 
@@ -507,6 +512,7 @@ def create_app() -> FastAPI:
     app.add_api_route(f"{V}/jobs/{{job_id}}/images/{{index}}.png", job_image, methods=["GET"])
     app.add_api_route(f"{V}/jobs/{{job_id}}/detections/{{index}}.png", job_detections, methods=["GET"])
     app.add_api_route(f"{V}/jobs/{{job_id}}/cancel", cancel_job, methods=["POST"])
+    app.add_api_route(f"{V}/jobs/{{job_id}}/skip", skip_job, methods=["POST"])
 
     @app.websocket(f"{V}/events")
     async def events(ws: WebSocket):

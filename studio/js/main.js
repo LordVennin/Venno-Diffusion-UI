@@ -645,6 +645,7 @@ function updateModeLabel() {
 
 $("#btn-generate").onclick = () => gen.run();
 $("#btn-cancel").onclick = () => gen.interrupt();
+$("#btn-skip").onclick = () => gen.skip();
 $("#btn-apply").onclick = () => gen.apply();
 $("#btn-discard").onclick = () => gen.discardPreview();
 
@@ -752,9 +753,11 @@ gen.on((what, data) => {
   } else if (what === "progress") {
     const { pct, text } = jobProgress(data);
     setProgress(pct, text);
+    $("#btn-skip").hidden = !(data.status === "running" && data.job_count > 1);
   } else if (what === "idle") {
     $("#btn-generate").disabled = false;
     $("#btn-cancel").hidden = true;
+    $("#btn-skip").hidden = true;
     $("#progress").classList.remove("on");
   } else if (what === "results") {
     renderThumbs();

@@ -40,3 +40,40 @@ def test_lora_tags_are_lifted_into_the_job():
     jobs._lift_lora_tags(job)
     assert "lora" not in job.prompt and "lora" not in job.negative
     assert {l.name: l.weight for l in job.loras} == {"x": 1.0, "y": 0.3}, "the list wins over a tag naming the same LoRA"
+
+
+def test_skip_drops_one_image_and_cancel_keeps_the_finished_ones(monkeypatch):
+    """The job runner's skip / cancel wiring, with a stand-in pipeline that stops like the real one."""
+    from venno.engine import sampling
+    from venno.pipeline import generate
+
+    rec = jobs.JobRecord(jobs.Job(count=4, steps=3))
+
+    def fake_run(job, progress):
+        result = generate.Result()
+        for run in range(job.count):
+            try:
+                for step in range(job.steps):
+                    if (run, step) == (1, 1):
+                        jobs.skip(rec.id)  # while image 2 is being made
+                    if (run, step) == (2, 1):
+                        jobs.cancel(rec.id)  # while image 3 is being made
+                    if progress.is_cancelled():
+                        raise sampling.Cancelled
+            except sampling.Cancelled:
+                if progress.stop(result):
+                    break
+                continue
+            result.images.append(b"png%d" % run)
+            result.seeds.append(run)
+            result.infotexts.append("")
+        return result
+
+    monkeypatch.setattr(generate, "run", fake_run)
+    jobs._records[rec.id] = rec
+    rec.status = "running"
+    try:
+        cancelled = jobs._run(rec)
+    finally:
+        jobs._records.pop(rec.id)
+    assert cancelled and rec.images == [b"png0"] and rec.skipped == 1

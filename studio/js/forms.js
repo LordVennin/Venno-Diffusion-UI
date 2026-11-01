@@ -3,7 +3,7 @@
 import {
   $, $$, ADETAILER_DEFAULT, downloadDataURL, escapeHtml, fillSelect, loadStore, presetForCheckpoint, saveStore, toast, withQualityPrefix,
 } from "./common.js";
-import { cancelJob, jobModel, jobProgress, runJob } from "./jobs.js";
+import { cancelJob, finishedImages, jobModel, jobProgress, runJob, skipJob } from "./jobs.js";
 import { jobLoras, LoraChips } from "./loras.js";
 import { runSteps, SchedulePreview } from "./schedule.js";
 import { describeSettings, hasQualityTags, offerSettings, readImageSettings } from "./params.js";
@@ -91,7 +91,8 @@ export class GenForm {
           </div>
           <div class="row buttons">
             <button class="primary big f-generate">Generate</button>
-            <button class="big f-cancel" hidden>Cancel</button>
+            <button class="big f-skip" hidden title="Drop the image being made and go on with the next one">Skip</button>
+            <button class="big f-cancel" hidden title="Stop; the images already finished are kept">Cancel</button>
           </div>
           <div class="f-progress progress-inline" hidden><div class="bar"></div><span></span></div>
         </section>
@@ -288,6 +289,7 @@ export class GenForm {
     this.q(".f-swap").onclick = () => this.setSize(s.height, s.width);
     this.q(".f-generate").onclick = () => this.generate();
     this.q(".f-cancel").onclick = () => this.jobId && cancelJob(this.jobId);
+    this.q(".f-skip").onclick = () => this.jobId && skipJob(this.jobId);
     this.loras = new LoraChips(this.q(".f-lora-chips"), { get: () => s.loras, set: (list) => { s.loras = list; this.persist(); this.gridCard?.render(); } });
     this.q(".f-lora-browse").onclick = () => openLoraBrowser({
       chips: this.loras, prompt: this.q(".f-prompt"),
@@ -1009,12 +1011,11 @@ export class GenForm {
           const { pct, text } = jobProgress(j);
           $(".bar", bar).style.width = `${pct}%`;
           $("span", bar).textContent = text;
+          this.q(".f-skip").hidden = !(j.status === "running" && j.job_count > 1);
         },
         onPreview: (src) => this.showPreview(src),
       });
-      if (done.status === "cancelled") throw new Error("Cancelled"); // ignore half-denoised images from an interrupted run
-      if (!done.images.length) throw new Error("No image returned");
-      const fresh = done.images.map((src, i) => ({ src, seed: done.seeds[i] ?? job.seed, info: done.infotexts[i] || "", detect: done.detections?.[i] || null, detectNote: done.detection_notes?.[i] || "" }));
+      const fresh = finishedImages(done).map((src, i) => ({ src, seed: done.seeds[i] ?? job.seed, info: done.infotexts[i] || "", detect: done.detections?.[i] || null, detectNote: done.detection_notes?.[i] || "" }));
       this.results = [...fresh, ...this.results].slice(0, 60);
       this.select(0);
     } catch (e) {
@@ -1025,6 +1026,7 @@ export class GenForm {
       this.jobId = null;
       this.q(".f-generate").disabled = false;
       this.q(".f-cancel").hidden = true;
+      this.q(".f-skip").hidden = true;
       bar.hidden = true;
     }
   }

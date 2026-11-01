@@ -260,13 +260,15 @@ def run(job, progress, run_job) -> "object":
                 sub = sub.model_copy(update=a.updates(sub, a.values[i]))
         cell_progress = Progress(
             on_step=lambda step, steps, run, runs, n=n: progress.on_step(step, steps, n, len(order)),
-            on_preview=progress.on_preview, is_cancelled=progress.is_cancelled, preview_every=progress.preview_every,
+            on_preview=progress.on_preview, is_cancelled=progress.is_cancelled, take_skip=progress.take_skip, preview_every=progress.preview_every,
         )
         part = run_job(sub, cell_progress)
         result.warnings += [w for w in part.warnings if w not in result.warnings]
-        if part.cancelled or not part.images:
-            result.cancelled = part.cancelled
+        if part.cancelled:
+            result.cancelled = True
             break
+        if not part.images:  # a skipped cell stays blank
+            continue
         frames = [Image.open(io.BytesIO(png)).convert("RGB") for png in part.images]  # a consistent set: its frames side by side
         cell = Image.new("RGB", (sum(f.width for f in frames), max(f.height for f in frames)))
         for k, f in enumerate(frames):

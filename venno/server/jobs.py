@@ -209,6 +209,8 @@ class JobRecord:
         self.preview: Optional[bytes] = None  # latest live preview (JPEG)
         self.preview_id = 0
         self.cancel_event = threading.Event()
+        self.skip_event = threading.Event()  # skip the image being made, keep going with the rest
+        self.skipped = 0
         self.version = 0  # bumped on every change (for event streaming)
 
     def set_preview(self, jpeg: bytes):
@@ -235,6 +237,8 @@ class JobRecord:
             "detections": [f"/venno/v1/jobs/{self.id}/detections/{i}.png" if d else None for i, d in enumerate(self.detections)],
             "detection_notes": self.detection_notes,
             "queue_position": queue_position(self.id),
+            "skipped": self.skipped,
+            "batch": self.job.batch,
         }
 
 
@@ -312,6 +316,16 @@ def cancel(job_id: str) -> bool:
             rec.cancel_event.set()
             return True
     return False
+
+
+def skip(job_id: str) -> bool:
+    """Stop the image being made (it is dropped) and go on with the job's next one."""
+    with _cond:
+        rec = _records.get(job_id)
+        if rec is None or rec.status != "running":
+            return False
+        rec.skip_event.set()
+        return True
 
 
 # ---------------------------------------------------------------- worker
@@ -401,7 +415,16 @@ def _run(rec: JobRecord) -> bool:
         rec.eta = elapsed / rec.progress - elapsed if rec.progress > 0.01 else 0.0
         rec.version += 1
 
-    progress = generate.Progress(on_step=on_step, on_preview=rec.set_preview, is_cancelled=rec.cancel_event.is_set)
+    def take_skip() -> bool:
+        if not rec.skip_event.is_set() or rec.cancel_event.is_set():
+            return False
+        rec.skip_event.clear()
+        rec.skipped += 1
+        rec.version += 1
+        return True
+
+    progress = generate.Progress(on_step=on_step, on_preview=rec.set_preview,
+                                 is_cancelled=lambda: rec.cancel_event.is_set() or rec.skip_event.is_set(), take_skip=take_skip)
     rec.job_count = total_runs
     import torch
 

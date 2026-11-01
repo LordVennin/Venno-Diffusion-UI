@@ -25,8 +25,16 @@ class Progress:
 
     on_step: Callable[[int, int, int, int], None] = lambda step, steps, run, runs: None  # sampling step within run
     on_preview: Callable[[bytes], None] = lambda jpeg: None
-    is_cancelled: Callable[[], bool] = lambda: False
+    is_cancelled: Callable[[], bool] = lambda: False  # also true while a skip is pending (it stops the sampler)
+    take_skip: Callable[[], bool] = lambda: False  # a stop that only skips the current image (and clears it)
     preview_every: int = 1
+
+    def stop(self, result: "Result") -> bool:
+        """After sampling.Cancelled: True when the job is cancelled, False when only the current image is skipped."""
+        if self.take_skip():
+            return False
+        result.cancelled = True
+        return True
 
 
 @dataclass
@@ -173,6 +181,7 @@ def run_each(job, progress: Progress) -> Result:
             on_step=lambda step, steps, run, runs, k=k: progress.on_step(step, steps, k, total),
             on_preview=progress.on_preview,
             is_cancelled=progress.is_cancelled,
+            take_skip=progress.take_skip,
             preview_every=progress.preview_every,
         )
         extra = {"Template": job.prompt} if wildcards.has_syntax(job.prompt) else {}
@@ -366,8 +375,9 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
                     on_step=stepper(steps_run), guides=guide_set, reference=refs,
                 )
         except sampling.Cancelled:
-            result.cancelled = True
-            break
+            if progress.stop(result):
+                break
+            continue  # skipped: on to the next image
 
         for k, generated in enumerate(vae.decode(engine, latents)):  # frames of an image are consecutive
             seed, frame = seeds[k // frames], k % frames
@@ -379,14 +389,16 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
                     if redrawn:
                         image = region_pass.redraw(engine, job, progress, image, seed, src=src, cache=tensors, which=redrawn)
                 except sampling.Cancelled:
-                    result.cancelled = True
-                    return result
+                    if progress.stop(result):
+                        return result
+                    continue  # skipped: this image is dropped
             if job.region_refine > 0 and job.regions:
                 try:
                     image, _ = region_pass.run(engine, job, progress, image, seed, src=src, cache=tensors, limit_mask=src.full_mask if src is not None else None)
                 except sampling.Cancelled:
-                    result.cancelled = True
-                    return result
+                    if progress.stop(result):
+                        return result
+                    continue  # skipped: this image is dropped
             found, note = None, ""
             if units:
                 try:
@@ -395,8 +407,9 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
                     image, report = detail.run(engine, job, progress, image, seed, units, job_loras=loras, cache=tensors, limit_mask=limit)
                     found, note = detail.preview_png(before, report), detail.summary(report)
                 except sampling.Cancelled:
-                    result.cancelled = True
-                    return result
+                    if progress.stop(result):
+                        return result
+                    continue  # skipped: this image is dropped
             if redrawn:
                 note = f"{note}; " if note else ""
                 note += "redrew region " + ", ".join(str(k + 1) for k in redrawn) + " (no character found there)"

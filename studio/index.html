@@ -117,8 +117,9 @@
       </div>
       <div class="row buttons">
         <button id="btn-generate" class="primary big">Generate</button>
-        <button id="btn-cancel" class="big" hidden>Cancel</button>
-        <label class="batch" title="Images per run">×<input type="number" id="batch" min="1" max="8" value="2"></label>
+        <button id="btn-skip" class="big" hidden title="Drop the image being made and go on with the next one">Skip</button>
+        <button id="btn-cancel" class="big" hidden title="Stop; the images already finished are kept">Cancel</button>
+        <label class="batch" title="Number of images, made one after another">×<input type="number" id="batch" min="1" max="8" value="2"></label>
       </div>
       <div class="row">
         <label class="check live" title="Re-generate automatically whenever you change the canvas"><input type="checkbox" id="live"> Live mode</label>

@@ -77,14 +77,26 @@ export function cancelJob(id) {
   return api(`${V}/jobs/${id}/cancel`, {}).catch(() => {});
 }
 
+/** Drop the image being made and go on with the job's next one. */
+export function skipJob(id) {
+  return api(`${V}/jobs/${id}/skip`, {}).catch(() => {});
+}
+
+/** Images a finished job returned: a cancelled job keeps the ones completed before the cancel. */
+export function finishedImages(done) {
+  if (!done.images.length) throw new Error(done.status === "cancelled" || done.skipped ? "Cancelled" : "No image returned");
+  return done.images;
+}
+
 // Job summary → progress bar text
 export function jobProgress(j) {
   if (j.status === "queued") return { pct: 0, text: j.queue_position > 1 ? `Queued (#${j.queue_position})` : "Queued…" };
   const pct = Math.round((j.progress || 0) * 100);
-  const part = j.job_count > 1 ? ` · pass ${j.job_no + 1}/${j.job_count}` : "";
+  const part = j.job_count > 1 ? ` · ${j.batch > 1 ? "pass" : "image"} ${j.job_no + 1}/${j.job_count}` : "";
+  const skipped = j.skipped ? ` · ${j.skipped} skipped` : "";
   const step = j.steps ? ` · step ${j.step}/${j.steps}` : "";
   const eta = j.eta && pct >= 5 ? ` · ~${Math.round(j.eta)}s left` : "";
-  return { pct, text: `${pct}%${part}${step}${eta}` };
+  return { pct, text: `${pct}%${part}${step}${eta}${skipped}` };
 }
 
 // Shared model selection → job.model

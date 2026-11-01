@@ -4,7 +4,7 @@ import { LAYER_CONTROL, LAYER_PAINT, alphaToMask, ctx2d, hasContentIn, loadImage
 import { withQualityPrefix } from "./common.js";
 import { detailerJob, hiresJob } from "./cards.js";
 import { gridJob } from "./gridui.js";
-import { cancelJob, jobModel, runJob } from "./jobs.js";
+import { cancelJob, finishedImages, jobModel, runJob, skipJob } from "./jobs.js";
 import { jobLoras } from "./loras.js";
 
 // Choose a model resolution for a canvas area: ~targetPixels, multiples of 64, Anima-friendly bounds.
@@ -89,8 +89,8 @@ export class Generator {
       switch_at: g.switchAt,
       width: gw,
       height: gh,
-      batch: plan.live ? 1 : g.batch,
-      count: 1,
+      batch: 1,
+      count: plan.live ? 1 : g.batch, // one image after another (same pictures as a batch): Cancel keeps the finished ones, Skip drops one
       seed,
       sampler: g.sampler,
       scheduler: g.scheduler,
@@ -211,9 +211,7 @@ export class Generator {
           if (img && this.busy) this.view.setOverlay(img, plan.rect);
         },
       });
-      if (done.status === "cancelled") throw new Error("Cancelled"); // ignore half-denoised images from an interrupted run
-      const images = await Promise.all(done.images.map((url) => loadImage(url)));
-      if (!images.length) throw new Error("No image returned");
+      const images = await Promise.all(finishedImages(done).map((url) => loadImage(url))); // never a half-denoised one
       const result = { id: this._resultId++, images, rect: plan.rect, mask, seeds: done.seeds, infotexts: done.infotexts, prompt: job.prompt, txt2img: plan.txt2img };
       result.grid = images.map((_, i) => /, Grid: "/.test(done.infotexts?.[i] || "")); // comparison grids: viewed, not applied
       result.detections = done.detections || []; // ADetailer's detection previews (boxes and scores)
@@ -251,6 +249,10 @@ export class Generator {
   async interrupt() {
     this.live.pending = false;
     if (this.currentJob) await cancelJob(this.currentJob);
+  }
+
+  async skip() {
+    if (this.currentJob) await skipJob(this.currentJob);
   }
 
   // ---------- results ----------
