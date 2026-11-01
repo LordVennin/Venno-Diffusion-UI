@@ -33,6 +33,13 @@ def main():
     for var in ("HF_HOME", "HF_HUB_CACHE", "HF_DATASETS_CACHE", "HUGGINGFACE_HUB_CACHE", "HUGGINGFACE_ASSETS_CACHE"):
         os.environ.setdefault(var, hf_cache)
 
+    from venno import install
+
+    wrong = install.mismatches()
+    if wrong:  # started with --skip-install, or something else changed the venv since
+        print(f"[Venno] WARNING: installed packages differ from requirements.txt: {', '.join(wrong)}.\n"
+              f"[Venno] Start Venno without --skip-install to fix this, or run: \"{sys.executable}\" -m pip install -r requirements.txt", flush=True)
+
     config.apply_saved_settings(sys.argv)  # the memory mode chosen in Settings, unless given on the command line
     from backend.args import args as engine_args
 

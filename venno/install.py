@@ -70,7 +70,9 @@ def installed(package: str) -> bool:
         return False
 
 
-def requirements_met(path: str) -> bool:
+def mismatches(path: str = os.path.join(ROOT, "requirements.txt")) -> list[str]:
+    """Requirements that are missing or installed at another version, e.g. "transformers 5.0.0 (needs 4.57.6)"."""
+    out = []
     for line in open(path, encoding="utf-8"):
         line = line.split("#", 1)[0].strip()
         if not line:
@@ -78,14 +80,19 @@ def requirements_met(path: str) -> bool:
         spec, _, marker = line.partition(";")
         if marker:
             continue  # environment-specific lines: let pip decide
-        name, _, version = spec.partition("==")
+        name, _, version = (x.strip() for x in spec.partition("=="))
         try:
-            have = importlib.metadata.version(name.strip())
+            have = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
-            return False
-        if version and have != version.strip():
-            return False
-    return True
+            out.append(f"{name} (missing)")
+            continue
+        if version and have != version:
+            out.append(f"{name} {have} (needs {version})")
+    return out
+
+
+def requirements_met(path: str) -> bool:
+    return not mismatches(path)
 
 
 def torch_versions() -> tuple[str, str]:
