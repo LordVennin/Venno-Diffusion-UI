@@ -1,3 +1,5 @@
+import time
+
 import pytest
 from pydantic import ValidationError
 
@@ -82,3 +84,27 @@ def test_skip_drops_one_image_and_cancel_keeps_the_finished_ones(monkeypatch):
         jobs._records.pop(rec.id)
     assert cancelled and rec.images == [b"png0"] and rec.skipped == 1
     assert seen == [(1, f"/venno/v1/jobs/{rec.id}/images/0.png")] and rec.detections == [None]
+
+
+def test_out_of_memory_is_explained_and_recovered(monkeypatch):
+    import torch
+
+    from venno import config
+    from venno.pipeline import generate
+
+    def oom(job, progress):
+        raise torch.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB")
+
+    freed = []
+    monkeypatch.setattr(generate, "run", oom)
+    monkeypatch.setattr(jobs, "_recover_memory", lambda: freed.append(True))
+    monkeypatch.setattr(config, "startup", {"vram_mode": "auto", "vram_from": "default"})
+    rec = jobs.submit(jobs.Job(batch=2))
+    for _ in range(100):
+        if rec.status in ("done", "error"):
+            break
+        time.sleep(0.05)
+    assert rec.status == "error" and rec.error.startswith("Out of graphics memory") and freed
+    assert "Low VRAM" in rec.error and "Batch count" in rec.error and "hires" not in rec.error
+    monkeypatch.setattr(config, "startup", {"vram_mode": "lowvram", "vram_from": "settings"})
+    assert "No VRAM" in jobs.out_of_memory_message(jobs.Job())

@@ -352,21 +352,67 @@ def _work_loop():
             rec.started = time.time()
             rec.version += 1
             _running = job_id
+        oom = False
         try:
             cancelled = _run(rec)
             rec.status = "cancelled" if cancelled or rec.cancel_event.is_set() else "done"
         except Exception as e:  # report, keep the worker alive
-            rec.status = "error"
-            rec.error = getattr(e, "detail", None) or str(e) or type(e).__name__
-            print(f"[Venno] job {job_id} failed: {rec.error}")
-            traceback.print_exc()  # full trace in the console, for bug reports
-        finally:
-            rec.finished = time.time()
-            rec.progress = 1.0 if rec.status == "done" else rec.progress
-            rec.version += 1
-            with _cond:
-                _running = None
-                _cond.notify_all()
+            oom = _is_oom(e)
+            if oom:
+                print(f"[Venno] job {job_id} ran out of graphics memory: {e}")
+                rec.error = out_of_memory_message(rec.job)
+            else:
+                rec.error = getattr(e, "detail", None) or str(e) or type(e).__name__
+                print(f"[Venno] job {job_id} failed: {rec.error}")
+                traceback.print_exc()  # full trace in the console, for bug reports
+                rec.status = "error"
+        if oom:  # out of the except block: the error's traceback no longer holds the job's tensors
+            _recover_memory()
+            rec.status = "error"  # after freeing, so the next job starts clean
+        rec.finished = time.time()
+        rec.progress = 1.0 if rec.status == "done" else rec.progress
+        rec.version += 1
+        with _cond:
+            _running = None
+            _cond.notify_all()
+
+
+def _is_oom(e: BaseException) -> bool:
+    from backend import memory_management
+
+    return memory_management.is_oom(e) or "out of memory" in str(e).lower()
+
+
+def out_of_memory_message(job: Job) -> str:
+    """What to change after a job ran out of graphics memory, for the memory mode this run started with."""
+    from venno import config
+
+    mode = config.startup.get("vram_mode", "auto")
+    tips = []
+    if mode not in ("lowvram", "novram", "cpu"):
+        tips.append("switch Memory to Low VRAM in ⚙ Settings → System (then restart Venno)")
+    elif mode == "lowvram":
+        tips.append("switch Memory to No VRAM in ⚙ Settings → System (slower; then restart Venno)")
+    if job.hires is not None:
+        tips.append("lower the hires fix scale")
+    if job.batch > 1:
+        tips.append("use Batch count instead of Batch size")
+    tips.append("make the picture smaller")
+    return "Out of graphics memory. Try: " + "; ".join(tips) + ". The memory was freed, so the next job can run."
+
+
+def _recover_memory():
+    """After an out-of-memory error: drop what the failed job left behind so the next job starts clean."""
+    import gc
+
+    from backend import memory_management
+
+    gc.collect()
+    try:
+        memory_management.unload_all_models()  # back to the offload device; loaded again by the next job
+        memory_management.soft_empty_cache(force=True)
+    except Exception as e:  # recovering must never take the worker down
+        print(f"[Venno] could not free graphics memory: {e}")
 
 
 def running_record() -> Optional[JobRecord]:

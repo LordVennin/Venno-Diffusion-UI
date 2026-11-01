@@ -827,6 +827,7 @@ function guessModule(mods, words) {
 }
 
 const QWEN35 = /qwen3[._-]?5[._-]?4b|qwen35_4b/i; // Anima 3.8B's second text encoder
+const QWEN06 = /qwen_?3[._-]?0?6b|qwen3(?![._-]?5)|0\.6b/i; // the text encoder every Anima needs
 
 async function loadInfo(refresh = false) {
   try {
@@ -883,15 +884,18 @@ $("#sel-checkpoint").onchange = (e) => {
 /** Anima 3.8B reads prompts with two encoders: Qwen3 0.6B (the picker) and Qwen3.5 4B, which Venno loads by itself. */
 function noteTextEncoders(announce = false) {
   const big = presetForCheckpoint(state.model.checkpoint) === "anima38";
-  const has35 = (state.info?.modules || []).some((m) => QWEN35.test(m.name));
+  const mods = state.info?.modules || [];
+  const has35 = mods.some((m) => QWEN35.test(m.name));
+  const has06 = mods.some((m) => QWEN06.test(m.name) && !QWEN35.test(m.name));
   const te = $("#sel-te");
   te.title = big
     ? `Anima 3.8B: keep Qwen3 0.6B here; the Qwen3.5 4B encoder is ${has35 ? "added automatically" : "also needed (⚙ Settings → Models)"}`
     : "Text encoder";
   for (const o of te.options) o.textContent = (big && has35 && o.selected && o.value ? "Qwen3.5 4B + " : "") + o.value; // shown even when the picker is cut short
   if (big && announce) {
-    toast(has35 ? "Anima 3.8B: keep Qwen3 0.6B as the text encoder; Qwen3.5 4B is added automatically (it isn't in the list)."
-      : "Anima 3.8B also needs the Qwen3.5 4B text encoder: download it in ⚙ Settings → Models.", has35 ? "info" : "error");
+    const missing = [!has06 && "Qwen3 0.6B", !has35 && "Qwen3.5 4B"].filter(Boolean);
+    toast(missing.length ? `Anima 3.8B needs both its text encoders; missing: ${missing.join(" and ")}. Download ${missing.length > 1 ? "them" : "it"} in ⚙ Settings → Models.`
+      : "Anima 3.8B: keep Qwen3 0.6B as the text encoder; Qwen3.5 4B is added automatically (it isn't in the list).", missing.length ? "error" : "info");
   }
 }
 $("#sel-te").onchange = (e) => { state.model.textEncoder = e.target.value; persist(); noteTextEncoders(); };

@@ -30,6 +30,10 @@ def _scan(kind: str) -> dict[str, str]:
     return dict(sorted(found.items(), key=lambda kv: kv[0].lower()))
 
 
+NEEDS_TEXT_ENCODER = ("Anima needs the Qwen3 0.6B text encoder (qwen_3_06b_base.safetensors): pick it as the text encoder in the "
+                      "top bar, or download it in ⚙ Settings → Models. (Anima 3.8B adds its Qwen3.5 4B encoder by itself.)")
+
+
 def checkpoints() -> dict[str, str]:
     return _scan("checkpoint")
 
@@ -83,6 +87,9 @@ class ModelManager:
     def get(self, checkpoint: str, modules: list[str]):
         ckpt_path, ckpt_name = self.resolve_checkpoint(checkpoint)
         module_paths = sorted(self.resolve_module(m) for m in modules if m)
+        encoders = {os.path.realpath(p) for p in _scan("text_encoder").values()}
+        if not any(os.path.realpath(p) in encoders for p in module_paths):
+            raise ValueError(NEEDS_TEXT_ENCODER)
         key = (ckpt_path, tuple(module_paths))
         with self.lock:
             if self.engine is not None and self.key == key:
@@ -90,7 +97,13 @@ class ModelManager:
             self.unload()
             t0 = time.time()
             print(f"[Venno] loading {ckpt_name} + {[os.path.basename(m) for m in module_paths]}")
-            self.engine = forge_loader(ckpt_path, additional_state_dicts=module_paths)
+            try:
+                self.engine = forge_loader(ckpt_path, additional_state_dicts=module_paths)
+            except (ValueError, AssertionError) as e:
+                if "Qwen3" not in str(e):  # "This file doesn't fit Qwen3Model…" / "You do not have Qwen3 state dict!"
+                    raise
+                chosen = [os.path.basename(p) for p in module_paths if os.path.realpath(p) in encoders]
+                raise ValueError(f'{", ".join(chosen)} is not the text encoder Anima needs. {NEEDS_TEXT_ENCODER}') from e
             self.key = key
             self.info = {"name": ckpt_name, "path": ckpt_path, "modules": [os.path.basename(m) for m in module_paths]}
             from venno.engine import anima38

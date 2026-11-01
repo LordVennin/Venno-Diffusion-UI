@@ -8,6 +8,11 @@ shows the sections newer than the installed version.
 - Images of a several-image job appear in the results as each one finishes (Canvas and form tabs), so you can look
   at, apply, Skip or Cancel early; a result you click meanwhile stays shown instead of the next image's progress.
 
+- Out of graphics memory: the job says what to change (Low VRAM mode, hires scale, batch size, picture size) and
+  the memory is freed, so the next job runs without restarting Venno.
+- A missing or wrong text encoder is named plainly ("Anima needs the Qwen3 0.6B text encoder …") instead of a
+  weight-loading error; switching to Anima 3.8B says which of its two encoders is missing.
+
 ## 0.9.1 — 2026-11-01
 
 - First-run setup: a welcome window downloads a checkpoint with the text encoder and VAE in one go, selects it

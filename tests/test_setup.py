@@ -59,3 +59,12 @@ def test_anima38_downloads_bring_both_encoders(models):
     put(models / "text_encoders", "qwen_3_06b_base.safetensors")  # found in any text encoder folder (ComfyUI's here)
     assert downloads.missing_requirements("anima-38b") == ["qwen35-te"]
     assert downloads.missing_requirements("anima-turbo") == []
+
+
+def test_a_missing_text_encoder_is_named(models):
+    from venno.engine import models as engine_models
+
+    put(models / "Stable-diffusion", "anima-turbo-v1.1.safetensors")
+    put(models / "VAE", "qwen_image_vae.safetensors")
+    with pytest.raises(ValueError, match="Qwen3 0.6B text encoder"):
+        engine_models.ModelManager().get("anima-turbo-v1.1.safetensors", ["", "qwen_image_vae.safetensors"])
