@@ -201,18 +201,22 @@ export class Generator {
     this.currentJob = null;
     this.view.setGenRect(plan.rect);
     this.emit("busy", { live, plan });
+    // images of a several-image job show up as they finish (not comparison grids: their cells aren't results)
+    const stream = { result: null, count: 0, chain: Promise.resolve(), on: !live && !job.grid };
+    const picked = () => stream.result && this.selected?.result === stream.result; // the user is looking at a finished one
     try {
       const done = await runJob(job, {
         onSubmit: (j) => (this.currentJob = j.id),
-        onUpdate: (j) => this.emit("progress", j),
+        onUpdate: (j) => { this.emit("progress", j); if (stream.on) this.streamImages(j, stream, plan, mask, job); },
         onPreview: async (src) => {
           if (!this.state.showProgressPreview) return;
           const img = await loadImage(src).catch(() => null);
-          if (img && this.busy) this.view.setOverlay(img, plan.rect);
+          if (img && this.busy && !picked()) this.view.setOverlay(img, plan.rect);
         },
       });
+      await stream.chain;
       const images = await Promise.all(finishedImages(done).map((url) => loadImage(url))); // never a half-denoised one
-      const result = { id: this._resultId++, images, rect: plan.rect, mask, seeds: done.seeds, infotexts: done.infotexts, prompt: job.prompt, txt2img: plan.txt2img };
+      const result = Object.assign(stream.result || { id: this._resultId++ }, { images, rect: plan.rect, mask, seeds: done.seeds, infotexts: done.infotexts, prompt: job.prompt, txt2img: plan.txt2img });
       result.grid = images.map((_, i) => /, Grid: "/.test(done.infotexts?.[i] || "")); // comparison grids: viewed, not applied
       result.detections = done.detections || []; // ADetailer's detection previews (boxes and scores)
       result.detectNotes = done.detection_notes || [];
@@ -221,11 +225,15 @@ export class Generator {
         this.emit("live-result", result);
         if (this.state.liveOnCanvas) this.preview(result, 0);
       } else {
-        this.results.unshift(result);
-        if (this.results.length > 40) this.results.pop();
+        if (!stream.result) {
+          this.results.unshift(result);
+          if (this.results.length > 40) this.results.pop();
+        }
+        const keep = picked() && this.selected.index < images.length ? this.selected.index : -1;
         this.emit("results");
         const first = result.grid.indexOf(false);
-        if (first >= 0) this.preview(result, first);
+        if (keep >= 0) this.preview(result, keep);
+        else if (first >= 0) this.preview(result, first);
         const note = result.detectNotes[Math.max(0, first)];
         if (note) this.emit("detected", note);
         if (result.grid[0]) this.emit("grid", result.images[0].src);
@@ -244,6 +252,26 @@ export class Generator {
         this.scheduleLive(50);
       }
     }
+  }
+
+  /** A running job's finished images into the results (one group per job, grown as images arrive). */
+  streamImages(j, stream, plan, mask, job) {
+    if (j.images.length <= stream.count) return;
+    const urls = j.images.slice(stream.count);
+    stream.count = j.images.length;
+    stream.chain = stream.chain.then(async () => {
+      const images = await Promise.all(urls.map((url) => loadImage(url))).catch(() => null);
+      if (!images || !this.busy) return; // the final result (or its error) takes over
+      let r = stream.result;
+      if (!r) {
+        r = stream.result = { id: this._resultId++, images: [], rect: plan.rect, mask, prompt: job.prompt, txt2img: plan.txt2img };
+        this.results.unshift(r);
+        if (this.results.length > 40) this.results.pop();
+      }
+      r.images.push(...images);
+      Object.assign(r, { seeds: j.seeds, infotexts: j.infotexts, grid: r.images.map(() => false), detections: j.detections || [], detectNotes: j.detection_notes || [] });
+      this.emit("results");
+    });
   }
 
   async interrupt() {

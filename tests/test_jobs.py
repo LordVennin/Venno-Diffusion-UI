@@ -67,7 +67,11 @@ def test_skip_drops_one_image_and_cancel_keeps_the_finished_ones(monkeypatch):
             result.images.append(b"png%d" % run)
             result.seeds.append(run)
             result.infotexts.append("")
+            progress.on_image(result)
+            seen.append((len(rec.images), rec.summary()["images"][-1]))  # served before the job ends
         return result
+
+    seen = []
 
     monkeypatch.setattr(generate, "run", fake_run)
     jobs._records[rec.id] = rec
@@ -77,3 +81,4 @@ def test_skip_drops_one_image_and_cancel_keeps_the_finished_ones(monkeypatch):
     finally:
         jobs._records.pop(rec.id)
     assert cancelled and rec.images == [b"png0"] and rec.skipped == 1
+    assert seen == [(1, f"/venno/v1/jobs/{rec.id}/images/0.png")] and rec.detections == [None]

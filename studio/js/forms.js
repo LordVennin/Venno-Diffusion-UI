@@ -1004,6 +1004,10 @@ export class GenForm {
     bar.hidden = false;
     $(".bar", bar).style.width = "0%";
     $("span", bar).textContent = "Starting…";
+    const entries = (j) => j.images.map((src, i) => ({ src, seed: j.seeds[i] ?? job.seed, info: j.infotexts[i] || "", detect: j.detections?.[i] || null, detectNote: j.detection_notes?.[i] || "" }));
+    const older = this.results;
+    let shown = 0; // finished images listed while the job runs (not for comparison grids: their cells aren't results)
+    this.picked = false; // the user clicked a result meanwhile: the progress preview stops replacing it
     try {
       const done = await runJob(job, {
         onSubmit: (j) => (this.jobId = j.id),
@@ -1012,12 +1016,18 @@ export class GenForm {
           $(".bar", bar).style.width = `${pct}%`;
           $("span", bar).textContent = text;
           this.q(".f-skip").hidden = !(j.status === "running" && j.job_count > 1);
+          if (!job.grid && j.images.length > shown) {
+            if (this.current >= shown) this.current += j.images.length - shown; // an older result moved down
+            shown = j.images.length;
+            this.results = [...entries(j), ...older].slice(0, 60);
+            this.renderThumbs();
+          }
         },
-        onPreview: (src) => this.showPreview(src),
+        onPreview: (src) => { if (!this.picked) this.showPreview(src); },
       });
-      const fresh = finishedImages(done).map((src, i) => ({ src, seed: done.seeds[i] ?? job.seed, info: done.infotexts[i] || "", detect: done.detections?.[i] || null, detectNote: done.detection_notes?.[i] || "" }));
-      this.results = [...fresh, ...this.results].slice(0, 60);
-      this.select(0);
+      const fresh = entries({ ...done, images: finishedImages(done) });
+      this.results = [...fresh, ...older].slice(0, 60);
+      this.select(this.picked && this.current < fresh.length ? this.current : 0);
     } catch (e) {
       if (e.message !== "Cancelled") toast(e.message);
       if (this.current >= 0) this.select(this.current);
@@ -1060,14 +1070,18 @@ export class GenForm {
     this.showDetect(r);
     this.q(".r-info").textContent = r.info;
     $$(".r-actions button", this.root).forEach((b) => (b.disabled = false));
+    this.renderThumbs();
+  }
+
+  renderThumbs() {
     const thumbs = this.q(".r-thumbs");
     thumbs.innerHTML = "";
     this.results.forEach((x, k) => {
       const img = document.createElement("img");
       img.src = x.src;
       img.title = `Seed ${x.seed}`;
-      img.classList.toggle("on", k === i);
-      img.onclick = () => this.select(k);
+      img.classList.toggle("on", k === this.current);
+      img.onclick = () => { if (this.busy) this.picked = true; this.select(k); };
       thumbs.appendChild(img);
     });
   }

@@ -27,6 +27,7 @@ class Progress:
     on_preview: Callable[[bytes], None] = lambda jpeg: None
     is_cancelled: Callable[[], bool] = lambda: False  # also true while a skip is pending (it stops the sampler)
     take_skip: Callable[[], bool] = lambda: False  # a stop that only skips the current image (and clears it)
+    on_image: Callable[["Result"], None] = lambda result: None  # an image was added to the result (shown before the job ends)
     preview_every: int = 1
 
     def stop(self, result: "Result") -> bool:
@@ -183,6 +184,8 @@ def run_each(job, progress: Progress) -> Result:
             is_cancelled=progress.is_cancelled,
             take_skip=progress.take_skip,
             preview_every=progress.preview_every,
+            on_image=lambda part, k=k: progress.on_image(Result(images=result.images + part.images, seeds=result.seeds + part.seeds, infotexts=result.infotexts + part.infotexts,
+                                                                detections=result.detections + part.detections, detection_notes=result.detection_notes + part.detection_notes)),
         )
         extra = {"Template": job.prompt} if wildcards.has_syntax(job.prompt) else {}
         if wildcards.has_syntax(job.negative):
@@ -422,6 +425,7 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
             result.infotexts.append(info)
             result.detections.append(found)
             result.detection_notes.append(note)
+            progress.on_image(result)
     return result
 
 

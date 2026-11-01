@@ -423,15 +423,21 @@ def _run(rec: JobRecord) -> bool:
         rec.version += 1
         return True
 
-    progress = generate.Progress(on_step=on_step, on_preview=rec.set_preview,
+    def store(result):
+        """The result so far into the record: finished images are served (and shown) before the job ends."""
+        pad = len(result.images) - len(result.detections)  # e.g. grid images have no detection preview
+        rec.seeds, rec.infotexts, rec.warnings = list(result.seeds), list(result.infotexts), list(result.warnings)
+        rec.detections = (result.detections + [None] * pad)[: len(result.images)]
+        rec.detection_notes = (result.detection_notes + [""] * pad)[: len(result.images)]
+        rec.images = list(result.images)  # last: the other lists are never shorter than the images listed
+        rec.version += 1
+
+    progress = generate.Progress(on_step=on_step, on_preview=rec.set_preview, on_image=store,
                                  is_cancelled=lambda: rec.cancel_event.is_set() or rec.skip_event.is_set(), take_skip=take_skip)
     rec.job_count = total_runs
     import torch
 
     with torch.inference_mode():  # the whole job, so weights moved / patched during it are consistent
         result = generate.run(rec.job, progress)
-    rec.images, rec.seeds, rec.infotexts, rec.warnings = result.images, result.seeds, result.infotexts, result.warnings
-    pad = len(result.images) - len(result.detections)  # e.g. grid images have no detection preview
-    rec.detections = (result.detections + [None] * pad)[: len(result.images)]
-    rec.detection_notes = (result.detection_notes + [""] * pad)[: len(result.images)]
+    store(result)
     return result.cancelled
