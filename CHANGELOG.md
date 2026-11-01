@@ -9,6 +9,9 @@ shows the sections newer than the installed version.
   with its settings, and offers Low VRAM mode on small graphics cards (again from Settings → Models).
 - Cancel keeps the images already finished; a new Skip button drops only the image being made. The Canvas makes
   its ×N images one after another (the same pictures as before), so both work there too.
+- Downloading Anima 3.8B or its Qwen3.5 4B encoder also downloads whichever of its two text encoders is
+  missing; with a 3.8B checkpoint selected the text encoder picker shows both. Cancelling a download stops it at
+  once (it used to retry for ~20 seconds first).
 - Memory mode (Automatic / Low VRAM / No VRAM) in Settings → System, used from the next start; Venno falls back
   to the CPU instead of stopping when no graphics card is usable.
 

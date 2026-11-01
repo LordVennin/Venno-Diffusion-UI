@@ -87,8 +87,9 @@ export class ModelsPage {
 
   async download(body) {
     try {
-      await api("/venno/v1/models/download", body);
-      toast("Download started", "info");
+      const job = await api("/venno/v1/models/download", body);
+      const also = (job.also || []).map((j) => j.name);
+      toast(also.length ? `Download started, with ${also.join(" and ")} (needed alongside it)` : "Download started", "info");
       await this.load();
       this.poll();
     } catch (e) {

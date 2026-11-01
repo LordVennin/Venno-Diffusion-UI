@@ -549,6 +549,11 @@ def create_app() -> FastAPI:
                     raise ValueError("Unknown catalog entry")
                 cid, kind, name, _desc, url, _size = entry
                 job = downloads.start(url, kind, name=name, on_done=on_download_done)
+                also = []
+                for rid in downloads.missing_requirements(cid):  # e.g. Qwen3.5 4B brings Qwen3 0.6B: Anima 3.8B needs both
+                    _, rkind, rname, _, rurl, _ = next(c for c in downloads.CATALOG if c[0] == rid)
+                    also.append(downloads.start(rurl, rkind, name=rname, on_done=on_download_done).to_dict())
+                return {**job.to_dict(), "also": also}
             else:
                 # arbitrary URLs write files to disk: same rule as installing extensions when listening on the network
                 if not custom_downloads_allowed():

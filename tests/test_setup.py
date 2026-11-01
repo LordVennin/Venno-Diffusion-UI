@@ -49,3 +49,13 @@ def test_low_vram_suggested_for_small_cards(models, monkeypatch):
     for vram, mode in ((6144, "lowvram"), (12288, "auto"), (0, "auto")):
         monkeypatch.setattr(app, "_memory", lambda v=vram: {"total_vram_mb": v})
         assert app._setup()["suggested_vram_mode"] == mode
+
+
+def test_anima38_downloads_bring_both_encoders(models):
+    from venno.server import downloads
+
+    assert downloads.missing_requirements("qwen35-te") == ["qwen3-te"]
+    assert downloads.missing_requirements("anima-38b") == ["qwen35-te", "qwen3-te"]
+    put(models / "text_encoders", "qwen_3_06b_base.safetensors")  # found in any text encoder folder (ComfyUI's here)
+    assert downloads.missing_requirements("anima-38b") == ["qwen35-te"]
+    assert downloads.missing_requirements("anima-turbo") == []
