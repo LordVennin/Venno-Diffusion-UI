@@ -826,6 +826,8 @@ function guessModule(mods, words) {
   return mods.find((m) => words.some((w) => m.name.toLowerCase().includes(w)))?.name || "";
 }
 
+const QWEN35 = /qwen3[._-]?5[._-]?4b|qwen35_4b/i; // Anima 3.8B's second text encoder
+
 async function loadInfo(refresh = false) {
   try {
     setStatus(refresh ? "Rescanning models…" : "Connecting…");
@@ -834,7 +836,7 @@ async function loadInfo(refresh = false) {
     showRestartBanner(info.restart_needed, info.restart_reason);
     refreshTokenCounters(); // the quality prefix comes with the info
     const ckpts = info.checkpoints.map((c) => ({ value: c.title, label: c.name }));
-    const mods = info.modules.filter((m) => !/qwen3[._-]?5[._-]?4b|qwen35_4b/i.test(m.name)); // Anima 3.8B's second encoder is picked automatically
+    const mods = info.modules.filter((m) => !QWEN35.test(m.name)); // Anima 3.8B's second encoder is picked automatically
     if (!ckpts.some((c) => c.value === state.model.checkpoint)) {
       const cur = ckpts.find((c) => c.value === info.current_checkpoint);
       state.model.checkpoint = cur ? cur.value : ckpts.find((c) => /anima/i.test(c.label))?.value || ckpts[0]?.value || "";
@@ -845,6 +847,7 @@ async function loadInfo(refresh = false) {
     fillSelect($("#sel-checkpoint"), ckpts, state.model.checkpoint, { empty: ckpts.length ? null : "— no models found —" });
     const modItems = mods.map((m) => ({ value: m.name, label: m.name }));
     fillSelect($("#sel-te"), modItems, state.model.textEncoder, { empty: "— none —" });
+    noteTextEncoders();
     fillSelect($("#sel-vae"), modItems, state.model.vae, { empty: "— none —" });
     fillSelect($("#sampler"), info.samplers.map((s) => ({ value: s, label: s })), g.sampler);
     fillSelect($("#scheduler"), info.schedulers.map((s) => ({ value: s, label: s })), g.scheduler);
@@ -874,8 +877,24 @@ $("#sel-checkpoint").onchange = (e) => {
   const preset = presetForCheckpoint(e.target.value);
   if (g.preset && g.preset !== preset) { applyPreset(preset); toast(`Switched to ${state.info.presets[preset].label} settings`, "info"); }
   persist();
+  noteTextEncoders(true);
 };
-$("#sel-te").onchange = (e) => { state.model.textEncoder = e.target.value; persist(); };
+
+/** Anima 3.8B reads prompts with two encoders: Qwen3 0.6B (the picker) and Qwen3.5 4B, which Venno loads by itself. */
+function noteTextEncoders(announce = false) {
+  const big = presetForCheckpoint(state.model.checkpoint) === "anima38";
+  const has35 = (state.info?.modules || []).some((m) => QWEN35.test(m.name));
+  const te = $("#sel-te");
+  te.title = big
+    ? `Anima 3.8B: keep Qwen3 0.6B here; the Qwen3.5 4B encoder is ${has35 ? "added automatically" : "also needed (⚙ Settings → Models)"}`
+    : "Text encoder";
+  for (const o of te.options) o.textContent = (big && has35 && o.selected && o.value ? "Qwen3.5 4B + " : "") + o.value; // shown even when the picker is cut short
+  if (big && announce) {
+    toast(has35 ? "Anima 3.8B: keep Qwen3 0.6B as the text encoder; Qwen3.5 4B is added automatically (it isn't in the list)."
+      : "Anima 3.8B also needs the Qwen3.5 4B text encoder: download it in ⚙ Settings → Models.", has35 ? "info" : "error");
+  }
+}
+$("#sel-te").onchange = (e) => { state.model.textEncoder = e.target.value; persist(); noteTextEncoders(); };
 
 /** Select a checkpoint by name (from loaded settings) without switching presets. */
 function selectCheckpoint(name) {
