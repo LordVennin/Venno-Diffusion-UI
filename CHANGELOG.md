@@ -3,7 +3,7 @@
 Releases are the `main` branch; each one raises `venno/version.py`. Settings → System → *Check for updates*
 shows the sections newer than the installed version.
 
-## Unreleased (development branch)
+## 0.9.1 — 2026-11-01
 
 - First-run setup: a welcome window downloads a checkpoint with the text encoder and VAE in one go, selects it
   with its settings, and offers Low VRAM mode on small graphics cards (again from Settings → Models).
@@ -14,6 +14,8 @@ shows the sections newer than the installed version.
   once (it used to retry for ~20 seconds first).
 - Memory mode (Automatic / Low VRAM / No VRAM) in Settings → System, used from the next start; Venno falls back
   to the CPU instead of stopping when no graphics card is usable.
+- The console warns at start when installed packages differ from `requirements.txt` (e.g. a newer
+  transformers), with the command that fixes it.
 
 ## 0.9.0 — 2026-10-28
 
