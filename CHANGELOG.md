@@ -13,6 +13,9 @@ shows the sections newer than the installed version.
 - A missing or wrong text encoder is named plainly ("Anima needs the Qwen3 0.6B text encoder …") instead of a
   weight-loading error; switching to Anima 3.8B says which of its two encoders is missing.
 
+- No more console warnings on every step with the SDE samplers ("Should have tb<=t1") or on every upscale
+  ("torch.meshgrid: in an upcoming release …"); neither changed any picture.
+
 ## 0.9.1 — 2026-11-01
 
 - First-run setup: a welcome window downloads a checkpoint with the text encoder and VAE in one go, selects it

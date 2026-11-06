@@ -91,6 +91,9 @@ class BatchedBrownianTree:
         if self.cpu_tree:
             t0, w0, t1 = t0.detach().cpu(), w0.detach().cpu(), t1.detach().cpu()
         self.trees = tuple(torchsde.BrownianTree(t0, w0, t1, entropy=s, **kwargs) for s in seed)
+        # Venno: queries are clamped to the interval as torchsde stores it, rounded to its tolerance (see __call__)
+        interval = getattr(self.trees[0], "_interval", None)
+        self.bounds = (interval._start, interval._end) if interval is not None else (float(t0), float(t1))
 
     @staticmethod
     def sort(a, b):
@@ -99,8 +102,10 @@ class BatchedBrownianTree:
     def __call__(self, t0, t1):
         t0, t1, sign = self.sort(t0, t1)
         device, dtype = t0.device, t0.dtype
-        if self.cpu_tree:
-            t0, t1 = t0.detach().cpu().float(), t1.detach().cpu().float()
+        # Venno: torchsde rounds the interval's ends (to 1e-6), so the first or last sigma itself can lie a hair outside
+        # it and torchsde warns ("Should have tb<=t1") on every step; query with floats clamped to the interval
+        lo, hi = self.bounds
+        t0, t1 = min(max(float(t0), lo), hi), min(max(float(t1), lo), hi)
         w = torch.stack([tree(t0, t1) for tree in self.trees]).to(device=device, dtype=dtype) * (self.sign * sign)
         return w if self.batched else w[0]
 

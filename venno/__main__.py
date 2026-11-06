@@ -4,6 +4,11 @@ import os
 import sys
 import threading
 import time
+import warnings
+
+# Several upscaler architectures (spandrel: SwinIR, HAT, DAT, …) call torch.meshgrid without `indexing`, and PyTorch
+# warns about it on every upscale; they rely on the default ("ij"), so the warning says nothing to act on
+warnings.filterwarnings("ignore", message=r"torch\.meshgrid: in an upcoming release", category=UserWarning)
 
 
 def _print_help():
