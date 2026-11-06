@@ -163,6 +163,18 @@ These are Forge-style form pages: prompt, negative, LoRA chips, preset/sampler/s
 - **Results:** *Open in Canvas* adds the image as a layer; *Send to Image to Image* / *Send to Inpaint* pass it on **with the prompt, LoRAs, seed, sampler settings and ADetailer** of the tab it came from; *Use settings* loads its parameters; *Download* saves it. Results are also saved to `outputs/` unless you turn that off.
 - **Option cards:** the checkbox turns hires fix / ADetailer / the grid on and off; clicking the title only opens its settings. The Canvas has the same three cards under its prompt panel (not used in live mode; hires fix applies when the Canvas makes a new picture, and grids open in a viewer instead of on the canvas).
 
+## Venno MOSS (MOSS-Image LoRA tester)
+
+A separate Studio for testing [MOSS-Image](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT) LoRAs, in the same install and with the same layout. It runs on its own: `./moss.sh` (Linux / macOS) or `moss.bat` (Windows) creates `venv-moss` on the first start (MOSS-Image's Qwen3.5 text encoder needs transformers 5, while Venno pins 4.x, so the two never share packages) and serves **http://127.0.0.1:7870/**. Venno and Venno MOSS can run at the same time if the graphics card has room for both.
+
+- **Models:** ⚙ Settings → Models downloads MOSS-Image **SFT** or **Base** (OpenMOSS, Apache-2.0). The first one is 27 GB: its 10 GB transformer plus the 9B text encoder and VAE, which both models share, so the second is 10 GB. A model you already have (e.g. venno-trainer's `models` folder) is used where it is: add the folder in Settings → Models. Single-file fine-tuned transformers work too.
+- **LoRAs:** add your trainer's output folder in Settings → LoRAs; ⟳ picks up new epochs. LoRAs from [venno-trainer](https://github.com/LordVennin/venno-trainer) load exactly as trained (the same model code; ComfyUI's MOSS key layout), as do ai-toolkit / ComfyUI / PEFT / kohya-style MOSS-Image LoRAs. Several at once, each with its weight; changing a weight costs nothing.
+- **Generating:** the model card's settings (50 steps, CFG 3, shift 5, transformer block 22 skipped on the negative branch) with the same sampler as venno-trainer's samples, so the same settings and seed reproduce a training sample. Batch count, Skip and Cancel (finished pictures are kept), pictures shown as they finish.
+- **Comparing:** the comparison grid's **LoRA** axis puts files side by side (*+ add… → all N of run* adds every saved epoch of a training run; `none` is a column without it), with **LoRA weight**, prompt S/R, seed, steps, CFG, shift, model, size and skip layers as other axes.
+- **Settings in the picture:** results are PNGs with A1111-style parameters plus the exact settings; *Use settings* and the Image Info tab load them back.
+- **Memory** (Settings → Memory, from the next picture): *Full* keeps the transformer in bf16 (about 10 GB of VRAM, for 24 GB cards); *Low* stores its block weights in fp8 (about 5 GB, for 12 GB cards; slightly different pictures). The 9B text encoder stays in system RAM (about 17 GB; 32 GB of RAM recommended) and only visits the graphics card a layer at a time when a new prompt is encoded; encoded prompts are reused.
+- Options: `--port`, `--listen`, `--memory full|low`, `--lora-dir DIR` (repeatable), `--models-dir`, `--outputs-dir` (default `outputs/moss`), `--data-dir`, `--cpu`.
+
 ## API
 
 Studio talks to the server only through the Venno API under `/venno/v1`. Every generation mode uses one job format; see `Job` in [`venno/server/jobs.py`](venno/server/jobs.py) (interactive docs at `/venno/docs`).
@@ -204,6 +216,7 @@ The old A1111/Forge `/sdapi` endpoints are gone (see [`docs/PLAN_VENNO_SERVER.md
 | `venno/pipeline/` | Generation: passes, hires, region pass, detailer, grids, image metadata |
 | `venno/engine/` | Model manager, sampling, schedulers, prompts, regions, LoRA, guides, upscalers, detectors, tags, wildcards |
 | `backend/` | Diffusion engine forked from Forge Neo (Anima only); third-party code in `backend/vendor/` |
+| `moss.sh`, `moss.bat`, `venno_moss/`, `requirements-moss.txt` | Venno MOSS: launcher, server, engine (model code shared with venno-trainer), its Studio page |
 | `tests/`, `venno/smoke.py` | Unit tests and the smoke test (see below) |
 
 ## Development
@@ -218,6 +231,7 @@ The old A1111/Forge `/sdapi` endpoints are gone (see [`docs/PLAN_VENNO_SERVER.md
 - Engine core (`backend/`): derived from the engine of [Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo) by Haoming02, which builds on [Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) by lllyasviel and [Stable Diffusion WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) by AUTOMATIC1111. Model loading, memory management, the attention back ends, LoRA patching and the Anima network come from there; Venno trimmed it to Anima and added the hooks its features use (regions, time-axis frames and references, guides). Third-party packages it bundles are in `backend/vendor/`. Forge Neo's README is kept in [`docs/FORGE_NEO_README.md`](docs/FORGE_NEO_README.md).
 - Anima 3.8B support (`venno/engine/anima38/`): ported from [forge-anima-3.8B](https://github.com/GumGum10/forge-anima-3.8B) by GumGum10 (MIT); the model is [Anima 3.8B](https://huggingface.co/lylogummy/Anima-3.8B) by lylogummy, and Qwen3.5's tokenizer comes from [Qwen/Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B) (Apache-2.0).
 - Reference adapter (`venno/engine/ref_adapter.py`): Venno's implementation of the method of [ComfyUI-Anima-Ref-Adapter](https://github.com/ElectronGirl/ComfyUI-Anima-Ref-Adapter) by ElectronGirl (Apache-2.0; offset-RoPE reference frame, reference guidance with APG); the weights are [anima-ref-adapter](https://huggingface.co/ElectronGirl/anima-ref-adapter) (CircleStone Non-Commercial License).
+- Venno MOSS (`venno_moss/model/`): MOSS-Image's transformer, VAE and fp8 code come from [venno-trainer](https://github.com/LordVennin/venno-trainer), which ports them from [ai-toolkit](https://github.com/ostris/ai-toolkit) by Ostris (MIT, licence in `venno_moss/model/LICENSE-ai-toolkit-MIT`); the model is [MOSS-Image](https://github.com/OpenMOSS/MOSS-Image) by OpenMOSS (Apache-2.0).
 - Guide models: [Anima ControlLLLite](https://huggingface.co/Mooshie/Anima-LLLite) by Mooshie (Anima licence). Depth preprocessor: [Depth Anything V2 Small](https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf) (Apache-2.0), downloaded on first use.
 - Model: [Anima](https://huggingface.co/circlestone-labs/Anima) by CircleStone Labs & Comfy Org (non-commercial model licence; generated images may be used commercially).
 - Inspired by [Krita AI Diffusion](https://github.com/Acly/krita-ai-diffusion).

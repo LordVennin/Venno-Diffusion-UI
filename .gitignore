@@ -32,3 +32,5 @@ __pycache__
 notification.mp3
 /venno-settings.json
 /venno-settings.json.tmp
+/venv-moss
+/venno-moss-settings.json

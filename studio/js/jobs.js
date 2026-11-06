@@ -3,7 +3,7 @@
 
 import { api } from "./common.js";
 
-const V = "/venno/v1";
+const V = globalThis.VENNO_API_BASE || "/venno/v1"; // Venno MOSS sets /moss/v1 (same job API shape)
 const watchers = new Map(); // job id -> {onUpdate, onPreview, resolve, reject}
 let ws = null;
 let wsReady = false;

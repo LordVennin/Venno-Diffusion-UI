@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Venno MOSS</title>
+<link rel="stylesheet" href="/studio/assets/studio.css">
+<link rel="stylesheet" href="/moss/assets/moss.css">
+<script>globalThis.VENNO_API_BASE = "/moss/v1";</script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">Venno<span>MOSS</span></div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="t2i" class="on">Text to Image</button>
+    <button data-tab="info">Image Info</button>
+  </nav>
+  <div class="models">
+    <label title="MOSS-Image model">Model <select id="sel-model" title="MOSS-Image model"></select></label>
+    <button id="btn-refresh" title="Rescan model and LoRA folders">⟳</button>
+  </div>
+  <div class="status" id="status"></div>
+  <button id="btn-settings" class="settings-btn" title="Settings: models, LoRA folders, memory">⚙<span class="lbl"> Settings</span></button>
+</header>
+
+<div class="page form-page" id="page-t2i">
+  <div class="form-col">
+    <section class="card">
+      <textarea id="prompt" rows="5" placeholder="Prompt: tags, natural language or both (Ctrl+Enter to generate)"></textarea>
+      <textarea id="negative" rows="2" placeholder="Negative prompt (MOSS-Image works well without one)"></textarea>
+      <div class="hint" id="tokens"></div>
+      <div class="row">
+        <select id="sel-lora"></select>
+        <label class="check" title="Show the newest LoRAs first (handy while a training run saves epochs)"><input type="checkbox" id="lora-newest"> newest first</label>
+      </div>
+      <div id="lora-chips"></div>
+      <div class="row buttons">
+        <button class="primary big" id="btn-generate">Generate</button>
+        <button class="big" id="btn-skip" hidden title="Drop the image being made and go on with the next one">Skip</button>
+        <button class="big" id="btn-cancel" hidden title="Stop; the images already finished are kept">Cancel</button>
+      </div>
+      <div class="progress-inline" id="progress" hidden><div class="bar"></div><span></span></div>
+    </section>
+
+    <section class="card">
+      <div class="grid2">
+        <label>Steps <input type="number" id="steps" min="1" max="200"></label>
+        <label>CFG <input type="number" id="cfg" min="1" max="20" step="0.1"></label>
+        <label title="Higher spends more steps on composition (MOSS-Image default 5)">Shift <input type="number" id="shift" min="0.5" max="20" step="0.5"></label>
+        <label title="Pictures made one after another, seed +1 each">Batch count <input type="number" id="count" min="1" max="100"></label>
+        <label>Width <input type="number" id="width" min="256" max="2048" step="16"></label>
+        <label>Height <input type="number" id="height" min="256" max="2048" step="16"></label>
+      </div>
+      <div class="sizes" id="sizes"></div>
+      <label>Seed <span class="row seed"><input type="number" id="seed"><button id="seed-random" title="Random (-1)">🎲</button><button id="seed-reuse" title="Reuse seed of the shown image">♻️</button></span></label>
+      <label class="check" title="MOSS-Image's guidance: the negative branch skips transformer block 22 (the model card's default). Off: plain CFG."><input type="checkbox" id="skip22"> Skip block 22 on the negative branch (recommended)</label>
+      <div class="row"><button id="btn-defaults" title="Steps 50, CFG 3, shift 5, block 22 skipped: the model card's settings">Model defaults</button><span class="hint">Same settings and seed as a venno-trainer sample give the same picture.</span></div>
+    </section>
+
+    <details class="card" id="grid-card">
+      <summary><input type="checkbox" id="grid-on" title="Use the comparison grid"> <span>Comparison grid (X/Y/Z)</span> <span class="hint" id="grid-sum"></span></summary>
+      <div class="hint">One picture per combination, same seed. Put a training run's LoRA files on X to compare epochs, weights on Y.</div>
+      <div id="axes"></div>
+      <label class="check"><input type="checkbox" id="grid-cells"> Also keep each cell as its own picture</label>
+    </details>
+
+    <label class="check save"><input type="checkbox" id="save"> Save results to the outputs folder</label>
+  </div>
+
+  <div class="result-col">
+    <div class="result-main"><img class="r-img" id="r-img" alt=""><div class="r-empty" id="r-empty">Results appear here</div></div>
+    <div class="r-thumbs" id="thumbs"></div>
+    <div class="row r-actions">
+      <button id="r-settings" disabled title="Load this picture's prompt and settings into the form">Use settings</button>
+      <button id="r-view" disabled title="Full window">View</button>
+      <button id="r-download" disabled>Download</button>
+    </div>
+    <pre class="r-info" id="r-info"></pre>
+  </div>
+</div>
+
+<div class="page info-page" id="page-info" hidden>
+  <div class="moss-info">
+    <div class="drop" id="info-drop">Drop a picture made with Venno MOSS here, or <button id="info-open">open</button> one<input type="file" id="info-file" accept="image/png" hidden></div>
+    <div class="info-out" hidden>
+      <img id="info-img" alt="">
+      <div>
+        <pre class="r-info" id="info-text"></pre>
+        <div class="row"><button class="primary" id="info-use" disabled>Use settings</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="page settings-page" id="page-settings" hidden>
+  <nav class="settings-nav">
+    <h2>Settings</h2>
+    <button data-section="models" class="on"><b>Models</b><small>Download Base / SFT, model folders</small></button>
+    <button data-section="loras"><b>LoRAs</b><small>Folders to list LoRAs from</small></button>
+    <button data-section="memory"><b>Memory</b><small>24 GB or 12 GB cards</small></button>
+    <button data-section="system"><b>System</b><small>Version, device, folders</small></button>
+  </nav>
+  <div class="settings-body">
+    <section data-section="models"><div class="moss-settings">
+      <section class="card">
+        <h3>MOSS-Image models</h3>
+        <p>Each model is a 10 GB transformer; the first download also brings the Qwen3.5 9B text encoder and the VAE (17 GB), which Base and SFT share. Downloads resume if stopped.</p>
+        <ul class="catalog-list" id="catalog"></ul>
+        <ul class="jobs" id="dl-jobs"></ul>
+      </section>
+      <section class="card">
+        <h3>Model folders</h3>
+        <p>Folders searched for models besides the download folder: a folder holding <code>MOSS-Image-SFT/</code>-style model folders (e.g. venno-trainer's <code>models</code> folder) or single-file transformers. One per line.</p>
+        <textarea id="model-dirs" rows="3" placeholder="/path/to/venno-trainer/models"></textarea>
+        <div class="row"><button id="save-model-dirs">Save and rescan</button></div>
+      </section>
+    </div></section>
+    <section data-section="loras" hidden><div class="moss-settings">
+      <section class="card">
+        <h3>LoRA folders</h3>
+        <p>Folders listed in the LoRA picker (sub-folders too), besides <code id="lora-default"></code>. Add your trainer's output folder to test each epoch as it is saved; press ⟳ in the top bar to pick up new files.</p>
+        <textarea id="lora-dirs" rows="4" placeholder="/path/to/venno-trainer/output"></textarea>
+        <div class="row"><button id="save-lora-dirs">Save and rescan</button></div>
+      </section>
+    </div></section>
+    <section data-section="memory" hidden><div class="moss-settings">
+      <section class="card">
+        <h3>Memory</h3>
+        <label class="check"><input type="radio" name="memory" value="auto"> <b>Automatic</b>: Full with 20 GB of VRAM or more, else Low</label>
+        <label class="check"><input type="radio" name="memory" value="full"> <b>Full</b>: the transformer in bf16 (about 10 GB of VRAM); for 24 GB cards</label>
+        <label class="check"><input type="radio" name="memory" value="low"> <b>Low</b>: the transformer's block weights in fp8 (about 5 GB); for 12 GB cards. Slightly different pictures</label>
+        <p>Either way the 9B text encoder stays in system RAM (about 17 GB) and only visits the graphics card a layer at a time when a new prompt is encoded; encoded prompts are reused. Applies from the next picture, no restart needed.</p>
+        <p class="hint" id="memory-now"></p>
+      </section>
+    </div></section>
+    <section data-section="system" hidden><div class="moss-settings">
+      <section class="card">
+        <h3>System</h3>
+        <table class="kv" id="system"></table>
+      </section>
+    </div></section>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script type="module" src="/moss/assets/moss.js"></script>
+</body>
+</html>
