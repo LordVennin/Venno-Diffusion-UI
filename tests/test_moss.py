@@ -258,8 +258,6 @@ def test_sigmas_follow_the_vendor_grid():
 
 
 def test_download_resumes_and_reports_a_hub_that_does_not_answer(tmp_path, monkeypatch):
-    import urllib.request
-
     from venno_moss import downloads
 
     monkeypatch.setattr(config.args, "models_dir", str(tmp_path / "moss"))
@@ -275,7 +273,7 @@ def test_download_resumes_and_reports_a_hub_that_does_not_answer(tmp_path, monke
         def __exit__(self, *a):
             return False
 
-    def urlopen(req, timeout=None):
+    def urlopen(req, timeout=None):  # stands in for downloads._open
         url, rng = req.full_url, req.get_header("Range")
         requests.append((url.rsplit("/main", 1)[-1], rng))
         if "/api/models/" in url:
@@ -286,7 +284,7 @@ def test_download_resumes_and_reports_a_hub_that_does_not_answer(tmp_path, monke
         resp.status = 206 if start else 200
         return resp
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(downloads, "_open", urlopen)
     target = tmp_path / "moss" / "MOSS-Image-Base" / "transformer"
     target.mkdir(parents=True)
     (target / "b.safetensors.part").write_bytes(b"y" * 2000)  # an interrupted earlier download
@@ -300,7 +298,36 @@ def test_download_resumes_and_reports_a_hub_that_does_not_answer(tmp_path, monke
     def silent(req, timeout=None):
         raise TimeoutError("timed out")
 
-    monkeypatch.setattr(urllib.request, "urlopen", silent)
+    monkeypatch.setattr(downloads, "_open", silent)
     job = downloads.Download("base")
     job.run()
     assert job.status == "error" and "didn't answer" in job.error
+
+
+def test_download_connects_over_ipv4_first(monkeypatch):
+    import socket
+
+    from venno_moss import downloads
+
+    tried = []
+
+    class FakeSocket:
+        def __init__(self, family, kind, proto):
+            self.family = family
+
+        def settimeout(self, t):
+            pass
+
+        def connect(self, addr):
+            tried.append(addr[0])
+            if self.family == socket.AF_INET6:
+                raise TimeoutError("timed out")  # an IPv6 route that goes nowhere
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a: [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2600::1", 443, 0, 0)),
+                                                         (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("1.2.3.4", 443))])
+    monkeypatch.setattr(socket, "socket", FakeSocket)
+    sock = downloads._connect(("huggingface.co", 443), 60)
+    assert sock.family == socket.AF_INET and tried == ["1.2.3.4"]

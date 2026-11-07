@@ -15,6 +15,7 @@ import fnmatch
 import http.client
 import json
 import os
+import socket
 import threading
 import time
 import urllib.error
@@ -40,6 +41,52 @@ JOBS: dict[str, "Download"] = {}
 _lock = threading.Lock()
 
 
+CONNECT_TIMEOUT = 10  # per address: a dead IPv6 route must not eat the whole TIMEOUT
+
+
+def _connect(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None, **_):
+    """socket.create_connection, but IPv4 addresses first and a short timeout per address. Python tries the
+    addresses one by one in the system's order, usually IPv6 first; where IPv6 is configured but doesn't route
+    (common on home Linux setups) every request waited for the full timeout there. Browsers and curl try both at
+    once, so they don't notice."""
+    host, port = address
+    infos = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+    infos.sort(key=lambda info: info[0] != socket.AF_INET)
+    error = None
+    for family, kind, proto, _, addr in infos:
+        sock = socket.socket(family, kind, proto)
+        try:
+            limit = timeout if isinstance(timeout, (int, float)) else None
+            sock.settimeout(min(CONNECT_TIMEOUT, limit) if limit else CONNECT_TIMEOUT)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(addr)
+            sock.settimeout(limit)
+            return sock
+        except OSError as e:
+            error = e
+            sock.close()
+    raise error or OSError(f"no address for {host}")
+
+
+class _Connection(http.client.HTTPSConnection):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._create_connection = _connect
+
+
+class _Handler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_Connection, req, context=self._context)
+
+
+_opener = urllib.request.build_opener(_Handler())  # keeps the proxy settings from the environment
+
+
+def _open(req: urllib.request.Request, timeout: float):
+    return _opener.open(req, timeout=timeout)
+
+
 def _request(url: str, start: int = 0) -> urllib.request.Request:
     req = urllib.request.Request(url, headers={"User-Agent": "VennoMOSS/1.0"})
     token = os.environ.get("HF_TOKEN")
@@ -53,7 +100,7 @@ def _request(url: str, start: int = 0) -> urllib.request.Request:
 def file_list(repo: str) -> list[tuple[str, int]]:
     """(path, size) of every file in the repository's main branch."""
     try:
-        with urllib.request.urlopen(_request(f"{HF}/api/models/{repo}/tree/main?recursive=true"), timeout=TIMEOUT) as r:  # noqa: S310 (fixed https host)
+        with _open(_request(f"{HF}/api/models/{repo}/tree/main?recursive=true"), TIMEOUT) as r:
             items = json.load(r)
     except (TimeoutError, OSError) as e:
         if "timed out" in str(e).lower() or isinstance(e, TimeoutError):
@@ -107,7 +154,7 @@ class Download:
             if size and have == size:
                 break
             try:
-                with urllib.request.urlopen(_request(url, have), timeout=TIMEOUT) as r:  # noqa: S310 (fixed https host)
+                with _open(_request(url, have), TIMEOUT) as r:
                     if have and r.status != 206:  # the server ignored the range: start over
                         have = 0
                     with open(part, "ab" if have else "wb") as f:
