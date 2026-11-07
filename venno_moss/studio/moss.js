@@ -337,7 +337,7 @@ async function loadCatalog() {
   } catch (e) { toast(e.message); }
 }
 function renderDownloads(list) {
-  $("#dl-jobs").innerHTML = list.map((j) => `<li><div style="flex:1">${escapeHtml(j.name)}${j.shared ? " + text encoder and VAE" : ""} <span class="hint">· ${j.status === "error" ? `failed: ${escapeHtml(j.error)}` : j.status === "done" ? "done" : j.total ? `${formatBytes(j.done)} of ${formatBytes(j.total)}` : "starting…"}</span>
+  $("#dl-jobs").innerHTML = list.map((j) => `<li><div style="flex:1">${escapeHtml(j.name)}${j.shared ? " + text encoder and VAE" : ""} <span class="hint">· ${j.status === "error" ? `failed: ${escapeHtml(j.error)}` : j.status === "done" ? "done" : j.total ? `${formatBytes(j.done) || "0 B"} of ${formatBytes(j.total)}` : `${escapeHtml(j.phase || "starting…")} ${j.seconds}s`}</span>
     <div class="progress-inline"><div class="bar" style="width:${j.total ? Math.round((100 * j.done) / j.total) : j.status === "done" ? 100 : 0}%"></div></div></div></li>`).join("");
 }
 function pollDownloads() {

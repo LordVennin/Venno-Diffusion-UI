@@ -27,10 +27,18 @@ JOBS: dict[str, "Download"] = {}
 _lock = threading.Lock()
 
 
-def _folder_bytes(root: str) -> int:
+LIST_TIMEOUT = 60  # seconds to wait for Hugging Face's file list
+
+
+def _arrived(root: str) -> int:
+    """Bytes downloaded so far: finished files plus the hub's partial (*.incomplete) files in .cache, which are
+    renamed into place when done (anything else there is bookkeeping, and counting it would count twice)."""
     total = 0
     for dirpath, _, names in os.walk(root):
+        in_cache = f"{os.sep}.cache" in dirpath[len(root):]
         for n in names:
+            if in_cache and not n.endswith(".incomplete"):
+                continue
             try:
                 total += os.path.getsize(os.path.join(dirpath, n))
             except OSError:
@@ -48,27 +56,46 @@ class Download:
         found = models.scan()
         self.patterns = OWN + ([] if (found.text_encoder and found.tokenizer and found.vae) else SHARED)
         self.total = 0
-        self.start_bytes = 0
+        self.done = 0
         self.status = "queued"  # queued | downloading | done | error
+        self.phase = "Waiting…"
         self.error = ""
         self.started = time.time()
 
     def to_dict(self) -> dict:
-        done = max(0, _folder_bytes(self.target) - self.start_bytes) if self.status == "downloading" else (self.total if self.status == "done" else 0)
-        return {"id": self.id, "variant": self.variant, "name": self.name, "status": self.status, "error": self.error,
-                "total": self.total, "done": min(done, self.total) if self.total else done, "shared": "text_encoder/*" in self.patterns}
+        if self.status == "downloading" and self.total:
+            self.done = max(self.done, min(_arrived(self.target), self.total))  # never backwards
+        elif self.status == "done":
+            self.done = self.total
+        return {"id": self.id, "variant": self.variant, "name": self.name, "status": self.status, "phase": self.phase, "error": self.error,
+                "total": self.total, "done": self.done, "seconds": round(time.time() - self.started), "shared": "text_encoder/*" in self.patterns}
+
+    def _file_list(self):
+        """Hugging Face's file list (sizes), or an error when it doesn't answer: a hung request would otherwise
+        leave the download waiting forever with nothing to show."""
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as Timeout
+
+        from huggingface_hub import HfApi
+
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            return pool.submit(HfApi().model_info, self.repo, files_metadata=True).result(timeout=LIST_TIMEOUT)
+        except Timeout:
+            raise RuntimeError(f"Hugging Face didn't answer within {LIST_TIMEOUT} s. Check the internet connection (or a proxy / firewall) and try again.") from None
+        finally:
+            pool.shutdown(wait=False)
 
     def run(self):
         try:
-            from huggingface_hub import HfApi, snapshot_download
+            from huggingface_hub import snapshot_download
 
-            self.status = "downloading"
-            info = HfApi().model_info(self.repo, files_metadata=True)
+            self.status, self.phase = "downloading", "Asking Hugging Face for the file list…"
+            print(f"[Venno MOSS] {self.name}: asking Hugging Face ({self.repo}) for the file list", flush=True)
+            info = self._file_list()
             self.total = sum(s.size or 0 for s in info.siblings if any(fnmatch.fnmatch(s.rfilename, p) for p in self.patterns))
             os.makedirs(self.target, exist_ok=True)
-            self.start_bytes = _folder_bytes(self.target)
-            self.total = max(0, self.total - self.start_bytes)  # a resumed download only needs the rest
-            print(f"[Venno MOSS] downloading {self.repo} into {self.target} ({self.total / 1e9:.1f} GB)", flush=True)
+            self.phase = "Downloading"
+            print(f"[Venno MOSS] downloading {self.repo} into {self.target} ({self.total / 1e9:.1f} GB; resumes where it stopped)", flush=True)
             snapshot_download(self.repo, allow_patterns=self.patterns, local_dir=self.target)
             self.status = "done"
             print(f"[Venno MOSS] {self.name} downloaded", flush=True)

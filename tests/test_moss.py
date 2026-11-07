@@ -254,3 +254,20 @@ def test_model_discovery(tmp_path, monkeypatch, dit):
 def test_sigmas_follow_the_vendor_grid():
     sig = engine_module.moss_sigmas(50)
     assert sig[0] == 1.0 and sig[-1] == 0 and len(sig) == 51 and bool((sig[:-1] > sig[1:]).all())
+
+
+def test_download_reports_a_hub_that_does_not_answer(tmp_path, monkeypatch):
+    import time as _time
+
+    import huggingface_hub
+
+    from venno_moss import downloads
+
+    monkeypatch.setattr(config.args, "models_dir", str(tmp_path / "moss"))
+    monkeypatch.setattr(downloads, "LIST_TIMEOUT", 0.3)
+    monkeypatch.setattr(huggingface_hub.HfApi, "model_info", lambda self, *a, **k: _time.sleep(5))
+    job = downloads.Download("base")
+    assert job.to_dict()["phase"] == "Waiting…"
+    job.run()
+    state = job.to_dict()
+    assert state["status"] == "error" and "didn't answer" in state["error"] and state["done"] == 0
