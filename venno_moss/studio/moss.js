@@ -20,9 +20,9 @@ const AXIS_HINTS = {
   steps: "20, 30, 50",
   cfg: "2, 3, 4  or  2-5 (+1)",
   shift: "3, 5, 7",
-  model: "MOSS-Image-SFT, MOSS-Image-Base",
+  model: "MOSS-Image-Base, MOSS-Image-SFT",
   size: "832x1216, 1024x1024",
-  skip_layers: "22, none",
+  skip_layers: "22, 24, 26, none  (OpenMOSS: 22, 24 and 26 all help; none looks more realistic but can lose detail)",
 };
 
 const s = loadStore("venno-moss", DEFAULT);
@@ -337,7 +337,7 @@ async function loadCatalog() {
   } catch (e) { toast(e.message); }
 }
 function renderDownloads(list) {
-  $("#dl-jobs").innerHTML = list.map((j) => `<li><div style="flex:1">${escapeHtml(j.name)}${j.shared ? " + text encoder and VAE" : ""} <span class="hint">· ${j.status === "error" ? `failed: ${escapeHtml(j.error)}` : j.status === "done" ? "done" : `${formatBytes(j.done)} of ${formatBytes(j.total)}`}</span>
+  $("#dl-jobs").innerHTML = list.map((j) => `<li><div style="flex:1">${escapeHtml(j.name)}${j.shared ? " + text encoder and VAE" : ""} <span class="hint">· ${j.status === "error" ? `failed: ${escapeHtml(j.error)}` : j.status === "done" ? "done" : j.total ? `${formatBytes(j.done)} of ${formatBytes(j.total)}` : "starting…"}</span>
     <div class="progress-inline"><div class="bar" style="width:${j.total ? Math.round((100 * j.done) / j.total) : j.status === "done" ? 100 : 0}%"></div></div></div></li>`).join("");
 }
 function pollDownloads() {

@@ -14,10 +14,11 @@ import uuid
 
 from . import config, models
 
-REPOS = {"sft": "OpenMOSS-Team/MOSS-Image-SFT", "base": "OpenMOSS-Team/MOSS-Image-Base"}
-DESCRIPTIONS = {
-    "sft": "The supervised fine-tune: cleaner composition and text; what most LoRAs are trained on.",
-    "base": "The base model: more varied, less polished; better for some style training.",
+REPOS = {"base": "OpenMOSS-Team/MOSS-Image-Base", "sft": "OpenMOSS-Team/MOSS-Image-SFT"}
+DESCRIPTIONS = {  # from OpenMOSS's user guide
+    "base": "Left without post-training so LoRAs train well on it: OpenMOSS's recommended model to train LoRAs on. "
+            "Needs good settings: 50+ steps, CFG 3–6 (higher for short prompts).",
+    "sft": "Base with OpenMOSS's own supervised fine-tune: more polished pictures and text layout out of the box.",
 }
 SHARED = ["text_encoder/*", "tokenizer/*", "vae/*"]
 OWN = ["model_index.json", "transformer/*"]

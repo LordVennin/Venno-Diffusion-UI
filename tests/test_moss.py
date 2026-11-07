@@ -247,7 +247,7 @@ def test_model_discovery(tmp_path, monkeypatch, dit):
     save_file(weights, str(tmp_path / "moss" / "my-finetune.safetensors"))
     save_file(trainer_lora(layers=1), str(tmp_path / "moss" / "a-lora.safetensors"))  # a LoRA is not a model
     found = models.scan()
-    assert [m.name for m in found.models] == ["MOSS-Image-SFT", "MOSS-Image-Base", "my-finetune"] and found.complete
+    assert [m.name for m in found.models] == ["MOSS-Image-Base", "MOSS-Image-SFT", "my-finetune"] and found.complete
     assert found.text_encoder == str(sft / "text_encoder") and found.model("my-finetune").root is None
 
 
