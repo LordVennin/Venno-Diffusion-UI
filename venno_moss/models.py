@@ -8,6 +8,7 @@ from whichever folder has them and only the transformer differs between models.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from typing import Optional
@@ -51,7 +52,19 @@ class Found:
 
 
 def _has_weights(folder: str) -> bool:
-    return os.path.isdir(folder) and any(n.endswith(".safetensors") for n in os.listdir(folder))
+    """Weights are there; for sharded weights, every shard the index names (not while a download is under way)."""
+    if not os.path.isdir(folder):
+        return False
+    names = os.listdir(folder)
+    index = [n for n in names if n.endswith(".safetensors.index.json")]
+    if index:
+        try:
+            with open(os.path.join(folder, index[0]), encoding="utf-8") as f:
+                shards = set(json.load(f)["weight_map"].values())
+        except (OSError, ValueError, KeyError):
+            return False
+        return all(os.path.isfile(os.path.join(folder, s)) for s in shards)
+    return any(n.endswith(".safetensors") for n in names)
 
 
 def _display_name(folder: str) -> str:

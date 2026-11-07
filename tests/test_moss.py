@@ -3,6 +3,7 @@ on a tiny random MOSS-Image transformer (the real model is 27 GB)."""
 
 import copy
 import io
+import json
 import os
 
 import pytest
@@ -256,18 +257,50 @@ def test_sigmas_follow_the_vendor_grid():
     assert sig[0] == 1.0 and sig[-1] == 0 and len(sig) == 51 and bool((sig[:-1] > sig[1:]).all())
 
 
-def test_download_reports_a_hub_that_does_not_answer(tmp_path, monkeypatch):
-    import time as _time
-
-    import huggingface_hub
+def test_download_resumes_and_reports_a_hub_that_does_not_answer(tmp_path, monkeypatch):
+    import urllib.request
 
     from venno_moss import downloads
 
     monkeypatch.setattr(config.args, "models_dir", str(tmp_path / "moss"))
-    monkeypatch.setattr(downloads, "LIST_TIMEOUT", 0.3)
-    monkeypatch.setattr(huggingface_hub.HfApi, "model_info", lambda self, *a, **k: _time.sleep(5))
+    files = {"model_index.json": b"{}", "transformer/a.safetensors": b"x" * 3000, "transformer/b.safetensors": b"y" * 5000, "other/c.bin": b"z"}
+    requests = []
+
+    class Resp(io.BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def urlopen(req, timeout=None):
+        url, rng = req.full_url, req.get_header("Range")
+        requests.append((url.rsplit("/main", 1)[-1], rng))
+        if "/api/models/" in url:
+            return Resp(json.dumps([{"type": "file", "path": p, "size": len(b)} for p, b in files.items()]).encode())
+        body = files[url.split("/resolve/main/", 1)[1]]
+        start = int(rng.split("=")[1].rstrip("-")) if rng else 0
+        resp = Resp(body[start:])
+        resp.status = 206 if start else 200
+        return resp
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    target = tmp_path / "moss" / "MOSS-Image-Base" / "transformer"
+    target.mkdir(parents=True)
+    (target / "b.safetensors.part").write_bytes(b"y" * 2000)  # an interrupted earlier download
     job = downloads.Download("base")
-    assert job.to_dict()["phase"] == "Waiting…"
     job.run()
     state = job.to_dict()
-    assert state["status"] == "error" and "didn't answer" in state["error"] and state["done"] == 0
+    assert state["status"] == "done" and state["done"] == state["total"] == 2 + 3000 + 5000
+    assert (target / "b.safetensors").read_bytes() == files["transformer/b.safetensors"] and not (target / "b.safetensors.part").exists()
+    assert ("/transformer/b.safetensors", "bytes=2000-") in requests and not any("other" in u for u, _ in requests)
+
+    def silent(req, timeout=None):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", silent)
+    job = downloads.Download("base")
+    job.run()
+    assert job.status == "error" and "didn't answer" in job.error
