@@ -17,7 +17,7 @@ from safetensors import safe_open
 
 from . import config
 
-KNOWN = {"base": "MOSS-Image-Base", "sft": "MOSS-Image-SFT"}  # Hub names (OpenMOSS-Team/…); Base first: LoRAs train on it
+KNOWN = {"base": "MOSS-Image-Base", "sft": "MOSS-Image-SFT", "kromoss": "Kromoss"}  # folder names of the downloads; Base first: LoRAs train on it
 
 
 @dataclass
@@ -119,6 +119,6 @@ def scan() -> Found:
                 path = os.path.join(folder, n)
                 if n.endswith(".safetensors") and os.path.isfile(path) and is_transformer_file(path):
                     add(Model(os.path.splitext(n)[0], path))
-    order = {v: i for i, v in enumerate(KNOWN.values())}  # Base, SFT first; then fine-tunes by name
+    order = {v: i for i, v in enumerate(KNOWN.values())}  # Base, SFT, Kromoss first; then other models by name
     found.models.sort(key=lambda m: (order.get(m.name, len(order)), m.name.lower()))
     return found

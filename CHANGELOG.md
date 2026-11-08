@@ -8,6 +8,8 @@ shows the sections newer than the installed version.
 - **Venno MOSS**, a separate Studio for testing MOSS-Image LoRAs (`moss.sh` / `moss.bat`, port 7870, its own
   `venv-moss`): SFT / Base downloads, LoRAs from venno-trainer and other trainers, a comparison grid that puts a
   training run's epochs side by side, settings saved in the PNGs, Full (24 GB) and Low (12 GB) memory modes.
+  Kromoss (lodestones' fine-tune of Base) is in its download list; a line under the LoRA list shows each
+  LoRA's rank, alpha and the model it was trained on when its file records it.
 - Images of a several-image job appear in the results as each one finishes (Canvas and form tabs), so you can look
   at, apply, Skip or Cancel early; a result you click meanwhile stays shown instead of the next image's progress.
 
