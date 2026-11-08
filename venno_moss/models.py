@@ -72,14 +72,23 @@ def _display_name(folder: str) -> str:
     return name.split("__", 1)[-1]  # "OpenMOSS-Team__MOSS-Image-SFT" (venno-trainer's downloads) → "MOSS-Image-SFT"
 
 
+QUANTIZED = ("weight_scale", "comfy_quant", "input_scale")  # ComfyUI's int8 / fp8 formats (e.g. *_int8_convrot)
+
+
 def is_transformer_file(path: str) -> bool:
-    """A single-file MOSS-Image transformer (not a LoRA, not some other model)."""
+    """A single-file MOSS-Image transformer in bf16 / fp16 / fp32 (not a LoRA, not another model, and not
+    ComfyUI's int8 or fp8 files: those need ComfyUI's quantized kernels; use the bf16 file and Memory: Low)."""
     try:
         with safe_open(path, "pt") as f:
-            keys = f.keys()
-            return any(k.endswith("video_embedder.weight") for k in keys) and not any("lora" in k for k in keys)
+            keys = list(f.keys())
     except Exception:  # not a safetensors file we can read
         return False
+    if not any(k.endswith("video_embedder.weight") for k in keys) or any("lora" in k for k in keys):
+        return False
+    if any(k.endswith(QUANTIZED) for k in keys):
+        print(f"[Venno MOSS] skipping {os.path.basename(path)}: a ComfyUI int8 / fp8 file (use the bf16 one; Memory: Low stores it in fp8)", flush=True)
+        return False
+    return True
 
 
 def scan() -> Found:

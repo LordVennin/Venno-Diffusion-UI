@@ -93,14 +93,27 @@ function countTokens() {
 }
 
 // ---------------- LoRAs ----------------
-const chips = new LoraChips($("#lora-chips"), { get: () => s.loras, set: (list) => { s.loras = list; persist(); renderAxes(); } });
+const chips = new LoraChips($("#lora-chips"), { get: () => s.loras, set: (list) => { s.loras = list; persist(); renderAxes(); loraInfo(); } });
 chips.render();
+/** One line per LoRA in the list: the model it was trained on (when its file records it), rank and alpha. */
+function loraInfo() {
+  const known = new Map((info?.loras || []).map((l) => [l.name, l]));
+  $("#lora-info").innerHTML = s.loras.map((x) => {
+    const l = known.get(x.name);
+    if (!l) return "";
+    const bits = [`trained on ${l.trained_on ? `<b>${escapeHtml(l.trained_on)}</b>` : "(not recorded)"}`];
+    if (l.rank) bits.push(`rank ${l.rank}`);
+    if (l.alpha != null) bits.push(`alpha ${l.alpha}`);
+    return `<div>${escapeHtml(x.name.replace(/\.safetensors$/i, ""))}: ${bits.join(" · ")}</div>`;
+  }).join("");
+}
 function fillLoras() {
   const list = [...(info?.loras || [])];
   if (s.newest) list.sort((a, b) => b.mtime - a.mtime);
   const sel = $("#sel-lora");
   sel.innerHTML = `<option value="">+ LoRA… (${list.length})</option>` + list.map((l) => `<option value="${escapeHtml(l.name)}">${escapeHtml(l.name)}</option>`).join("");
   chips.setAvailable(list.map((l) => l.name));
+  loraInfo();
 }
 $("#sel-lora").onchange = (e) => { if (e.target.value) chips.add(e.target.value, 1); e.target.value = ""; };
 

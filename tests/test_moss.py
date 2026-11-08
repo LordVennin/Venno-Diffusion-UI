@@ -331,3 +331,17 @@ def test_download_connects_over_ipv4_first(monkeypatch):
     monkeypatch.setattr(socket, "socket", FakeSocket)
     sock = downloads._connect(("huggingface.co", 443), 60)
     assert sock.family == socket.AF_INET and tried == ["1.2.3.4"]
+
+
+def test_lora_summary_and_quantized_files_skipped(tmp_path, dit):
+    path = tmp_path / "a.safetensors"
+    save_file(trainer_lora(layers=1), str(path), metadata={"ss_sd_model_name": "MOSS-Image-Base", "ss_network_alpha": "16"})
+    assert lora.summary(str(path)) == {"trained_on": "MOSS-Image-Base", "rank": RANK, "alpha": 16.0}
+    bare = tmp_path / "b.safetensors"
+    save_file(trainer_lora(layers=1), str(bare))
+    assert lora.summary(str(bare)) == {"trained_on": "", "rank": RANK, "alpha": None}
+    weights = {k: v.contiguous() for k, v in dit.state_dict().items()}
+    save_file(weights, str(tmp_path / "plain_bf16.safetensors"))
+    save_file({**weights, "layers.0.proj.qkv.weight_scale": torch.ones(3 * DIM)}, str(tmp_path / "x_int8_convrot.safetensors"))
+    assert models.is_transformer_file(str(tmp_path / "plain_bf16.safetensors"))
+    assert not models.is_transformer_file(str(tmp_path / "x_int8_convrot.safetensors"))

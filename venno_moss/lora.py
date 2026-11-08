@@ -50,7 +50,7 @@ def scan() -> list[dict]:
                     continue
                 seen.add(name)
                 st = os.stat(path)
-                out.append({"name": name, "path": path, "folder": root, "size": st.st_size, "mtime": st.st_mtime})
+                out.append({"name": name, "path": path, "folder": root, "size": st.st_size, "mtime": st.st_mtime, **summary(path)})
     out.sort(key=lambda x: x["name"].lower())
     return out
 
@@ -70,6 +70,34 @@ def resolve(name: str) -> str:
         if item["name"] == name or os.path.splitext(item["name"])[0] == os.path.splitext(name)[0]:
             return item["path"]
     raise ValueError(f'LoRA "{name}" not found in the LoRA folders (Settings)')
+
+
+TRAINED_ON = ("ss_sd_model_name", "venno_base_model", "base_model", "base_model_name", "modelspec.base_model", "ss_base_model")
+
+
+def summary(path: str) -> dict:
+    """What a LoRA file says about itself: the model it was trained on (when recorded), rank and alpha."""
+    out = {"trained_on": "", "rank": None, "alpha": None}
+    try:
+        with safe_open(path, "pt") as f:
+            meta = f.metadata() or {}
+            down = next((k for k in f.keys() if k.endswith((".lora_A.weight", ".lora_down.weight"))), None)
+            if down is not None:
+                out["rank"] = f.get_slice(down).get_shape()[0]
+    except Exception:
+        return out
+    name = next((meta[k].strip() for k in TRAINED_ON if meta.get(k, "").strip()), "")
+    out["trained_on"] = os.path.splitext(os.path.basename(name.replace("\\", "/")))[0] if name else ""
+    for key in ("ss_network_alpha", "alpha"):
+        try:
+            out["alpha"] = float(meta[key])
+            break
+        except (KeyError, ValueError):
+            pass
+    for key in ("ss_network_dim", "rank"):
+        if out["rank"] is None and meta.get(key, "").isdigit():
+            out["rank"] = int(meta[key])
+    return out
 
 
 def metadata(path: str) -> dict:
