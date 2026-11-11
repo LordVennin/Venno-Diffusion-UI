@@ -415,6 +415,12 @@ details.card > summary > span { color: var(--text); }
 /* Image to Image: outpaint frame (the new border shows as a checkerboard around the input) */
 .i2i-stage.outpainting { background: repeating-conic-gradient(#2a2d33 0 25%, #1d1f23 0 50%) 0 0 / 16px 16px; outline: 1px dashed var(--accent); }
 .i2i-stage img { -webkit-user-drag: none; user-select: none; }
+/* zoomed input image (zoompane.js): the pane scrolls; margin:auto centres without cutting off the top-left */
+.in-pane .i2i-drop.zoomed { display: flex; overflow: auto; }
+.in-pane .i2i-drop.zoomed .i2i-stage { flex: none; margin: auto; max-width: none; max-height: none; }
+.i2i-drop.pan-ready .i2i-stage, .i2i-drop.pan-ready .i2i-stage.paintable { cursor: grab; }
+.i2i-drop.panning .i2i-stage, .i2i-drop.panning .i2i-stage.paintable { cursor: grabbing; }
+.i2i-drop.pan-ready .mask-cursor, .i2i-drop.panning .mask-cursor { visibility: hidden; }
 .hr-card summary .hr-sum { color: var(--accent2); font-size: 12px; margin-left: 4px; }
 .set-card summary .set-sum, .ref-card summary .ref-sum { color: var(--accent2); font-size: 12px; margin-left: 4px; }
 .ref-card summary .ref-sum.warn { color: var(--warn, #e0a050); }

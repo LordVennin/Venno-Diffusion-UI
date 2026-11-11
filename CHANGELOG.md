@@ -14,6 +14,9 @@ shows the sections newer than the installed version.
   axes) and **Fast preview** (8 steps at CFG 1 with lodestones' turbo LoRA, downloadable in its Settings).
 - Venno MOSS's Image Info tab has Venno's layout and also reads pictures from Venno, Forge and A1111 (prompt,
   negative prompt, seed and size carry over).
+- Inpaint and Image to Image: the wheel zooms the input image where the pointer is (up to 8×); drag with the middle
+  button or hold Space and drag to move around; the zoom button fits it again. Shift + wheel changes the brush
+  size (the plain wheel did).
 - The hires card shows the final size as the server computes it (it rounded to 64).
 - Images of a several-image job appear in the results as each one finishes (Canvas and form tabs), so you can look
   at, apply, Skip or Cancel early; a result you click meanwhile stays shown instead of the next image's progress.

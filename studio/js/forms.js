@@ -14,6 +14,7 @@ import { CONTROLNET_DEFAULT, ControlNetCard } from "./controlnet.js";
 import { REFERENCE_DEFAULT, ReferenceCard, SET_DEFAULT, SetCard } from "./timecards.js";
 import { attachTokenCounter, refreshTokenCounters } from "./tokens.js";
 import { openLoraBrowser } from "./lorabrowser.js";
+import { ZoomPane } from "./zoompane.js";
 
 const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768]];
 const RESIZE_MODES = ["Just resize", "Crop and resize", "Resize and fill"];
@@ -200,6 +201,7 @@ export class GenForm {
                 <label>Brush <input type="range" class="f-mask-size" min="1" max="300" value="48"></label>
                 <button class="f-mask-invert">Invert</button>
                 <button class="f-mask-clear" title="Clear the mask (or the sketch, in Sketch mode)">Clear</button>` : ""}
+                <button class="f-zoom" disabled title="Zoom: scroll over the image (it zooms where the pointer is). Click to fit the image again.">100%</button>
                 <button class="f-open-again" title="Open another image">Open…</button>
                 <button class="f-image-clear" title="Remove image">✕</button>
               </div>
@@ -208,7 +210,7 @@ export class GenForm {
               <div class="i2i-empty">Drop, paste or <button class="f-open">open</button> an image<br><small>or use “Send to ${inpaint ? "Inpaint" : "Image to Image"}” from another tab</small></div>
               <div class="i2i-stage" hidden><img class="i2i-img" alt="" draggable="false">${inpaint ? `<canvas class="i2i-mask"></canvas><canvas class="i2i-sketch"></canvas>` : ""}</div>
             </div>
-            ${inpaint ? `<div class="hint f-pane-hint">Paint over the area to regenerate. No mask = the whole image. <b>Sketch</b> draws lines for the sketch guide.</div>` : ""}
+            ${inpaint ? `<div class="hint f-pane-hint">Paint over the area to regenerate. No mask = the whole image. <b>Sketch</b> draws lines for the sketch guide.<br><b>Scroll</b> zooms in where the pointer is; drag with the <b>middle button</b> (or hold <b>Space</b> and drag) to move around; <b>Shift + scroll</b> changes the brush size.</div>` : ""}
           </div>
           <div class="pane out-pane">
             <div class="pane-head"><span class="pane-title">Result</span></div>
@@ -574,8 +576,7 @@ export class GenForm {
     const r = drop.getBoundingClientRect();
     const k = Math.min((r.width - 16) / W, (r.height - 16) / H);
     if (!(k > 0)) return;
-    stage.style.width = `${Math.floor(W * k)}px`;
-    stage.style.height = `${Math.floor(H * k)}px`;
+    this.zoomPane.apply(Math.floor(W * k), Math.floor(H * k)); // × the zoom
     stage.classList.toggle("outpainting", !!op);
     const el = this.q(".i2i-img");
     Object.assign(el.style, op
@@ -608,6 +609,13 @@ export class GenForm {
 
   bindImageInput() {
     const drop = this.q(".i2i-drop");
+    const zoomBtn = this.q(".f-zoom");
+    // the wheel zooms at the pointer; Shift + wheel changes the brush size (Inpaint)
+    this.zoomPane = new ZoomPane(drop, this.q(".i2i-stage"), {
+      onChange: (z) => { zoomBtn.textContent = `${Math.round(z * 100)}%`; zoomBtn.disabled = z === 1; },
+      onBrush: (dir) => this.brushStep?.(dir),
+    });
+    zoomBtn.onclick = () => this.zoomPane.reset();
     new ResizeObserver(() => this.fitStage()).observe(drop);
     const file = document.createElement("input");
     file.type = "file";
@@ -680,18 +688,18 @@ export class GenForm {
     const end = () => { if (!drawing) return; drawing = false; last = null; this.updateGuideSummary(); };
     stage.addEventListener("pointerup", end);
     stage.addEventListener("pointercancel", end);
-    stage.addEventListener("wheel", (e) => {  // brush size with the wheel over the image
-      e.preventDefault();
-      cur().size = Math.max(1, Math.min(300, cur().size * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    this.brushStep = (dir) => {  // Shift + wheel over the image (the plain wheel zooms)
+      cur().size = Math.max(1, Math.min(300, cur().size * (dir > 0 ? 1.12 : 1 / 1.12)));
       this.q(".f-mask-size").value = cur().size;
       cursor.style.width = cursor.style.height = `${cur().size}px`;
-    }, { passive: false });
+    };
     showTool();
   }
 
   async setInputImage(src, { offer = false } = {}) {
     if (!src) {
       this.inputImage = null;
+      this.zoomPane.reset();
       this.q(".i2i-stage").hidden = true;
       this.q(".i2i-empty").hidden = false;
       this.q(".mask-tools").hidden = true;
@@ -701,6 +709,7 @@ export class GenForm {
     img.src = src;
     await img.decode();
     this.inputImage = img;
+    this.zoomPane.reset();
     this.q(".i2i-img").src = src;
     if (offer) offerSettings(src, (st) => this.applySettings(st));
     for (const c of [this.q(".i2i-mask"), this.q(".i2i-sketch")]) {
