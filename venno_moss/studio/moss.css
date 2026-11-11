@@ -1,5 +1,5 @@
 /* Venno MOSS: what it adds to Venno Studio's styles (studio.css). */
-#page-t2i[hidden], #page-info[hidden] { display: none; }
+.page[hidden] { display: none; }
 .settings-btn.on { border-color: var(--accent); }
 .axis { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-top: 1px solid var(--line); }
 .axis:first-child { border-top: 0; }
@@ -14,4 +14,3 @@
 .moss-settings .kv th { text-align: left; font-weight: normal; padding: 3px 12px 3px 0; vertical-align: top; color: var(--muted); }
 .moss-settings .kv code { white-space: pre-wrap; word-break: break-all; }
 input.unused { opacity: .45; text-decoration: line-through; }
-#hires-card > summary { color: var(--text); font-weight: 600; }

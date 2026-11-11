@@ -12,7 +12,9 @@
 <header class="topbar">
   <div class="brand">Venno<span>MOSS</span></div>
   <nav class="tabs" id="tabs">
-    <button data-tab="t2i" class="on">Text to Image</button>
+    <button data-tab="txt2img" class="on">Text to Image</button>
+    <button data-tab="img2img">Image to Image</button>
+    <button data-tab="inpaint">Inpaint</button>
     <button data-tab="info">Image Info</button>
   </nav>
   <div class="models">
@@ -23,65 +25,10 @@
   <button id="btn-settings" class="settings-btn" title="Settings: models, LoRA folders, memory">⚙<span class="lbl"> Settings</span></button>
 </header>
 
-<div class="page form-page" id="page-t2i">
-  <div class="form-col">
-    <section class="card">
-      <textarea id="prompt" rows="5" placeholder="Prompt: tags, natural language or both (Ctrl+Enter to generate)"></textarea>
-      <textarea id="negative" rows="2" placeholder="Negative prompt (MOSS-Image works well without one)"></textarea>
-      <div class="hint" id="tokens"></div>
-      <div class="row">
-        <select id="sel-lora"></select>
-        <label class="check" title="Show the newest LoRAs first (handy while a training run saves epochs)"><input type="checkbox" id="lora-newest"> newest first</label>
-      </div>
-      <div id="lora-chips"></div>
-      <div class="hint" id="lora-info"></div>
-      <div class="row buttons">
-        <button class="primary big" id="btn-generate">Generate</button>
-        <button class="big" id="btn-skip" hidden title="Drop the image being made and go on with the next one">Skip</button>
-        <button class="big" id="btn-cancel" hidden title="Stop; the images already finished are kept">Cancel</button>
-      </div>
-      <label class="check" title="8 steps at CFG 1 with lodestones' turbo LoRA (added by itself): about 12× faster, for trying prompts and comparing epochs. It changes the look a little, so judge a LoRA without it."><input type="checkbox" id="fast"> Fast preview <span class="hint" id="fast-note"></span></label>
-      <div class="progress-inline" id="progress" hidden><div class="bar"></div><span></span></div>
-    </section>
-
-    <section class="card">
-      <div class="grid2">
-        <label>Steps <input type="number" id="steps" min="1" max="200"></label>
-        <label>CFG <input type="number" id="cfg" min="1" max="20" step="0.1"></label>
-        <label title="Higher spends more steps on composition (MOSS-Image default 5)">Shift <input type="number" id="shift" min="0.5" max="20" step="0.5"></label>
-        <label title="Pictures made one after another, seed +1 each">Batch count <input type="number" id="count" min="1" max="100"></label>
-        <label>Width <input type="number" id="width" min="256" max="2048" step="16"></label>
-        <label>Height <input type="number" id="height" min="256" max="2048" step="16"></label>
-      </div>
-      <div class="sizes" id="sizes"></div>
-      <label>Seed <span class="row seed"><input type="number" id="seed"><button id="seed-random" title="Random (-1)">🎲</button><button id="seed-reuse" title="Reuse seed of the shown image">♻️</button></span></label>
-      <label class="check" title="MOSS-Image's guidance: the negative branch skips transformer block 22 (the model card's default). Off: plain CFG."><input type="checkbox" id="skip22"> Skip block 22 on the negative branch (recommended)</label>
-      <div class="row"><button id="btn-defaults" title="Steps 50, CFG 3, shift 5, block 22 skipped: the model card's settings">Model defaults</button><span class="hint">Same settings and seed as a venno-trainer sample give the same picture.</span></div>
-    </section>
-
-    <details class="card" id="hires-card"></details>
-
-    <details class="card" id="grid-card">
-      <summary><input type="checkbox" id="grid-on" title="Use the comparison grid"> <span>Comparison grid (X/Y/Z)</span> <span class="hint" id="grid-sum"></span></summary>
-      <div class="hint">One picture per combination, same seed. Put a training run's LoRA files on X to compare epochs, weights on Y.</div>
-      <div id="axes"></div>
-      <label class="check"><input type="checkbox" id="grid-cells"> Also keep each cell as its own picture</label>
-    </details>
-
-    <label class="check save"><input type="checkbox" id="save"> Save results to the outputs folder</label>
-  </div>
-
-  <div class="result-col">
-    <div class="result-main"><img class="r-img" id="r-img" alt=""><div class="r-empty" id="r-empty">Results appear here</div></div>
-    <div class="r-thumbs" id="thumbs"></div>
-    <div class="row r-actions">
-      <button id="r-settings" disabled title="Load this picture's prompt and settings into the form">Use settings</button>
-      <button id="r-view" disabled title="Full window">View</button>
-      <button id="r-download" disabled>Download</button>
-    </div>
-    <pre class="r-info" id="r-info"></pre>
-  </div>
-</div>
+<!-- the three tabs are built by form.js (one MossForm each) -->
+<div class="page form-page" id="page-txt2img"></div>
+<div class="page form-page" id="page-img2img" hidden></div>
+<div class="page form-page" id="page-inpaint" hidden></div>
 
 <div class="page info-page" id="page-info" hidden>
   <div class="info-drop" id="info-drop">
@@ -92,7 +39,9 @@
   <div class="info-side">
     <div class="row info-send" id="info-send" hidden>
       <span class="lbl">Send to</span>
-      <button id="info-use" class="primary">Text to Image</button>
+      <button data-to="txt2img">Text to Image</button>
+      <button data-to="img2img">Image to Image</button>
+      <button data-to="inpaint">Inpaint</button>
       <span class="hint" id="info-note"></span>
     </div>
     <pre class="info-text" id="info-text">Generation parameters appear here.</pre>

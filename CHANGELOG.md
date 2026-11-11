@@ -12,6 +12,9 @@ shows the sections newer than the installed version.
   LoRA's rank, alpha and the model it was trained on when its file records it.
 - Venno MOSS: **hires fix** (Lanczos, Latent or Venno's upscaler models; denoising, own steps / CFG / shift; grid
   axes) and **Fast preview** (8 steps at CFG 1 with lodestones' turbo LoRA, downloadable in its Settings).
+- Venno MOSS: **Image to Image** (with Outpaint) and **Inpaint** tabs like Venno's, each with its own prompt and
+  settings: mask painting with zoom, masked content modes, only masked, soft inpainting; pictures go between
+  tabs with Send to / Use as input.
 - Venno MOSS's Image Info tab has Venno's layout and also reads pictures from Venno, Forge and A1111 (prompt,
   negative prompt, seed and size carry over).
 - Inpaint and Image to Image: the wheel zooms the input image where the pointer is (up to 8×); drag with the middle
