@@ -12,11 +12,11 @@ import traceback
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from . import config, lora, metadata, upscale
+from . import config, lora, metadata, source, upscale
 from . import engine as engine_module
 
 FAST = {"steps": 8, "cfg": 1.0}  # what the turbo LoRA was distilled for
@@ -53,6 +53,7 @@ class Hires(BaseModel):
 
 
 class Job(BaseModel):
+    mode: Literal["txt2img", "img2img"] = "txt2img"  # inpaint and outpaint are img2img with a mask
     prompt: str = ""
     negative: str = ""
     model: str = ""
@@ -66,6 +67,16 @@ class Job(BaseModel):
     seed: int = -1
     count: int = Field(1, ge=1, le=100)
     hires: Optional[Hires] = None
+    # image to image / inpaint (field names and meanings as in Venno)
+    init_image: Optional[str] = None  # PNG / JPEG as a data URL or base64
+    strength: float = Field(0.6, ge=0.0, le=1.0)
+    resize_mode: int = 0  # 0 stretch, 1 crop to fill, 2 fit and extend
+    mask: Optional[str] = None  # white / opaque = regenerate
+    mask_blur: int = Field(8, ge=0, le=256)
+    fill: Literal["fill", "original", "latent_noise", "latent_nothing"] = "original"
+    only_masked: bool = False
+    only_masked_padding: int = Field(64, ge=0, le=1024)
+    soft_inpaint: bool = True
     fast: bool = False  # Fast preview: 8 steps, CFG 1 and the turbo LoRA (see prepare)
     grid: Optional[Grid] = None
     save: bool = True
@@ -115,7 +126,9 @@ def unsupported(job: Job) -> Optional[str]:
         return "Pick a MOSS-Image model first"
     if job.fast and lora.find_turbo() is None:
         return "Fast preview needs the 8-step turbo LoRA: download it in ⚙ Settings → Models"
-    if job.hires is not None:
+    if job.mode == "img2img" and not job.init_image:
+        return "Image to image needs an input image"
+    if job.hires is not None and job.mode == "txt2img":
         if job.hires.upscaler not in upscale.available():
             return f'Hires upscaler "{job.hires.upscaler}" not found'
         tw, th = hires_target(job)
@@ -146,8 +159,11 @@ def run(job: Job, progress: Progress) -> Result:
     eng = engine_module.get()
     base = resolve_seed(job.seed)
     result = Result()
-    hires = None
-    if job.hires is not None:
+    hires = src = init = None
+    if job.mode == "img2img":
+        src = source.prepare(job, job.width // 16 * 16, job.height // 16 * 16)
+        init = source.latents(eng, job, src)  # encoded once for all the job's pictures
+    elif job.hires is not None:
         tw, th = hires_target(job)
         hires = dict(upscaler=job.hires.upscaler, width=tw, height=th, steps=job.hires.steps, denoise=job.hires.denoise, cfg=job.hires.cfg, shift=job.hires.shift)
     for k in range(job.count):
@@ -156,7 +172,7 @@ def run(job: Job, progress: Progress) -> Result:
             image, warnings = eng.generate(
                 model=job.model, prompt=job.prompt, negative=job.negative, width=job.width, height=job.height,
                 steps=job.steps, cfg=job.cfg, shift=job.shift, seed=seed, skip_layers=job.skip_layers,
-                loras=[(lr.name, lr.weight) for lr in job.loras], hires=hires,
+                loras=[(lr.name, lr.weight) for lr in job.loras], hires=hires, init=init,
                 on_step=lambda i, n, k=k: progress.on_step(i, n, k, job.count),
                 on_preview=progress.on_preview, preview_every=max(1, job.steps // 8) if progress.on_preview else 0,
                 is_cancelled=progress.is_cancelled,
@@ -166,7 +182,8 @@ def run(job: Job, progress: Progress) -> Result:
                 break
             continue
         result.warnings += [w for w in warnings if w not in result.warnings]
-        info = metadata.infotext(job, seed)
+        image = source.finish(src, image)
+        info = metadata.infotext(job, seed, masked=src is not None and src.mask is not None, size=image.size)
         png = metadata.png_bytes(image, info, metadata.settings_json(job, seed))
         if job.save:
             metadata.save(png, seed)

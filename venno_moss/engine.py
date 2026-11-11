@@ -395,8 +395,13 @@ class Engine:
             return self.resize_latents(latents, width, height, upscale.latent_mode(upscaler))
         return self.encode_image(upscale.upscale(self.decode(latents), upscaler, width, height, self.device))
 
-    def _denoise(self, dit, latents, sig, cond, uncond, cfg: float, skip, *, done: int, total: int, on_step, on_preview, preview_every, is_cancelled):
-        """Euler over the sigmas `sig` (the trainer's sampler); `done` steps of `total` ran before (progress)."""
+    def _denoise(self, dit, latents, sig, cond, uncond, cfg: float, skip, *, done: int, total: int, on_step, on_preview, preview_every, is_cancelled, inpaint: Optional[dict] = None):
+        """Euler over the sigmas `sig` (the trainer's sampler); `done` steps of `total` ran before (progress).
+
+        inpaint {mask, keep, noise, soft}, as in Venno: outside the mask the latents are held to the input (`keep`)
+        noised to the current step, and the prediction there is the input itself. With `soft` the feathered mask
+        is a per-pixel strength (differential diffusion): a pixel joins the generation once the remaining noise
+        drops below its mask value, so edges blend in gradually instead of as a seam."""
         if self.dit_parked:  # a VAE call needed its room (see _vae)
             dit.to(self.device)
             self.dit_parked = False
@@ -404,11 +409,18 @@ class Engine:
         for i in range(n):
             if is_cancelled():
                 raise Cancelled
+            if inpaint is not None:
+                mask = (inpaint["mask"] >= sig[i] / sig[0]).to(latents) if inpaint["soft"] else inpaint["mask"]
+                known = (1 - sig[i]) * inpaint["keep"] + sig[i] * inpaint["noise"]  # the input, noised to this step
+                latents = latents * mask + known * (1 - mask)
             t = (sig[i] * NUM_TRAIN_TIMESTEPS).reshape(1)
             pred = dit(latents, t, *cond).float()
             if uncond is not None:
                 pu = dit(latents, t, *uncond, skip_layers=skip).float()
                 pred = pu + cfg * (pred - pu)
+            if inpaint is not None:  # the clean picture this step points at is the input wherever nothing is generated
+                clean = (latents - sig[i] * pred) * mask + inpaint["keep"] * (1 - mask)
+                pred = (latents - clean) / sig[i]
             if on_preview is not None and preview_every and (done + i + 1) % preview_every == 0 and i + 1 < n:
                 on_preview(self.decode(latents - sig[i] * pred))  # the picture this step points at
             latents = latents + (sig[i + 1] - sig[i]) * pred
@@ -418,6 +430,7 @@ class Engine:
     @torch.inference_mode()
     def generate(self, *, model: str, prompt: str, negative: str, width: int, height: int, steps: int, cfg: float,
                  shift: float, seed: int, skip_layers: list[int], loras: list[tuple[str, float]], hires: Optional[dict] = None,
+                 init: Optional[dict] = None,
                  on_step: Callable[[int, int], None] = lambda i, n: None,
                  on_preview: Optional[Callable[[object], None]] = None, preview_every: int = 0,
                  is_cancelled: Callable[[], bool] = lambda: False) -> tuple[object, list[str]]:
@@ -425,7 +438,10 @@ class Engine:
 
         hires: {upscaler, width, height, steps (0 = as the first pass), denoise, cfg / shift (None = as the first
         pass)}: the first pass's latents are upscaled to width × height, noised to the `denoise` point of the
-        hires schedule and sampled from there (the last `denoise` part of its steps), like Venno's hires fix."""
+        hires schedule and sampled from there (the last `denoise` part of its steps), like Venno's hires fix.
+
+        init (image to image / inpaint, see source.latents): {latent, keep, mask, soft, denoise}: sampling starts
+        from `latent` noised to the `denoise` point of the schedule; with a mask only the masked area changes."""
         with self.lock:
             width, height = width // 16 * 16, height // 16 * 16
             cond = self.encode(prompt)
@@ -437,6 +453,17 @@ class Engine:
             u = self._collate([uncond]) if uncond is not None else None
             noise = lambda w, h: torch.randn(1, dit.params.latent_channels, h // 16, w // 16, generator=torch.Generator("cpu").manual_seed(int(seed))).to(self.device)  # fp32, as the trainer
             sig = moss_sigmas(steps, shift=shift).to(self.device)
+            start, inpaint = None, None
+            if init is not None:
+                sig = sig[-(run_steps(len(sig) - 1, init.get("denoise", 1.0)) + 1) :]  # the last `denoise` part of the schedule
+                eps = noise(width, height)
+                first = init["latent"].to(self.device, torch.float32)
+                if first.shape != eps.shape:
+                    raise ValueError(f"The input picture's latents are {tuple(first.shape[-2:])}, the job's {tuple(eps.shape[-2:])}")
+                start = (1 - sig[0]) * first + sig[0] * eps
+                if init.get("mask") is not None:
+                    inpaint = {"mask": init["mask"].to(self.device, torch.float32), "keep": init["keep"].to(self.device, torch.float32), "noise": eps, "soft": bool(init.get("soft", True))}
+                hires = None  # as in Venno: hires fix belongs to text to image
             total = len(sig) - 1
             if hires:
                 full = moss_sigmas(hires.get("steps") or steps, shift=hires.get("shift") or shift)
@@ -444,7 +471,7 @@ class Engine:
                 total += len(sig2) - 1
             skip = [k for k in skip_layers if 0 <= k < len(dit.layers)]
             common = dict(total=total, on_step=on_step, on_preview=on_preview, preview_every=preview_every, is_cancelled=is_cancelled)
-            latents = self._denoise(dit, noise(width, height), sig, c, u if cfg != 1.0 else None, cfg, skip, done=0, **common)
+            latents = self._denoise(dit, noise(width, height) if start is None else start, sig, c, u if cfg != 1.0 else None, cfg, skip, done=0, inpaint=inpaint, **common)
             if hires:
                 tw, th = hires["width"] // 16 * 16, hires["height"] // 16 * 16
                 if tw * th > 4.3e6:

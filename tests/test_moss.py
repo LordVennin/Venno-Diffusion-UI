@@ -476,3 +476,95 @@ def test_image_info_reads_moss_and_other_pictures():
     plain = io.BytesIO()
     Image.new("RGB", (32, 32)).save(plain, format="PNG")
     assert metadata.read(plain.getvalue())["settings"] is None
+
+
+# ---------------------------------------------------------------- image to image, inpaint
+
+
+def data_url(img: Image.Image) -> str:
+    import base64
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def test_engine_inpaint_keeps_the_unmasked_area(folders, monkeypatch, dit):
+    folder = folders / "moss" / "Tiny" / "transformer"
+    folder.mkdir(parents=True)
+    save_file({k: v.contiguous() for k, v in dit.state_dict().items()}, str(folder / "diffusion_pytorch_model.safetensors"))
+    eng = engine_module.Engine()
+    monkeypatch.setattr(eng, "encode", lambda text: torch.randn(5, DIM, generator=torch.Generator().manual_seed(len(text))))
+    monkeypatch.setattr(eng, "decode", lambda latents: latents)
+    keep = torch.randn(1, 128, 8, 8, generator=torch.Generator().manual_seed(3))
+    mask = torch.zeros(1, 1, 8, 8)
+    mask[..., :, 4:] = 1.0  # right half regenerated
+    mask[..., :, 3] = 0.5  # a feathered column
+    kw = dict(model="Tiny", prompt="a cat", negative="", width=128, height=128, steps=8, cfg=3.0, shift=5.0, seed=1, skip_layers=[22], loras=[])
+    steps = []
+    out, _ = eng.generate(**kw, init=dict(latent=keep, keep=keep, mask=mask, soft=True, denoise=0.75), on_step=lambda i, n: steps.append((i, n)))
+    assert steps == [(i, 6) for i in range(1, 7)]  # the last 75% of 8 steps
+    assert torch.allclose(out[..., :, :3], keep[..., :, :3], atol=1e-5)  # untouched where the mask is 0
+    assert not torch.allclose(out[..., :, 4:], keep[..., :, 4:], atol=1e-2) and not torch.allclose(out[..., :, 3], keep[..., :, 3], atol=1e-2)
+    hard, _ = eng.generate(**kw, init=dict(latent=torch.zeros_like(keep), keep=keep, mask=(mask >= 0.5).float(), soft=False, denoise=1.0))
+    assert torch.allclose(hard[..., :, :3], keep[..., :, :3], atol=1e-5) and not torch.allclose(hard[..., :, 3:], keep[..., :, 3:], atol=1e-2)
+    plain, _ = eng.generate(**kw, init=dict(latent=keep, keep=keep, mask=None, soft=True, denoise=0.5))  # image to image: everything moves
+    assert not torch.allclose(plain[..., :, :3], keep[..., :, :3], atol=1e-2)
+    with pytest.raises(ValueError, match="latents"):
+        eng.generate(**kw, init=dict(latent=torch.zeros(1, 128, 4, 4), keep=keep, mask=None, soft=True, denoise=0.5))
+
+
+def test_image_jobs(folders):
+    """Jobs with an input picture: what reaches the engine, the paste-back, and the settings written."""
+    from venno_moss import metadata, source
+
+    calls = []
+
+    class Fake:
+        def encode_image(self, image):
+            calls.append(("encode", image.size))
+            return torch.zeros(1, 128, image.height // 16, image.width // 16)
+
+        def generate(self, **kw):
+            calls.append(("generate", kw))
+            kw["on_step"](1, 1)
+            return Image.new("RGB", (kw["width"], kw["height"]), (10, 200, 10)), []
+
+    import venno_moss.engine as em
+
+    original = Image.new("RGB", (512, 384), (200, 10, 10))
+    mask = Image.new("L", (512, 384), 0)
+    mask.paste(255, (300, 100, 400, 200))
+    base = dict(model="m", mode="img2img", init_image=data_url(original), width=512, height=384, steps=4, seed=2, save=False)
+    assert "input image" in jobs.unsupported(jobs.Job(model="m", mode="img2img"))
+    real = em.get
+    em.get = lambda: Fake()
+    try:
+        # image to image: the whole picture, no mask
+        result = jobs.run(jobs.Job(**base, strength=0.45), jobs.Progress())
+        init = calls[-1][1]["init"]
+        assert init["mask"] is None and init["denoise"] == 0.45 and "Denoising strength: 0.45" in result.infotexts[0] and "Mask blur" not in result.infotexts[0]
+        # inpaint, whole picture: unmasked pixels come back exactly, masked ones are the generated ones
+        job = jobs.Job(**base, mask=data_url(mask), mask_blur=0, fill="fill", soft_inpaint=False, hires=jobs.Hires())
+        result = jobs.run(job, jobs.Progress())
+        init, out = calls[-1][1]["init"], Image.open(io.BytesIO(result.images[0]))
+        assert calls[-1][1]["hires"] is None and tuple(init["mask"].shape) == (1, 1, 24, 32) and set(init["mask"].unique().tolist()) == {0.0, 1.0}
+        assert out.size == (512, 384) and out.getpixel((10, 10)) == (200, 10, 10) and out.getpixel((350, 150)) == (10, 200, 10)
+        assert [c for c in calls if c[0] == "encode"][-2:] == [("encode", (512, 384))] * 2  # the picture and its colour-filled copy
+        for text in ("Masked content: fill", "Inpaint area: Whole picture", "Soft inpainting: False", "Mask blur: 0"):
+            assert text in result.infotexts[0]
+        settings = metadata.read(result.images[0])["settings"]
+        assert settings["mode"] == "img2img" and settings["fill"] == "fill" and settings["hires"] is None and "init_image" not in settings
+        # latent noise: the masked area runs the full schedule
+        assert source.denoise(jobs.Job(**base, mask=data_url(mask), fill="latent_noise", strength=0.3), source.prepare(job, 512, 384)) == 1.0
+        # only masked: a crop around the mask at the job's size, pasted back into the full-size input
+        job = jobs.Job(**{**base, "width": 256, "height": 256}, mask=data_url(mask), mask_blur=4, only_masked=True, only_masked_padding=16)
+        result = jobs.run(job, jobs.Progress())
+        out = Image.open(io.BytesIO(result.images[0]))
+        assert calls[-1][1]["width"] == 256 and out.size == (512, 384) and "Size: 512x384" in result.infotexts[0] and "Inpaint area: Only masked" in result.infotexts[0]
+        assert out.getpixel((10, 10)) == (200, 10, 10) and out.getpixel((350, 150)) == (10, 200, 10) and out.getpixel((250, 150)) == (200, 10, 10)
+        # an empty mask is no mask
+        result = jobs.run(jobs.Job(**base, mask=data_url(Image.new("L", (512, 384), 0))), jobs.Progress())
+        assert calls[-1][1]["init"]["mask"] is None
+    finally:
+        em.get = real

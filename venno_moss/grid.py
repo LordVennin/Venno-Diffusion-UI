@@ -94,6 +94,7 @@ AXES: dict[str, AxisType] = {a.key: a for a in [
     AxisType("model", "Model", "str", lambda j, v, t: {"model": v}),
     AxisType("size", "Size", "str", _size),
     AxisType("skip_layers", "Skip layers", "str", _skip),
+    AxisType("strength", "Denoising", "float", lambda j, v, t: {"strength": v}),
     AxisType("hires_denoise", "Hires denoising", "float", _hires("denoise")),
     AxisType("hires_scale", "Hires upscale by", "float", _hires("scale")),
     AxisType("hires_steps", "Hires steps", "int", _hires("steps")),

@@ -14,13 +14,21 @@ from PIL import Image, PngImagePlugin
 from . import VERSION, config
 
 
-def infotext(job, seed: int) -> str:
+def infotext(job, seed: int, masked: bool = False, size: tuple[int, int] | None = None) -> str:
+    """masked: an inpaint / outpaint job whose mask had content; size: the result's size when it differs from the
+    job's (an "only masked" result has the input's size)."""
+    width, height = size or (job.width, job.height)
     params = {
         "Steps": job.steps, "CFG scale": f"{job.cfg:g}", "Shift": f"{job.shift:g}", "Seed": seed,
-        "Size": f"{job.width}x{job.height}", "Model": job.model,
+        "Size": f"{job.width}x{job.height}" if job.mode == "txt2img" else f"{width}x{height}", "Model": job.model,
         "Skip layers": ",".join(str(k) for k in job.skip_layers) if job.skip_layers else "none",
     }
-    if job.hires is not None:
+    if job.mode == "img2img":
+        params["Denoising strength"] = "1" if masked and job.fill == "latent_noise" else f"{job.strength:g}"
+        if masked:
+            params.update({"Mask blur": job.mask_blur, "Masked content": job.fill, "Inpaint area": "Only masked" if job.only_masked else "Whole picture",
+                           "Soft inpainting": job.soft_inpaint})
+    elif job.hires is not None:
         from .engine import hires_size
 
         h = job.hires
@@ -46,11 +54,12 @@ def infotext(job, seed: int) -> str:
 
 
 def settings_json(job, seed: int) -> str:
-    keep = ("prompt", "negative", "model", "width", "height", "steps", "cfg", "shift", "skip_layers")
+    keep = ("mode", "prompt", "negative", "model", "width", "height", "steps", "cfg", "shift", "skip_layers",
+            "strength", "resize_mode", "mask_blur", "fill", "only_masked", "only_masked_padding", "soft_inpaint")  # not the pictures
     data = {k: getattr(job, k) for k in keep}
     loras = [lr for lr in job.loras if not (job.fast and config.is_turbo(lr.name))]  # Fast preview adds its LoRA itself
     data.update(seed=seed, loras=[{"name": lr.name, "weight": lr.weight} for lr in loras], version=VERSION,
-                fast=job.fast, hires=job.hires.model_dump() if job.hires is not None else None)
+                fast=job.fast, hires=job.hires.model_dump() if job.hires is not None and job.mode == "txt2img" else None)
     return json.dumps(data, ensure_ascii=False)
 
 
