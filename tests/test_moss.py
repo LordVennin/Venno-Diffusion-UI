@@ -345,3 +345,110 @@ def test_lora_summary_and_quantized_files_skipped(tmp_path, dit):
     save_file({**weights, "layers.0.proj.qkv.weight_scale": torch.ones(3 * DIM)}, str(tmp_path / "x_int8_convrot.safetensors"))
     assert models.is_transformer_file(str(tmp_path / "plain_bf16.safetensors"))
     assert not models.is_transformer_file(str(tmp_path / "x_int8_convrot.safetensors"))
+
+
+# ---------------------------------------------------------------- fast preview, hires fix
+
+
+@pytest.fixture
+def folders(tmp_path, monkeypatch):
+    monkeypatch.setattr(config.args, "data_dir", str(tmp_path))
+    monkeypatch.setattr(config.args, "models_dir", str(tmp_path / "moss"))
+    monkeypatch.setattr(config.args, "lora_dir", [])
+    return tmp_path
+
+
+def test_fast_preview(folders, fake_engine):
+    from venno_moss import downloads, metadata
+
+    job = jobs.Job(model="m", steps=50, cfg=3.0, fast=True, save=False, seed=1, loras=[jobs.LoraRef(name="mine.safetensors", weight=0.8)],
+                   hires=jobs.Hires(cfg=4.0))
+    assert "turbo LoRA" in jobs.unsupported(job)  # not downloaded yet
+    turbo = downloads.Download("turbo")
+    assert turbo.patterns == [config.TURBO_FILES[0]] and turbo.target == config.default_lora_path()
+    save_file(trainer_lora(layers=1), os.path.join(config.default_lora_path(), "8-steps-dmd-lora.safetensors"))
+    save_file(trainer_lora(layers=1), os.path.join(config.default_lora_path(), "8-steps-dmd2-lora.safetensors"))
+    assert jobs.unsupported(job) is None and [c["installed"] for c in downloads.catalog() if c["kind"] == "lora"] == [True]
+    ready = jobs.prepare(job)
+    assert (ready.steps, ready.cfg, ready.hires.cfg) == (8, 1.0, None)
+    assert [(lr.name, lr.weight) for lr in ready.loras] == [("mine.safetensors", 0.8), ("8-steps-dmd2-lora.safetensors", 1.0)]  # DMD2 preferred
+    assert jobs.prepare(ready).loras == ready.loras  # not added twice
+    result = jobs.run(ready, jobs.Progress())
+    assert fake_engine[0]["steps"] == 8 and fake_engine[0]["cfg"] == 1.0 and "Fast preview: turbo LoRA" in result.infotexts[0]
+    settings = metadata.read(result.images[0])["settings"]
+    assert settings["fast"] is True and settings["loras"] == [{"name": "mine.safetensors", "weight": 0.8}]
+    # the grid's LoRA axis swaps the job's own LoRA, never the turbo one
+    axis = grid.ResolvedAxis(grid.AXES["lora"], ["other.safetensors", "none"])
+    assert [lr.name for lr in ready.model_copy(update=axis.updates(ready, "other.safetensors")).loras] == ["other.safetensors", "8-steps-dmd2-lora.safetensors"]
+    assert [lr.name for lr in ready.model_copy(update=axis.updates(ready, "none")).loras] == ["8-steps-dmd2-lora.safetensors"]
+    alone = jobs.prepare(jobs.Job(model="m", fast=True))
+    assert [lr.name for lr in alone.model_copy(update=axis.updates(alone, "other.safetensors")).loras] == ["other.safetensors", "8-steps-dmd2-lora.safetensors"]
+
+
+def test_hires_job(folders, fake_engine):
+    from venno_moss import metadata
+
+    assert engine_module.hires_size(832, 1216, 1.5) == (1248, 1824)
+    assert engine_module.hires_size(1024, 1024, resize_x=1536) == (1536, 1536) and engine_module.hires_size(832, 1216, resize_y=2048) == (1408, 2048)
+    assert [engine_module.run_steps(50, d) for d in (0.0, 0.3, 0.5, 1.0)] == [1, 15, 25, 50]
+    job = jobs.Job(model="m", width=832, height=1216, steps=4, seed=3, save=False, hires=jobs.Hires(upscaler="Lanczos", scale=1.5, denoise=0.4, steps=20, shift=3.0))
+    assert jobs.unsupported(job) is None
+    assert "not found" in jobs.unsupported(job.model_copy(update={"hires": jobs.Hires(upscaler="4x-Missing")}))
+    assert "too large" in jobs.unsupported(job.model_copy(update={"width": 2048, "height": 2048, "hires": jobs.Hires(scale=2.0)}))
+    result = jobs.run(job, jobs.Progress())
+    assert fake_engine[0]["hires"] == dict(upscaler="Lanczos", width=1248, height=1824, steps=20, denoise=0.4, cfg=None, shift=3.0)
+    for text in ("Size: 832x1216", "Hires resize: 1248x1824", "Hires upscaler: Lanczos", "Denoising strength: 0.4", "Hires steps: 20", "Hires shift: 3"):
+        assert text in result.infotexts[0]
+    assert metadata.read(result.images[0])["settings"]["hires"]["denoise"] == 0.4
+    # grid axes over the hires settings
+    axis = grid.ResolvedAxis(grid.AXES["hires_denoise"], [0.3, 0.6])
+    assert job.model_copy(update=axis.updates(job, 0.6)).hires.denoise == 0.6
+    with pytest.raises(ValueError, match="hires fix switched on"):
+        grid.check(jobs.Job(model="m"), [axis])
+
+
+def test_engine_hires_pass(folders, monkeypatch, dit):
+    """The second pass: upscaled latents noised to the `denoise` point, then the last part of the hires schedule."""
+    folder = folders / "moss" / "Tiny" / "transformer"
+    folder.mkdir(parents=True)
+    save_file({k: v.contiguous() for k, v in dit.state_dict().items()}, str(folder / "diffusion_pytorch_model.safetensors"))
+    eng = engine_module.Engine()
+    seen = {}
+
+    def upscaled(latents, upscaler, width, height):
+        seen.update(upscaler=upscaler, size=(width, height), first=tuple(latents.shape))
+        return torch.nn.functional.interpolate(latents, size=(height // 16, width // 16))
+
+    monkeypatch.setattr(eng, "encode", lambda text: torch.randn(5, DIM, generator=torch.Generator().manual_seed(len(text))))
+    monkeypatch.setattr(eng, "upscale_latents", upscaled)
+    monkeypatch.setattr(eng, "decode", lambda latents: latents)
+    steps = []
+    kw = dict(model="Tiny", prompt="a cat", negative="", width=128, height=128, steps=6, cfg=3.0, shift=5.0, seed=1, skip_layers=[22], loras=[])
+    out, warnings = eng.generate(**kw, hires=dict(upscaler="Lanczos", width=192, height=192, steps=0, denoise=0.5, cfg=None, shift=None), on_step=lambda i, n: steps.append((i, n)))
+    assert tuple(out.shape) == (1, 128, 12, 12) and seen == {"upscaler": "Lanczos", "size": (192, 192), "first": (1, 128, 8, 8)} and not warnings
+    assert steps == [(i, 9) for i in range(1, 10)]  # 6 first-pass steps + the last 3 of 6
+    plain, _ = eng.generate(**kw)
+    again, _ = eng.generate(**kw)
+    assert tuple(plain.shape) == (1, 128, 8, 8) and torch.equal(plain, again)
+    full, _ = eng.generate(**kw, hires=dict(upscaler="Latent", width=192, height=192, steps=4, denoise=1.0, cfg=1.0, shift=None))
+    assert tuple(full.shape) == (1, 128, 12, 12)
+
+
+def test_vae_falls_back_to_tiles_when_memory_runs_out(folders):
+    from venno_moss import upscale
+
+    x = torch.arange(1 * 2 * 40 * 56, dtype=torch.float32).reshape(1, 2, 40, 56)
+    double = lambda t: torch.nn.functional.interpolate(t, scale_factor=2, mode="nearest")
+    assert torch.allclose(upscale.tiled(double, x, 16, 4, 2), double(x))  # tiles blend back to the whole
+    calls = []
+
+    def short_of_memory(t):
+        calls.append(tuple(t.shape))
+        if t.shape[-1] > 32:
+            raise RuntimeError("CUDA out of memory. Tried to allocate 9.00 GiB")
+        return double(t)
+
+    eng = engine_module.Engine()
+    assert torch.allclose(eng._vae(short_of_memory, x, 32, 8, 2), double(x)) and calls[0] == (1, 2, 40, 56) and len(calls) > 2
+    with pytest.raises(RuntimeError, match="something else"):
+        eng._vae(lambda t: (_ for _ in ()).throw(RuntimeError("something else")), x, 32, 8, 2)

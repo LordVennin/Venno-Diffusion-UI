@@ -16,8 +16,11 @@ from typing import Callable, Optional
 
 from pydantic import BaseModel, Field
 
+from . import config, lora, metadata, upscale
 from . import engine as engine_module
-from . import metadata
+
+FAST = {"steps": 8, "cfg": 1.0}  # what the turbo LoRA was distilled for
+HIRES_LIMIT = 3072  # pixels a side
 
 
 class LoraRef(BaseModel):
@@ -38,6 +41,17 @@ class Grid(BaseModel):
     include_cells: bool = False
 
 
+class Hires(BaseModel):
+    upscaler: str = "Lanczos"
+    scale: float = Field(1.5, ge=1.0, le=4.0)
+    resize_x: int = Field(0, ge=0, le=4096)
+    resize_y: int = Field(0, ge=0, le=4096)
+    steps: int = Field(0, ge=0, le=200)  # 0 = same as the first pass
+    denoise: float = Field(0.5, ge=0.0, le=1.0)
+    cfg: Optional[float] = None  # None = same as the first pass
+    shift: Optional[float] = None
+
+
 class Job(BaseModel):
     prompt: str = ""
     negative: str = ""
@@ -51,6 +65,8 @@ class Job(BaseModel):
     skip_layers: list[int] = [22]
     seed: int = -1
     count: int = Field(1, ge=1, le=100)
+    hires: Optional[Hires] = None
+    fast: bool = False  # Fast preview: 8 steps, CFG 1 and the turbo LoRA (see prepare)
     grid: Optional[Grid] = None
     save: bool = True
     tag: str = ""
@@ -88,7 +104,41 @@ def resolve_seed(seed: int) -> int:
     return random.randrange(4294967294) if seed is None or seed < 0 else int(seed)
 
 
+def hires_target(job: Job) -> tuple[int, int]:
+    h = job.hires
+    return engine_module.hires_size(job.width, job.height, h.scale, h.resize_x, h.resize_y)
+
+
+def unsupported(job: Job) -> Optional[str]:
+    """Why this job can't run (None = it can)."""
+    if not job.model:
+        return "Pick a MOSS-Image model first"
+    if job.fast and lora.find_turbo() is None:
+        return "Fast preview needs the 8-step turbo LoRA: download it in ⚙ Settings → Models"
+    if job.hires is not None:
+        if job.hires.upscaler not in upscale.available():
+            return f'Hires upscaler "{job.hires.upscaler}" not found'
+        tw, th = hires_target(job)
+        if max(tw, th) > HIRES_LIMIT:
+            return f"Hires size {tw}×{th} is too large (the limit is {HIRES_LIMIT} a side)"
+    return None
+
+
+def prepare(job: Job) -> Job:
+    """The job as it runs. Fast preview: 8 steps, CFG 1 (both passes) and the turbo LoRA at weight 1 after the
+    job's own LoRAs; grid axes still apply on top of it."""
+    if not job.fast:
+        return job
+    name = lora.find_turbo()
+    if name is None:
+        raise ValueError(unsupported(job))
+    loras = [lr for lr in job.loras if not config.is_turbo(lr.name)] + [LoraRef(name=name, weight=1.0)]
+    hires = job.hires.model_copy(update={"cfg": None}) if job.hires is not None else None
+    return job.model_copy(update={**FAST, "loras": loras, "hires": hires})
+
+
 def run(job: Job, progress: Progress) -> Result:
+    """Runs a prepared job (see prepare)."""
     if job.grid is not None:
         from . import grid
 
@@ -96,13 +146,17 @@ def run(job: Job, progress: Progress) -> Result:
     eng = engine_module.get()
     base = resolve_seed(job.seed)
     result = Result()
+    hires = None
+    if job.hires is not None:
+        tw, th = hires_target(job)
+        hires = dict(upscaler=job.hires.upscaler, width=tw, height=th, steps=job.hires.steps, denoise=job.hires.denoise, cfg=job.hires.cfg, shift=job.hires.shift)
     for k in range(job.count):
         seed = base + k
         try:
             image, warnings = eng.generate(
                 model=job.model, prompt=job.prompt, negative=job.negative, width=job.width, height=job.height,
                 steps=job.steps, cfg=job.cfg, shift=job.shift, seed=seed, skip_layers=job.skip_layers,
-                loras=[(lr.name, lr.weight) for lr in job.loras],
+                loras=[(lr.name, lr.weight) for lr in job.loras], hires=hires,
                 on_step=lambda i, n, k=k: progress.on_step(i, n, k, job.count),
                 on_preview=progress.on_preview, preview_every=max(1, job.steps // 8) if progress.on_preview else 0,
                 is_cancelled=progress.is_cancelled,
@@ -311,7 +365,10 @@ def _run(rec: JobRecord) -> bool:
     rec.job_count = rec.job.count
     progress = Progress(on_step=on_step, on_preview=on_preview, on_image=store, take_skip=take_skip,
                         is_cancelled=lambda: rec.cancel_event.is_set() or rec.skip_event.is_set())
+    why = unsupported(rec.job)
+    if why is not None:
+        raise ValueError(why)
     with torch.inference_mode():
-        result = run(rec.job, progress)
+        result = run(prepare(rec.job), progress)
     store(result)
     return result.cancelled

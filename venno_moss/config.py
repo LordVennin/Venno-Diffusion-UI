@@ -15,6 +15,8 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETTINGS_FILE = "venno-moss-settings.json"
+# lodestones' 8-step LoRAs distilled from MOSS-Image Base (8 steps, CFG 1): what Fast preview applies; DMD2 preferred
+TURBO_FILES = ("8-steps-dmd2-lora.safetensors", "8-steps-dmd-lora.safetensors")
 MEMORY_MODES = ("auto", "full", "low")  # full: bf16 DiT (about 24 GB cards); low: fp8 DiT (about 12 GB cards)
 
 parser = argparse.ArgumentParser(prog="python -m venno_moss", description="Venno MOSS: test MOSS-Image LoRAs (Studio at http://127.0.0.1:7870/)")
@@ -35,6 +37,10 @@ def parse(argv: list[str]):
     global args
     args = parser.parse_args(argv)
     return args
+
+
+def is_turbo(name: str) -> bool:
+    return os.path.basename(name.replace("\\", "/")).lower() in TURBO_FILES
 
 
 def data_path() -> str:
@@ -102,6 +108,12 @@ def model_folders() -> list[str]:
 
 def lora_folders() -> list[str]:
     return _folders("lora_dirs", [*args.lora_dir, default_lora_path()])
+
+
+def upscaler_folders() -> list[str]:
+    """Venno's upscaler folders (models/ESRGAN, …): hires fix lists the upscaler models found there."""
+    m = os.path.join(data_path(), "models")
+    return _folders("upscaler_dirs", [os.path.join(m, d) for d in ("ESRGAN", "RealESRGAN", "DAT", "SwinIR", "HAT", "upscale_models")])
 
 
 def memory_mode() -> str:

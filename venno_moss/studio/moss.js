@@ -4,12 +4,14 @@
 import { $, $$, api, downloadDataURL, escapeHtml, fillSelect, formatBytes, loadStore, saveStore, showLightbox, toast } from "/studio/assets/js/common.js";
 import { cancelJob, finishedImages, jobProgress, runJob, skipJob } from "/studio/assets/js/jobs.js";
 import { LoraChips } from "/studio/assets/js/loras.js";
+import { HIRES_DEFAULT, HiresCard, hiresJob } from "/studio/assets/js/cards.js";
 
 const V = "/moss/v1";
 const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768], [512, 512]];
 const DEFAULT = {
   prompt: "", negative: "", loras: [], steps: 50, cfg: 3, shift: 5, count: 1, width: 1024, height: 1024, seed: -1,
-  skip22: true, save: true, model: "", newest: false,
+  skip22: true, save: true, model: "", newest: false, fast: false,
+  ...HIRES_DEFAULT, hrUpscaler: "Lanczos",
   grid: { enabled: false, cells: false, axes: [{ type: "lora", values: "", target: "" }, { type: "none", values: "", target: "" }, { type: "none", values: "", target: "" }] },
 };
 const AXIS_HINTS = {
@@ -22,6 +24,10 @@ const AXIS_HINTS = {
   shift: "3, 5, 7",
   model: "MOSS-Image-Base, MOSS-Image-SFT",
   size: "832x1216, 1024x1024",
+  hires_denoise: "0.3, 0.45, 0.6",
+  hires_scale: "1.25, 1.5, 2",
+  hires_steps: "10, 20, 30",
+  hires_upscaler: "Lanczos, Latent, or an upscaler model's name",
   skip_layers: "22, 24, 26, none  (OpenMOSS: 22, 24 and 26 all help; none looks more realistic but can lose detail)",
 };
 
@@ -51,7 +57,32 @@ const num = (id, key, after = () => {}) => {
   el.value = s[key];
   el.onchange = () => { const v = Number(el.value); if (Number.isFinite(v)) s[key] = v; persist(); after(); };
 };
-for (const [id, key] of [["steps", "steps"], ["cfg", "cfg"], ["shift", "shift"], ["count", "count"], ["width", "width"], ["height", "height"], ["seed", "seed"]]) num(id, key);
+for (const [id, key] of [["steps", "steps"], ["cfg", "cfg"], ["shift", "shift"], ["count", "count"], ["width", "width"], ["height", "height"], ["seed", "seed"]]) num(id, key, () => hires.updateInfo());
+
+// ---------------- hires fix (Venno Studio's card) ----------------
+const hires = new HiresCard($("#hires-card"), {
+  state: () => s, persist, size: () => [s.width, s.height], round: 16,
+  note: "A second pass at a higher resolution. <b>Lanczos</b> or an upscaler model (the ones in Venno's upscaler folders) keep the picture: denoising 0.3–0.5. <b>Latent</b> needs 0.55 or more. LoRAs apply in both passes. MOSS-Image is made for up to about 4 megapixels (2048×2048).",
+});
+
+// ---------------- fast preview ----------------
+function renderFast() {
+  $("#fast").checked = s.fast;
+  const f = info?.fast || { steps: 8, cfg: 1 };
+  $("#fast-note").textContent = s.fast ? `· ${f.steps} steps, CFG ${f.cfg}, turbo LoRA: Steps and CFG below are not used` : info && !info.turbo ? "· needs the turbo LoRA (⚙ Settings → Models)" : `· ${f.steps} steps with the turbo LoRA`;
+  for (const id of ["steps", "cfg"]) $(`#${id}`).classList.toggle("unused", s.fast);
+}
+$("#fast").onchange = (e) => {
+  if (e.target.checked && info && !info.turbo) {
+    toast("Fast preview needs the 8-step turbo LoRA (1.2 GB): download it here, then switch it on.", "info");
+    showTab("settings");
+    e.target.checked = false;
+    return;
+  }
+  s.fast = e.target.checked;
+  persist();
+  renderFast();
+};
 for (const [id, key] of [["prompt", "prompt"], ["negative", "negative"]]) {
   const el = $(`#${id}`);
   el.value = s[key];
@@ -71,6 +102,7 @@ $("#sizes").onclick = (e) => {
   $("#width").value = s.width;
   $("#height").value = s.height;
   persist();
+  hires.updateInfo();
 };
 $("#seed-random").onclick = () => { s.seed = -1; $("#seed").value = -1; persist(); };
 $("#seed-reuse").onclick = () => { const r = results[current]; if (r) { s.seed = r.seed; $("#seed").value = r.seed; persist(); } };
@@ -195,7 +227,7 @@ function buildJob() {
   return {
     prompt: s.prompt, negative: s.negative, model: s.model, loras: s.loras.filter((l) => l.weight !== 0).map(({ name, weight }) => ({ name, weight })),
     width: s.width, height: s.height, steps: s.steps, cfg: s.cfg, shift: s.shift, skip_layers: s.skip22 ? [22] : [],
-    seed: s.seed, count: s.count, grid: gridJob(), save: s.save,
+    seed: s.seed, count: s.count, grid: gridJob(), save: s.save, hires: hiresJob(s), fast: s.fast,
   };
 }
 
@@ -292,8 +324,13 @@ const readImage = (dataURL) => api(`${V}/image/read`, { image: dataURL });
 
 function applySettings(x) {
   if (!x) return toast("This picture has no Venno MOSS settings");
-  for (const k of ["prompt", "negative", "steps", "cfg", "shift", "width", "height", "seed"]) if (x[k] != null) s[k] = x[k];
+  s.fast = !!x.fast && !!info?.turbo;
+  // a Fast preview picture recorded the 8 steps / CFG 1 it ran with: the form keeps its own
+  for (const k of ["prompt", "negative", "steps", "cfg", "shift", "width", "height", "seed"]) if (x[k] != null && !(x.fast && (k === "steps" || k === "cfg"))) s[k] = x[k];
   s.skip22 = (x.skip_layers || []).includes(22);
+  const hr = x.hires;
+  s.hr = !!hr;
+  if (hr) Object.assign(s, { hrUpscaler: hr.upscaler, hrScale: hr.scale, hrResizeX: hr.resize_x, hrResizeY: hr.resize_y, hrSteps: hr.steps, hrDenoise: hr.denoise, hrCfg: hr.cfg || 0, hrShift: hr.shift || 0 });
   if (x.model && [...$("#sel-model").options].some((o) => o.value === x.model)) s.model = x.model;
   else if (x.model) toast(`Model "${x.model}" isn't installed; keeping ${s.model || "the current one"}`, "info");
   s.loras = (x.loras || []).map((l) => ({ name: l.name, weight: l.weight }));
@@ -301,6 +338,8 @@ function applySettings(x) {
   for (const k of ["prompt", "negative", "steps", "cfg", "shift", "width", "height", "seed"]) $(`#${k}`).value = s[k];
   $("#skip22").checked = s.skip22;
   $("#sel-model").value = s.model;
+  hires.render();
+  renderFast();
   chips.render();
   renderAxes();
   showTab("t2i");
@@ -340,7 +379,7 @@ async function loadCatalog() {
   try {
     const c = await api(`${V}/models/catalog`);
     $("#catalog").innerHTML = c.catalog.map((m) => `
-      <li><div style="flex:1"><b>${escapeHtml(m.name)}</b> <span class="hint">${m.installed ? "· installed" : `· ${m.size_gb} GB`}</span><br><span class="hint">${escapeHtml(m.description)}</span></div>
+      <li><div style="flex:1"><b>${escapeHtml(m.name)}</b> <span class="hint">${m.kind === "lora" ? "· LoRA " : ""}${m.installed ? "· installed" : `· ${m.size_gb} GB`}</span><br><span class="hint">${escapeHtml(m.description)}</span></div>
       <button class="${m.installed ? "" : "primary"}" data-variant="${m.variant}"${m.installed ? " disabled" : ""}>${m.installed ? "Installed" : "Download"}</button></li>`).join("");
     $$("#catalog button[data-variant]").forEach((b) => (b.onclick = async () => {
       try { await api(`${V}/models/download`, { variant: b.dataset.variant }); pollDownloads(); } catch (e) { toast(e.message); }
@@ -393,6 +432,9 @@ function applyInfo(i) {
   fillSelect($("#sel-model"), models, s.model, { empty: models.length ? null : "— no model yet —" });
   fillLoras();
   renderAxes();
+  hires.setInfo(i);
+  if (s.fast && !i.turbo) s.fast = false;
+  renderFast();
   const e = i.engine;
   const mem = e.memory === "auto" ? `auto → ${e.memory_resolved}` : e.memory_resolved;
   $("#status").textContent = i.complete ? `${i.models.length} model(s) · ${i.loras.length} LoRA(s) · memory ${mem}` : "No MOSS-Image model yet: ⚙ Settings → Models";

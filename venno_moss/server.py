@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import VERSION, config, downloads, grid, jobs, lora, metadata
+from . import VERSION, config, downloads, grid, jobs, lora, metadata, upscale
 from . import engine as engine_module
 
 V = "/moss/v1"
@@ -48,6 +48,9 @@ def info() -> dict:
         "engine": eng.info(),
         "folders": {"models": config.model_folders(), "loras": config.lora_folders(), "outputs": config.outputs_path(), "download": config.models_path()},
         "axes": [{"key": a.key, "label": a.label} for a in grid.AXES.values()],
+        "upscalers": upscale.available(),
+        "turbo": lora.find_turbo() or "",
+        "fast": jobs.FAST,
     }
 
 
@@ -71,8 +74,9 @@ def create_app() -> FastAPI:
                 grid.check(job, grid.resolve_axes(job.grid))
             except ValueError as e:
                 raise HTTPException(400, str(e))
-        if not job.model:
-            raise HTTPException(400, "Pick a MOSS-Image model first")
+        why = jobs.unsupported(job)
+        if why is not None:
+            raise HTTPException(400, why)
         return jobs.submit(job).summary()
 
     @app.get(f"{V}/jobs")

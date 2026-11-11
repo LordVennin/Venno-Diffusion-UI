@@ -20,3 +20,5 @@
 .moss-info .info-out img { max-width: 100%; max-height: 70vh; object-fit: contain; border-radius: 6px; }
 .moss-info .info-out .r-info { max-height: 60vh; }
 .info-page { overflow-y: auto; }
+input.unused { opacity: .45; text-decoration: line-through; }
+#hires-card > summary { color: var(--text); font-weight: 600; }

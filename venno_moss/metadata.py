@@ -19,6 +19,20 @@ def infotext(job, seed: int) -> str:
         "Size": f"{job.width}x{job.height}", "Model": job.model,
         "Skip layers": ",".join(str(k) for k in job.skip_layers) if job.skip_layers else "none",
     }
+    if job.hires is not None:
+        from .engine import hires_size
+
+        h = job.hires
+        tw, th = hires_size(job.width, job.height, h.scale, h.resize_x, h.resize_y)
+        params.update({"Hires resize": f"{tw}x{th}", "Hires upscaler": h.upscaler, "Denoising strength": f"{h.denoise:g}"})
+        if h.steps:
+            params["Hires steps"] = h.steps
+        if h.cfg:
+            params["Hires CFG scale"] = f"{h.cfg:g}"
+        if h.shift:
+            params["Hires shift"] = f"{h.shift:g}"
+    if job.fast:
+        params["Fast preview"] = "turbo LoRA"
     for k, lr in enumerate([lr for lr in job.loras if lr.weight != 0], start=1):
         params[f"LoRA {k}"] = f"{lr.name}:{lr.weight:g}"
     params["Version"] = f"venno-moss {VERSION}"
@@ -33,7 +47,9 @@ def infotext(job, seed: int) -> str:
 def settings_json(job, seed: int) -> str:
     keep = ("prompt", "negative", "model", "width", "height", "steps", "cfg", "shift", "skip_layers")
     data = {k: getattr(job, k) for k in keep}
-    data.update(seed=seed, loras=[{"name": lr.name, "weight": lr.weight} for lr in job.loras], version=VERSION)
+    loras = [lr for lr in job.loras if not (job.fast and config.is_turbo(lr.name))]  # Fast preview adds its LoRA itself
+    data.update(seed=seed, loras=[{"name": lr.name, "weight": lr.weight} for lr in loras], version=VERSION,
+                fast=job.fast, hires=job.hires.model_dump() if job.hires is not None else None)
     return json.dumps(data, ensure_ascii=False)
 
 

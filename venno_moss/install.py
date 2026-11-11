@@ -21,7 +21,7 @@ def main():
         return
     if sys.version_info < (3, 10):
         raise SystemExit(f"[Venno MOSS] Python 3.10 or newer is needed (this is {platform.python_version()})")
-    if not installed("torch"):
+    if not installed("torch") or not installed("torchvision"):  # torchvision: for the upscaler models (spandrel)
         command = os.environ.get("TORCH_COMMAND") or ("torch torchvision" if sys.platform == "darwin" else TORCH_COMMAND)
         pip(command, "PyTorch")
     wrong = mismatches(REQUIREMENTS)

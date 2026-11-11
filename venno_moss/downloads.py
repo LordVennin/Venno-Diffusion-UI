@@ -34,6 +34,13 @@ DESCRIPTIONS = {  # from OpenMOSS's user guide
                "on PartiPrompts. Update 11000. Same text encoder and VAE as Base, so 10 GB once those are here.",
 }
 # the diffusers VAE only: Kromoss's vae/ also holds a ComfyUI copy, and two files in one folder would load as one
+LORAS = {  # single files into the LoRA folder
+    "turbo": {
+        "repo": "lodestones/Kromoss", "file": config.TURBO_FILES[0], "name": "8-step turbo LoRA (DMD2)", "size_gb": 1.2,
+        "description": "For Fast preview: 8 steps at CFG 1, about 12× faster than 50 steps with CFG. By lodestones, distilled from "
+                       "MOSS-Image Base (Apache-2.0); works on Base, SFT and Kromoss, together with your own LoRAs.",
+    },
+}
 SHARED = ["text_encoder/*", "tokenizer/*", "vae/config.json", "vae/diffusion_pytorch_model.safetensors"]
 OWN = ["model_index.json", "transformer/*"]
 TIMEOUT = 60  # seconds without an answer (file list) or without data (a file) before giving up / retrying
@@ -120,11 +127,15 @@ class Download:
     def __init__(self, variant: str):
         self.id = uuid.uuid4().hex[:12]
         self.variant = variant
-        self.repo = REPOS[variant]
-        self.name = models.KNOWN[variant]
-        self.target = os.path.join(config.models_path(), self.name)
-        found = models.scan()
-        self.patterns = OWN + ([] if (found.text_encoder and found.tokenizer and found.vae) else SHARED)
+        if variant in LORAS:
+            spec = LORAS[variant]
+            self.repo, self.name, self.target, self.patterns = spec["repo"], spec["name"], config.default_lora_path(), [spec["file"]]
+        else:
+            self.repo = REPOS[variant]
+            self.name = models.KNOWN[variant]
+            self.target = os.path.join(config.models_path(), self.name)
+            found = models.scan()
+            self.patterns = OWN + ([] if (found.text_encoder and found.tokenizer and found.vae) else SHARED)
         self.total = 0
         self.finished = 0  # bytes of the files already complete
         self.current = 0  # bytes of the file being fetched
@@ -212,13 +223,19 @@ def catalog() -> list[dict]:
     found = models.scan()
     have = {m.name for m in found.models}
     shared = bool(found.text_encoder and found.tokenizer and found.vae)
-    return [{"variant": v, "name": models.KNOWN[v], "repo": r, "description": DESCRIPTIONS[v], "installed": models.KNOWN[v] in have,
-             "size_gb": 10.2 if shared else 27.2} for v, r in REPOS.items()]
+    from . import lora
+
+    out = [{"variant": v, "kind": "model", "name": models.KNOWN[v], "repo": r, "description": DESCRIPTIONS[v], "installed": models.KNOWN[v] in have,
+            "size_gb": 10.2 if shared else 27.2} for v, r in REPOS.items()]
+    turbo = lora.find_turbo()
+    out += [{"variant": v, "kind": "lora", "name": spec["name"], "repo": spec["repo"], "description": spec["description"],
+             "installed": turbo is not None, "size_gb": spec["size_gb"]} for v, spec in LORAS.items()]
+    return out
 
 
 def start(variant: str) -> Download:
-    if variant not in REPOS:
-        raise ValueError(f"Unknown model: {variant}")
+    if variant not in REPOS and variant not in LORAS:
+        raise ValueError(f"Unknown download: {variant}")
     with _lock:
         for job in JOBS.values():
             if job.variant == variant and job.status in ("queued", "downloading"):

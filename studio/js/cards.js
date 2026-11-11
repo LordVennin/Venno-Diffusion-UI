@@ -29,7 +29,8 @@ export function detailerJob(ad) {
 }
 
 export class HiresCard {
-  /** opts: { state: () => object with HIRES_DEFAULT keys, persist, size: () => [w, h] first-pass size, note?: html } */
+  /** opts: { state: () => object with HIRES_DEFAULT keys, persist, size: () => [w, h] first-pass size, note?: html,
+   *  round?: the multiple the server rounds the hires size to (default 8) } */
   constructor(el, opts) {
     this.el = el;
     this.o = opts;
@@ -81,10 +82,11 @@ export class HiresCard {
   updateInfo() {
     const s = this.o.state();
     const [w0, h0] = this.o.size();
-    let w = s.hrResizeX || Math.round((w0 * s.hrScale) / 64) * 64;
-    let h = s.hrResizeY || Math.round((h0 * s.hrScale) / 64) * 64;
-    if (s.hrResizeX && !s.hrResizeY) h = Math.round((h0 * s.hrResizeX) / w0 / 64) * 64;
-    if (s.hrResizeY && !s.hrResizeX) w = Math.round((w0 * s.hrResizeY) / h0 / 64) * 64;
+    const m = this.o.round || 8; // as the server computes the final size
+    let w = s.hrResizeX || Math.round((w0 * s.hrScale) / m) * m;
+    let h = s.hrResizeY || Math.round((h0 * s.hrScale) / m) * m;
+    if (s.hrResizeX && !s.hrResizeY) h = Math.round((h0 * s.hrResizeX) / w0 / m) * m;
+    if (s.hrResizeY && !s.hrResizeX) w = Math.round((w0 * s.hrResizeY) / h0 / m) * m;
     $(".hr-sum", this.el).textContent = s.hr ? `(${w}×${h})` : "";
     $(".hr-info", this.el).textContent = s.hr ? `${w0}×${h0} → ${w}×${h}` : "Generate at low resolution, then upscale and refine (like Forge's Hires. fix).";
   }

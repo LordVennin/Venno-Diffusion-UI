@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import gc
 import json
+import math
 import os
 import threading
 import time
@@ -25,7 +26,7 @@ import torch.nn.functional as F
 from safetensors import safe_open
 from safetensors.torch import load_file
 
-from . import config, lora, models
+from . import config, lora, models, upscale
 from .model.fp8 import quantize_modules
 from .model.transformer import MossImageTransformer
 from .model.vae import AutoEncoder, convert_diffusers_state_dict
@@ -39,6 +40,23 @@ PROMPT_CACHE = 64
 
 class Cancelled(Exception):
     pass
+
+
+def run_steps(steps: int, denoise: float = 1.0) -> int:
+    """Steps actually sampled in a hires pass: the last `denoise` part of the schedule (as in Venno)."""
+    return steps if denoise >= 1.0 else max(1, min(steps, math.floor(steps * denoise + 0.5)))
+
+
+def hires_size(width: int, height: int, scale: float = 1.5, resize_x: int = 0, resize_y: int = 0) -> tuple[int, int]:
+    """Final size of a hires job: explicit width/height (one may be 0 = keep aspect), else the scale; multiples of 16."""
+    r = lambda v: max(16, round(v / 16) * 16)
+    if resize_x and resize_y:
+        return r(resize_x), r(resize_y)
+    if resize_x:
+        return r(resize_x), r(height * resize_x / width)
+    if resize_y:
+        return r(width * resize_y / height), r(resize_y)
+    return r(width * scale), r(height * scale)
 
 
 def moss_sigmas(num_steps, shift=5.0, training_shift=1.0, total=NUM_TRAIN_TIMESTEPS):
@@ -145,6 +163,7 @@ class Engine:
         self.found = models.Found()
         self.dit = None
         self.dit_key = None  # (transformer path, memory mode)
+        self.dit_parked = False  # moved to system RAM to make room for a VAE call
         self.loras: Optional[lora.LoraStack] = None
         self.te = self.tokenizer = None
         self.te_streamed = False
@@ -255,6 +274,7 @@ class Engine:
                 quantize_modules(dit, ["layers."], compute_dtype=self.dtype)  # on the CPU, before it moves
                 free_memory()
             self.dit = dit.to(self.device)
+            self.dit_parked = False
             self.dit_key = key
             self.loras = lora.LoraStack(self.dit, self.device, self.dtype)
             print(f"[Venno MOSS] {model.name} ready in {time.time() - t0:.1f}s", flush=True)
@@ -314,49 +334,124 @@ class Engine:
         mask = torch.stack([torch.arange(length) < e.shape[0] for e in embeds])
         return stacked.to(self.device), mask.to(self.device)
 
+    def _vae(self, fn, x: torch.Tensor, tile: int, overlap: int, factor: float) -> torch.Tensor:
+        """A VAE call on the whole picture. When that runs out of graphics memory (big hires pictures): again with
+        the transformer parked in system RAM (it returns for the next sampling step), and only then in large
+        overlapping tiles, which shift the tones a little (the VAE normalizes over what it sees)."""
+        oom = lambda e: isinstance(e, getattr(torch, "OutOfMemoryError", ())) or "out of memory" in str(e).lower()
+        try:
+            return fn(x).float()
+        except Exception as e:
+            if not oom(e):
+                raise
+        free_memory()
+        if self.dit is not None and self.device.type == "cuda" and not self.dit_parked:
+            print("[Venno MOSS] not enough graphics memory for the VAE: moving the transformer to system RAM meanwhile", flush=True)
+            self.dit.to("cpu")
+            self.dit_parked = True
+            free_memory()
+            try:
+                return fn(x).float()
+            except Exception as e:
+                if not oom(e):
+                    raise
+            free_memory()
+        print("[Venno MOSS] not enough graphics memory for the VAE on the whole picture: working in tiles", flush=True)
+        return upscale.tiled(fn, x, tile, overlap, factor)
+
     @torch.no_grad()
     def decode(self, latents: torch.Tensor):
         from PIL import Image
 
         self._load_vae()
-        pixels = self.vae.decode(latents.to(self.device, torch.float32)).float()
+        pixels = self._vae(self.vae.decode, latents.to(self.device, torch.float32), 64, 16, 16)  # tiles of 1024 px
         img = ((pixels[0].clamp(-1, 1) + 1) * 127.5).round().to(torch.uint8)
         return Image.fromarray(img.permute(1, 2, 0).cpu().numpy())
 
+    @torch.no_grad()
+    def encode_image(self, image) -> torch.Tensor:
+        """A picture (sides multiples of 16) as latents (1, 128, H/16, W/16)."""
+        import numpy as np
+
+        self._load_vae()
+        x = torch.from_numpy(np.asarray(image.convert("RGB"), dtype=np.float32) / 127.5 - 1.0).permute(2, 0, 1)[None]
+        return self._vae(self.vae.encode, x.to(self.device, torch.float32), 1024, 256, 1 / 16)
+
+    @torch.no_grad()
+    def resize_latents(self, latents: torch.Tensor, width: int, height: int, mode: str) -> torch.Tensor:
+        """Latent upscale. The model's latents pack 2×2 VAE latents into the channels, so they are unpacked (and
+        un-normalized) to the VAE's own grid, resized there, and packed again."""
+        from einops import rearrange
+
+        self._load_vae()
+        z = self.vae.inv_normalize(latents.to(self.device, torch.float32))
+        z = rearrange(z, "b (c pi pj) i j -> b c (i pi) (j pj)", pi=2, pj=2)
+        z = F.interpolate(z, size=(height // 8, width // 8), mode=mode)
+        return self.vae.normalize(rearrange(z, "b c (i pi) (j pj) -> b (c pi pj) i j", pi=2, pj=2))
+
+    def upscale_latents(self, latents: torch.Tensor, upscaler: str, width: int, height: int) -> torch.Tensor:
+        """Hires fix's upscale: latent resize, or decode → upscale (model / resampling) → encode."""
+        if upscale.is_latent(upscaler):
+            return self.resize_latents(latents, width, height, upscale.latent_mode(upscaler))
+        return self.encode_image(upscale.upscale(self.decode(latents), upscaler, width, height, self.device))
+
+    def _denoise(self, dit, latents, sig, cond, uncond, cfg: float, skip, *, done: int, total: int, on_step, on_preview, preview_every, is_cancelled):
+        """Euler over the sigmas `sig` (the trainer's sampler); `done` steps of `total` ran before (progress)."""
+        if self.dit_parked:  # a VAE call needed its room (see _vae)
+            dit.to(self.device)
+            self.dit_parked = False
+        n = len(sig) - 1
+        for i in range(n):
+            if is_cancelled():
+                raise Cancelled
+            t = (sig[i] * NUM_TRAIN_TIMESTEPS).reshape(1)
+            pred = dit(latents, t, *cond).float()
+            if uncond is not None:
+                pu = dit(latents, t, *uncond, skip_layers=skip).float()
+                pred = pu + cfg * (pred - pu)
+            if on_preview is not None and preview_every and (done + i + 1) % preview_every == 0 and i + 1 < n:
+                on_preview(self.decode(latents - sig[i] * pred))  # the picture this step points at
+            latents = latents + (sig[i + 1] - sig[i]) * pred
+            on_step(done + i + 1, total)
+        return latents
+
     @torch.inference_mode()
     def generate(self, *, model: str, prompt: str, negative: str, width: int, height: int, steps: int, cfg: float,
-                 shift: float, seed: int, skip_layers: list[int], loras: list[tuple[str, float]],
+                 shift: float, seed: int, skip_layers: list[int], loras: list[tuple[str, float]], hires: Optional[dict] = None,
                  on_step: Callable[[int, int], None] = lambda i, n: None,
                  on_preview: Optional[Callable[[object], None]] = None, preview_every: int = 0,
                  is_cancelled: Callable[[], bool] = lambda: False) -> tuple[object, list[str]]:
-        """One picture. Returns (PIL image, warnings)."""
+        """One picture. Returns (PIL image, warnings).
+
+        hires: {upscaler, width, height, steps (0 = as the first pass), denoise, cfg / shift (None = as the first
+        pass)}: the first pass's latents are upscaled to width × height, noised to the `denoise` point of the
+        hires schedule and sampled from there (the last `denoise` part of its steps), like Venno's hires fix."""
         with self.lock:
             width, height = width // 16 * 16, height // 16 * 16
             cond = self.encode(prompt)
-            do_cfg = cfg != 1.0
-            uncond = self.encode(negative) if do_cfg else None
+            hires_cfg = (hires.get("cfg") or cfg) if hires else cfg
+            uncond = self.encode(negative) if cfg != 1.0 or hires_cfg != 1.0 else None
             dit = self.load_model(model)
             warnings = self.loras.set([(lora.resolve(name), weight) for name, weight in loras])
-            c_embeds, c_mask = self._collate([cond])
-            if do_cfg:
-                u_embeds, u_mask = self._collate([uncond])
-            g = torch.Generator("cpu").manual_seed(int(seed))
-            latents = torch.randn(1, dit.params.latent_channels, height // 16, width // 16, generator=g).to(self.device)  # fp32 noise
+            c = self._collate([cond])
+            u = self._collate([uncond]) if uncond is not None else None
+            noise = lambda w, h: torch.randn(1, dit.params.latent_channels, h // 16, w // 16, generator=torch.Generator("cpu").manual_seed(int(seed))).to(self.device)  # fp32, as the trainer
             sig = moss_sigmas(steps, shift=shift).to(self.device)
-            n = len(sig) - 1
+            total = len(sig) - 1
+            if hires:
+                full = moss_sigmas(hires.get("steps") or steps, shift=hires.get("shift") or shift)
+                sig2 = full[-(run_steps(len(full) - 1, hires.get("denoise", 0.5)) + 1) :].to(self.device)
+                total += len(sig2) - 1
             skip = [k for k in skip_layers if 0 <= k < len(dit.layers)]
-            for i in range(n):
-                if is_cancelled():
-                    raise Cancelled
-                t = (sig[i] * NUM_TRAIN_TIMESTEPS).reshape(1)
-                pred = dit(latents, t, c_embeds, c_mask).float()
-                if do_cfg:
-                    pu = dit(latents, t, u_embeds, u_mask, skip_layers=skip).float()
-                    pred = pu + cfg * (pred - pu)
-                if on_preview is not None and preview_every and (i + 1) % preview_every == 0 and i + 1 < n:
-                    on_preview(self.decode(latents - sig[i] * pred))  # the picture this step points at
-                latents = latents + (sig[i + 1] - sig[i]) * pred
-                on_step(i + 1, n)
+            common = dict(total=total, on_step=on_step, on_preview=on_preview, preview_every=preview_every, is_cancelled=is_cancelled)
+            latents = self._denoise(dit, noise(width, height), sig, c, u if cfg != 1.0 else None, cfg, skip, done=0, **common)
+            if hires:
+                tw, th = hires["width"] // 16 * 16, hires["height"] // 16 * 16
+                if tw * th > 4.3e6:
+                    warnings = [*warnings, f"{tw}×{th} is above the 4 megapixels MOSS-Image is made for: expect repeated or broken details"]
+                latents = self.upscale_latents(latents, hires.get("upscaler", "Lanczos"), tw, th)
+                latents = (1 - sig2[0]) * latents + sig2[0] * noise(tw, th)  # flow matching: back to the schedule's `denoise` point
+                latents = self._denoise(dit, latents, sig2, c, u if hires_cfg != 1.0 else None, hires_cfg, skip, done=len(sig) - 1, **common)
             return self.decode(latents), warnings
 
 

@@ -18,7 +18,7 @@ from typing import Callable
 
 from PIL import Image, ImageDraw, ImageFont
 
-from . import metadata
+from . import config, metadata
 
 MAX_CELLS = 400
 NONE_WORDS = ("none", "off", "-", "no lora")
@@ -31,18 +31,19 @@ def _lora_name(v: str) -> str:
 def _lora(job, value, target):
     """Cell with LoRA file `value` in place of `target` (or of the first LoRA; added at weight 1 when there is none)."""
     loras = list(job.loras)
-    slot = next((i for i, lr in enumerate(loras) if lr.name == target), 0 if loras else None)
+    own = [i for i, lr in enumerate(loras) if not config.is_turbo(lr.name)]  # Fast preview's turbo LoRA stays in every cell
+    slot = next((i for i in own if loras[i].name == target), own[0] if own else None)
     if value.strip().lower() in NONE_WORDS:
         return {"loras": [lr for i, lr in enumerate(loras) if i != slot]}
     ref = type(job).model_fields["loras"].annotation.__args__[0]
     if slot is None:
-        return {"loras": [ref(name=value, weight=1.0)]}
+        return {"loras": [ref(name=value, weight=1.0), *loras]}
     loras[slot] = ref(name=value, weight=loras[slot].weight)
     return {"loras": loras}
 
 
 def _lora_weight(job, value, target):
-    names = [lr.name for lr in job.loras]
+    names = [lr.name for lr in job.loras if not config.is_turbo(lr.name)]
     name = target if target in names else (names[0] if names else "")
     if not name:  # e.g. the "none" cell of a LoRA axis: nothing to weigh
         return {}
@@ -59,6 +60,15 @@ def _size(job, value, target):
 def _skip(job, value, target):
     v = value.strip().lower()
     return {"skip_layers": [] if v in NONE_WORDS else [int(x) for x in re.split(r"[ +;]+", v) if x]}
+
+
+def _hires(field: str):
+    def apply(job, value, target):
+        if job.hires is None:
+            raise ValueError("Hires axes need hires fix switched on")
+        return {"hires": job.hires.model_copy(update={field: value})}
+
+    return apply
 
 
 def _prompt_sr(job, value, target, *, search):
@@ -84,6 +94,10 @@ AXES: dict[str, AxisType] = {a.key: a for a in [
     AxisType("model", "Model", "str", lambda j, v, t: {"model": v}),
     AxisType("size", "Size", "str", _size),
     AxisType("skip_layers", "Skip layers", "str", _skip),
+    AxisType("hires_denoise", "Hires denoising", "float", _hires("denoise")),
+    AxisType("hires_scale", "Hires upscale by", "float", _hires("scale")),
+    AxisType("hires_steps", "Hires steps", "int", _hires("steps")),
+    AxisType("hires_upscaler", "Hires upscaler", "str", _hires("upscaler")),
 ]}
 
 _RANGE_STEP = re.compile(r"^\s*([+-]?\d*\.?\d+)\s*-\s*([+-]?\d*\.?\d+)\s*\(\s*([+-]?\d*\.?\d+)\s*\)\s*$")
@@ -144,6 +158,8 @@ def check(job, axes: list[ResolvedAxis]):
     keys = {a.type.key for a in axes}
     if "lora_weight" in keys and not job.loras and "lora" not in keys:
         raise ValueError("The LoRA weight axis needs a LoRA in the LoRA list")
+    if job.hires is None and any(k.startswith("hires_") for k in keys):
+        raise ValueError("Hires axes need hires fix switched on")
 
 
 def resolve_axes(grid) -> list[ResolvedAxis]:

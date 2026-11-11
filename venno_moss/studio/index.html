@@ -40,6 +40,7 @@
         <button class="big" id="btn-skip" hidden title="Drop the image being made and go on with the next one">Skip</button>
         <button class="big" id="btn-cancel" hidden title="Stop; the images already finished are kept">Cancel</button>
       </div>
+      <label class="check" title="8 steps at CFG 1 with lodestones' turbo LoRA (added by itself): about 12× faster, for trying prompts and comparing epochs. It changes the look a little, so judge a LoRA without it."><input type="checkbox" id="fast"> Fast preview <span class="hint" id="fast-note"></span></label>
       <div class="progress-inline" id="progress" hidden><div class="bar"></div><span></span></div>
     </section>
 
@@ -57,6 +58,8 @@
       <label class="check" title="MOSS-Image's guidance: the negative branch skips transformer block 22 (the model card's default). Off: plain CFG."><input type="checkbox" id="skip22"> Skip block 22 on the negative branch (recommended)</label>
       <div class="row"><button id="btn-defaults" title="Steps 50, CFG 3, shift 5, block 22 skipped: the model card's settings">Model defaults</button><span class="hint">Same settings and seed as a venno-trainer sample give the same picture.</span></div>
     </section>
+
+    <details class="card" id="hires-card"></details>
 
     <details class="card" id="grid-card">
       <summary><input type="checkbox" id="grid-on" title="Use the comparison grid"> <span>Comparison grid (X/Y/Z)</span> <span class="hint" id="grid-sum"></span></summary>
@@ -105,7 +108,7 @@
     <section data-section="models"><div class="moss-settings">
       <section class="card">
         <h3>MOSS-Image models</h3>
-        <p>Each model is a 10 GB transformer; the first download also brings the Qwen3.5 9B text encoder and the VAE (17 GB), which Base and SFT share. Downloads resume if stopped.</p>
+        <p>Each model is a 10 GB transformer; the first download also brings the Qwen3.5 9B text encoder and the VAE (17 GB), which all of them share. The turbo LoRA (for Fast preview) goes to the LoRA folder. Downloads resume if stopped.</p>
         <ul class="catalog-list" id="catalog"></ul>
         <ul class="jobs" id="dl-jobs"></ul>
       </section>

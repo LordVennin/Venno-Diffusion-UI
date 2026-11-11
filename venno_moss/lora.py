@@ -55,6 +55,16 @@ def scan() -> list[dict]:
     return out
 
 
+def find_turbo() -> Optional[str]:
+    """The 8-step turbo LoRA's name in the LoRA folders (DMD2 before DMD), or None."""
+    names = [item["name"] for item in scan()]
+    for wanted in config.TURBO_FILES:
+        for name in names:
+            if os.path.basename(name).lower() == wanted:
+                return name
+    return None
+
+
 def is_lora_file(path: str) -> bool:
     try:
         with safe_open(path, "pt") as f:
