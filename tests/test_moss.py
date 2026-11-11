@@ -452,3 +452,27 @@ def test_vae_falls_back_to_tiles_when_memory_runs_out(folders):
     assert torch.allclose(eng._vae(short_of_memory, x, 32, 8, 2), double(x)) and calls[0] == (1, 2, 40, 56) and len(calls) > 2
     with pytest.raises(RuntimeError, match="something else"):
         eng._vae(lambda t: (_ for _ in ()).throw(RuntimeError("something else")), x, 32, 8, 2)
+
+
+def test_image_info_reads_moss_and_other_pictures():
+    from PIL import PngImagePlugin
+
+    from venno_moss import metadata
+
+    job = jobs.Job(model="MOSS-Image-Base", prompt="a cat, on a roof\nsecond line", negative="blurry", steps=50, seed=5, loras=[jobs.LoraRef(name="a, b.safetensors", weight=0.7)])
+    own = metadata.read(metadata.png_bytes(Image.new("RGB", (32, 32)), metadata.infotext(job, 5), metadata.settings_json(job, 5)))
+    assert own["settings"]["prompt"] == job.prompt and "partial" not in own["settings"]
+    fields = dict(own["fields"])
+    assert fields["Steps"] == "50" and fields["Model"] == "MOSS-Image-Base" and fields["LoRA 1"] == "a, b.safetensors:0.7" and fields["Skip layers"] == "22"
+    # a picture from Venno (Anima) / Forge / A1111: the prompt, negative, seed and size carry over
+    text = "1girl, red hair, <lora:x:0.8>\nNegative prompt: worst quality,\nlowres\nSteps: 30, Sampler: Euler a, CFG scale: 4.5, Seed: 1234, Size: 830x1216, Model: anima-base-v1.0, Version: venno 0.9.1"
+    meta = PngImagePlugin.PngInfo()
+    meta.add_text("parameters", text)
+    buf = io.BytesIO()
+    Image.new("RGB", (32, 32)).save(buf, format="PNG", pnginfo=meta)
+    other = metadata.read(buf.getvalue())
+    assert other["settings"] == {"partial": True, "prompt": "1girl, red hair, <lora:x:0.8>", "negative": "worst quality,\nlowres", "seed": 1234, "width": 832, "height": 1216}
+    assert ["Sampler", "Euler a"] in other["fields"] and other["parameters"] == text
+    plain = io.BytesIO()
+    Image.new("RGB", (32, 32)).save(plain, format="PNG")
+    assert metadata.read(plain.getvalue())["settings"] is None

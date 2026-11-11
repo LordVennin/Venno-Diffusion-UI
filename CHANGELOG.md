@@ -12,6 +12,8 @@ shows the sections newer than the installed version.
   LoRA's rank, alpha and the model it was trained on when its file records it.
 - Venno MOSS: **hires fix** (Lanczos, Latent or Venno's upscaler models; denoising, own steps / CFG / shift; grid
   axes) and **Fast preview** (8 steps at CFG 1 with lodestones' turbo LoRA, downloadable in its Settings).
+- Venno MOSS's Image Info tab has Venno's layout and also reads pictures from Venno, Forge and A1111 (prompt,
+  negative prompt, seed and size carry over).
 - The hires card shows the final size as the server computes it (it rounded to 64).
 - Images of a several-image job appear in the results as each one finishes (Canvas and form tabs), so you can look
   at, apply, Skip or Cancel early; a result you click meanwhile stays shown instead of the next image's progress.

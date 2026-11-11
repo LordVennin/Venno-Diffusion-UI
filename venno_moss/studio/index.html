@@ -84,15 +84,19 @@
 </div>
 
 <div class="page info-page" id="page-info" hidden>
-  <div class="moss-info">
-    <div class="drop" id="info-drop">Drop a picture made with Venno MOSS here, or <button id="info-open">open</button> one<input type="file" id="info-file" accept="image/png" hidden></div>
-    <div class="info-out" hidden>
-      <img id="info-img" alt="">
-      <div>
-        <pre class="r-info" id="info-text"></pre>
-        <div class="row"><button class="primary" id="info-use" disabled>Use settings</button></div>
-      </div>
+  <div class="info-drop" id="info-drop">
+    <div class="info-empty" id="info-empty">Drop, paste or <button id="info-open">open</button> an image<br><small>A picture from Venno MOSS, or a PNG / JPEG / WebP from Venno, Forge or A1111</small></div>
+    <img class="info-img" id="info-img" alt="" hidden>
+    <input type="file" id="info-file" accept="image/*" hidden>
+  </div>
+  <div class="info-side">
+    <div class="row info-send" id="info-send" hidden>
+      <span class="lbl">Send to</span>
+      <button id="info-use" class="primary">Text to Image</button>
+      <span class="hint" id="info-note"></span>
     </div>
+    <pre class="info-text" id="info-text">Generation parameters appear here.</pre>
+    <table class="info-table" id="info-table"></table>
   </div>
 </div>
 

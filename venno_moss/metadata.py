@@ -6,6 +6,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import time
 
 from PIL import Image, PngImagePlugin
@@ -72,13 +73,62 @@ def save(png: bytes, seed: int, sub: str = "") -> str:
     return path
 
 
+_FIELD = re.compile(r'\s*(\w[\w \-/]*):\s*("(?:\\.|[^\\"])+"|[^,]*)(?:,|$)')
+
+
+def parse_infotext(text: str) -> dict:
+    """An A1111-style parameters text → {"prompt", "negative", "fields": [[name, value], …]} (fields in order)."""
+    lines = text.strip().split("\n")
+    fields = []
+    if lines and len(_FIELD.findall(lines[-1])) >= 3:
+        for name, value in _FIELD.findall(lines.pop()):
+            if value.startswith('"'):
+                try:
+                    value = json.loads(value)
+                except ValueError:
+                    pass
+            fields.append([name, value])
+    prompt, negative, target = [], [], None
+    for line in lines:
+        if line.startswith("Negative prompt:"):
+            target = negative
+            line = line[len("Negative prompt:"):].strip()
+        (prompt if target is None else target).append(line)
+    return {"prompt": "\n".join(prompt).strip(), "negative": "\n".join(negative).strip(), "fields": fields}
+
+
+def _exif_parameters(img: Image.Image) -> str:
+    """A1111 / Forge JPEG and WebP files keep the parameters in the EXIF user comment."""
+    try:
+        raw = img.getexif().get_ifd(0x8769).get(0x9286)
+    except Exception:
+        return ""
+    if isinstance(raw, bytes):
+        if raw.startswith(b"UNICODE\0"):
+            return raw[8:].decode("utf-16-be", "replace")
+        return raw[8:].decode("utf-8", "replace") if raw.startswith(b"ASCII\0\0\0") else raw.decode("utf-8", "replace")
+    return raw or ""
+
+
 def read(data: bytes) -> dict:
-    """{"parameters": text or "", "settings": dict or None} of a PNG."""
+    """What a picture says about how it was made: {"parameters": its text, "fields": [[name, value], …],
+    "settings": the exact Venno MOSS settings, or what a picture from another UI (Venno, Forge, A1111) can give
+    (prompt, negative, seed, size; marked "partial": its steps and CFG belong to another model), or None}."""
     img = Image.open(io.BytesIO(data))
-    text = img.info.get("parameters", "") or ""
+    text = img.info.get("parameters", "") or _exif_parameters(img)
+    parsed = parse_infotext(text) if text else {"prompt": "", "negative": "", "fields": []}
     raw = img.info.get("venno_moss")
     try:
         settings = json.loads(raw) if raw else None
     except ValueError:
         settings = None
-    return {"parameters": text, "settings": settings, "width": img.width, "height": img.height}
+    if settings is None and text:
+        fields = dict(parsed["fields"])
+        settings = {"partial": True, "prompt": parsed["prompt"], "negative": parsed["negative"]}
+        if str(fields.get("Seed", "")).isdigit():
+            settings["seed"] = int(fields["Seed"])
+        size = re.fullmatch(r"(\d+)x(\d+)", str(fields.get("Size", "")))
+        if size:
+            fit = lambda v: min(2048, max(256, round(int(v) / 16) * 16))
+            settings["width"], settings["height"] = fit(size.group(1)), fit(size.group(2))
+    return {"parameters": text, "fields": parsed["fields"], "settings": settings, "width": img.width, "height": img.height}

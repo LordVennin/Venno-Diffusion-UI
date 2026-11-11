@@ -323,7 +323,15 @@ const toDataURL = async (src) => {
 const readImage = (dataURL) => api(`${V}/image/read`, { image: dataURL });
 
 function applySettings(x) {
-  if (!x) return toast("This picture has no Venno MOSS settings");
+  if (!x) return toast("This picture has no settings to load");
+  if (x.partial) { // a picture from another UI: its prompt, seed and size; steps, CFG and LoRAs belong to its model
+    for (const k of ["prompt", "negative", "width", "height", "seed"]) if (x[k] != null) { s[k] = x[k]; $(`#${k}`).value = x[k]; }
+    persist();
+    hires.updateInfo();
+    countTokens();
+    showTab("t2i");
+    return toast("Prompt, seed and size loaded (the other settings belong to another model)", "info");
+  }
   s.fast = !!x.fast && !!info?.turbo;
   // a Fast preview picture recorded the 8 steps / CFG 1 it ran with: the form keeps its own
   for (const k of ["prompt", "negative", "steps", "cfg", "shift", "width", "height", "seed"]) if (x[k] != null && !(x.fast && (k === "steps" || k === "cfg"))) s[k] = x[k];
@@ -349,22 +357,36 @@ function applySettings(x) {
 let infoSettings = null;
 async function openInfo(file) {
   const dataURL = await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(file); });
-  try {
-    const r = await readImage(dataURL);
-    $(".info-out").hidden = false;
-    $("#info-img").src = dataURL;
-    $("#info-text").textContent = r.parameters || "(no settings text in this picture)";
-    infoSettings = r.settings;
-    $("#info-use").disabled = !r.settings;
-  } catch (e) { toast(e.message); }
+  $("#info-img").src = dataURL;
+  $("#info-img").hidden = false;
+  $("#info-empty").hidden = true;
+  $("#info-send").hidden = false;
+  let r = { parameters: "", fields: [], settings: null };
+  try { r = await readImage(dataURL); } catch (e) { toast(e.message); }
+  infoSettings = r.settings;
+  $("#info-text").textContent = r.parameters || "No generation parameters in this image.";
+  $("#info-use").disabled = !r.settings;
+  $("#info-note").textContent = !r.settings ? "" : r.settings.partial ? "from another UI: takes the prompt, negative prompt, seed and size" : "";
+  $("#info-table").innerHTML = (r.fields || []).map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(String(v))}</td></tr>`).join("");
 }
-$("#info-open").onclick = () => $("#info-file").click();
-$("#info-file").onchange = (e) => e.target.files[0] && openInfo(e.target.files[0]);
-$("#info-use").onclick = () => applySettings(infoSettings);
-for (const ev of ["dragover", "drop"]) {
-  $("#page-info").addEventListener(ev, (e) => {
+{
+  const drop = $("#info-drop");
+  const image = (list) => [...list].find((f) => f.type.startsWith("image/"));
+  $("#info-open").onclick = () => $("#info-file").click();
+  drop.onclick = (e) => { if (e.target === drop || e.target.id === "info-img") $("#info-file").click(); };
+  $("#info-file").onchange = (e) => { if (e.target.files[0]) openInfo(e.target.files[0]); e.target.value = ""; };
+  $("#info-use").onclick = () => applySettings(infoSettings);
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("dragging"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("dragging"));
+  drop.addEventListener("drop", (e) => {
     e.preventDefault();
-    if (ev === "drop" && e.dataTransfer.files[0]) openInfo(e.dataTransfer.files[0]);
+    drop.classList.remove("dragging");
+    const f = image(e.dataTransfer.files);
+    if (f) openInfo(f);
+  });
+  document.addEventListener("paste", (e) => {
+    const f = !$("#page-info").hidden && image(e.clipboardData?.files || []);
+    if (f) { e.preventDefault(); openInfo(f); }
   });
 }
 
