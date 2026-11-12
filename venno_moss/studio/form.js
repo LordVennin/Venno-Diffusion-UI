@@ -2,7 +2,7 @@
 // (same markup classes and styles). Each tab keeps its own prompt, settings and results.
 
 import { $, $$, api, downloadDataURL, escapeHtml, loadStore, saveStore, showLightbox, toast } from "/studio/assets/js/common.js";
-import { cancelJob, finishedImages, jobProgress, runJob, skipJob } from "/studio/assets/js/jobs.js";
+import { cancelJob, finishedImages, jobProgress, runJob, sheetFirst, skipJob } from "/studio/assets/js/jobs.js";
 import { LoraChips } from "/studio/assets/js/loras.js";
 import { HIRES_DEFAULT, HiresCard, hiresJob } from "/studio/assets/js/cards.js";
 import { ZoomPane } from "/studio/assets/js/zoompane.js";
@@ -19,7 +19,7 @@ const SETTING_KEYS = ["prompt", "negative", "steps", "cfg", "shift", "width", "h
 
 const DEFAULT = {
   prompt: "", negative: "", loras: [], steps: 50, cfg: 3, shift: 5, count: 1, width: 1024, height: 1024, seed: -1,
-  skip22: true, save: true, newest: false, fast: false,
+  skip22: true, save: true, sheet: true, newest: false, fast: false,
   ...HIRES_DEFAULT, hrUpscaler: "Lanczos", // hires fix (Text to Image)
   // image tabs
   denoise: 0.6, resizeMode: 0, resizeBy: "by", scaleBy: 1, maskBlur: 8, fill: 1, onlyMasked: false, onlyMaskedPadding: 64, softInpaint: true,
@@ -173,6 +173,7 @@ export class MossForm {
         </details>
 
         <label class="check save"><input type="checkbox" class="f-save"> Save results to the outputs folder</label>
+        <label class="check save" title="With two or more pictures in a job, they are also stitched into one picture for comparing them (like Forge's grid); it is shown first and saved with the grids"><input type="checkbox" class="f-sheet"> Batch sheet: stitch a batch into one picture</label>
       </div>
 
       <div class="result-col${i2i ? " work" : ""}">
@@ -233,7 +234,7 @@ export class MossForm {
       el.value = s[key];
       el.oninput = () => { s[key] = el.value; this.persist(); if (key === "prompt") this.countTokens(); };
     }
-    for (const [cls, key] of [[".f-skip22", "skip22"], [".f-save", "save"], [".f-newest", "newest"]]) {
+    for (const [cls, key] of [[".f-skip22", "skip22"], [".f-save", "save"], [".f-sheet", "sheet"], [".f-newest", "newest"]]) {
       const el = this.q(cls);
       el.checked = s[key];
       el.onchange = () => { s[key] = el.checked; this.persist(); if (key === "newest") this.fillLoras(); };
@@ -755,7 +756,7 @@ export class MossForm {
       mode: this.image ? "img2img" : "txt2img",
       prompt: s.prompt, negative: s.negative, model, loras: s.loras.filter((l) => l.weight !== 0).map(({ name, weight }) => ({ name, weight })),
       width, height, steps: s.steps, cfg: s.cfg, shift: s.shift, skip_layers: s.skip22 ? [22] : [],
-      seed: s.seed, count: s.count, grid: this.gridJob(), save: s.save, fast: s.fast, tag: this.mode,
+      seed: s.seed, count: s.count, grid: this.gridJob(), save: s.save, sheet: s.sheet, fast: s.fast, tag: this.mode,
     };
     if (!this.image) {
       job.hires = hiresJob(s);
@@ -809,10 +810,11 @@ export class MossForm {
         },
         onPreview: (src) => { if (!this.picked) this.showImage(src); },
       });
-      const fresh = entries({ ...done, images: finishedImages(done) });
+      const made = entries({ ...done, images: finishedImages(done) });
+      const fresh = sheetFirst(made); // the batch sheet leads, like Forge's grid
       for (const w of done.warnings || []) toast(w, "info");
       this.results = [...fresh, ...older].slice(0, 80);
-      this.select(this.picked && this.current < fresh.length ? this.current : 0);
+      this.select(this.picked && this.current < made.length ? Math.min(fresh.length - 1, this.current + (fresh === made ? 0 : 1)) : 0);
       if (job.grid) showLightbox(fresh[0].src, `moss-grid-${fresh[0].seed}.png`);
     } catch (e) {
       if (e.message !== "Cancelled") toast(e.message);

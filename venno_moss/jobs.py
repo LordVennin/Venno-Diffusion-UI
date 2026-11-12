@@ -80,6 +80,7 @@ class Job(BaseModel):
     fast: bool = False  # Fast preview: 8 steps, CFG 1 and the turbo LoRA (see prepare)
     grid: Optional[Grid] = None
     save: bool = True
+    sheet: bool = False  # batch sheet: a job's pictures also stitched into one, added after them (like Forge's image grid)
     tag: str = ""
 
 
@@ -387,5 +388,23 @@ def _run(rec: JobRecord) -> bool:
         raise ValueError(why)
     with torch.inference_mode():
         result = run(prepare(rec.job), progress)
+    add_sheet(rec.job, result)
     store(result)
     return result.cancelled
+
+
+def add_sheet(job: Job, result: Result) -> None:
+    """The batch sheet, as in Venno: with two or more pictures, all of them stitched into one, added after them
+    (their places, and so their URLs, stay) and saved with the grids. Not for comparison grids themselves."""
+    if not job.sheet or job.grid is not None or len(result.images) < 2:
+        return
+    from venno.pipeline import sheet
+
+    image = sheet.from_pngs(result.images)
+    info = result.infotexts[0].rstrip() + f'{sheet.MARK}{sheet.note(result.seeds)}"'
+    png = metadata.png_bytes(image, info, metadata.settings_json(job, result.seeds[0]))
+    if job.save:
+        metadata.save(png, result.seeds[0], "grids")
+    result.images.append(png)
+    result.seeds.append(result.seeds[0])
+    result.infotexts.append(info)

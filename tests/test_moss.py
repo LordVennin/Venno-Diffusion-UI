@@ -568,3 +568,19 @@ def test_image_jobs(folders):
         assert calls[-1][1]["init"]["mask"] is None
     finally:
         em.get = real
+
+
+def test_moss_batch_sheet(folders, fake_engine):
+    from venno_moss import metadata
+
+    job = jobs.Job(model="m", width=256, height=256, steps=2, seed=7, count=3, save=True, sheet=True, loras=[jobs.LoraRef(name="x", weight=0.6)])
+    result = jobs.run(job, jobs.Progress())
+    jobs.add_sheet(job, result)
+    assert len(result.images) == 4 and result.infotexts[-1].endswith('Grid: "3 images, seeds 7-9"')
+    sheet = Image.open(io.BytesIO(result.images[-1]))
+    assert sheet.size == (64, 64)  # 2 × 2 cells of the fake engine's 32 px pictures
+    assert metadata.read(result.images[-1])["settings"]["seed"] == 7
+    assert len(os.listdir(os.path.join(config.outputs_path(), os.listdir(config.outputs_path())[0], "grids"))) == 1
+    single = jobs.run(job.model_copy(update={"count": 1}), jobs.Progress())
+    jobs.add_sheet(job, single)
+    assert len(single.images) == 1

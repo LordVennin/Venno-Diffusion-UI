@@ -180,6 +180,7 @@ class Job(BaseModel):
     detailer: list[Detailer] = []
     grid: Optional[Grid] = None  # comparison grid (X/Y/Z plot): runs every combination
     save: bool = True
+    sheet: bool = False  # batch sheet: a job's pictures also stitched into one, added after them (like Forge's image grid)
     tag: str = ""  # free-form client label (e.g. "live")
 
 # ---------------------------------------------------------------- job records
@@ -485,5 +486,22 @@ def _run(rec: JobRecord) -> bool:
 
     with torch.inference_mode():  # the whole job, so weights moved / patched during it are consistent
         result = generate.run(rec.job, progress)
+    add_sheet(rec.job, result)
     store(result)
     return result.cancelled
+
+
+def add_sheet(job: Job, result) -> None:
+    """The batch sheet: with two or more pictures, all of them stitched into one, added after them (their
+    places, and so their URLs, stay) and saved with the comparison grids. Not for comparison grids themselves."""
+    if not job.sheet or job.grid is not None or len(result.images) < 2:
+        return
+    from venno.pipeline import metadata, sheet
+
+    image = sheet.from_pngs(result.images, cols=job.frames if job.frames > 1 else 0)  # a consistent set: one row per set
+    info = result.infotexts[0].rstrip() + f'{sheet.MARK}{sheet.note(result.seeds)}"'
+    if job.save:
+        metadata.save(image, info, f"{job.mode}-grids", result.seeds[0])
+    result.images.append(metadata.png_bytes(image, info))
+    result.seeds.append(result.seeds[0])
+    result.infotexts.append(info)

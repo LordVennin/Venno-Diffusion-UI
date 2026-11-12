@@ -3,7 +3,7 @@
 import {
   $, $$, ADETAILER_DEFAULT, downloadDataURL, escapeHtml, fillSelect, loadStore, presetForCheckpoint, saveStore, toast, withQualityPrefix,
 } from "./common.js";
-import { cancelJob, finishedImages, jobModel, jobProgress, runJob, skipJob } from "./jobs.js";
+import { cancelJob, finishedImages, jobModel, jobProgress, runJob, sheetFirst, skipJob } from "./jobs.js";
 import { jobLoras, LoraChips } from "./loras.js";
 import { runSteps, SchedulePreview } from "./schedule.js";
 import { describeSettings, hasQualityTags, offerSettings, readImageSettings } from "./params.js";
@@ -29,7 +29,7 @@ const DEFAULTS = {
   ...HIRES_DEFAULT, // hires fix (txt2img)
   // img2img
   denoise: 0.6, resizeMode: 0, resizeBy: "by", scaleBy: 1, maskBlur: 8, fill: 1, onlyMasked: false, onlyMaskedPadding: 64, softInpaint: true,
-  saveImages: true,
+  saveImages: true, batchSheet: true,
   adetailer: ADETAILER_DEFAULT,
   grid: GRID_DEFAULT,
   // inpaint: sketch guide (ControlNet / ControlLLLite) drawn over the image
@@ -186,6 +186,7 @@ export class GenForm {
         <details class="card f-grid-card grid-card"></details>
 
         <label class="check save"><input type="checkbox" class="f-save"> Save results to outputs folder</label>
+        <label class="check save" title="With two or more pictures in a job, they are also stitched into one picture for comparing them (like Forge's grid); it is shown first and saved with the grids"><input type="checkbox" class="f-sheet"> Batch sheet: stitch a batch into one picture</label>
       </div>
 
       <div class="result-col${i2i ? " work" : ""}">
@@ -266,6 +267,7 @@ export class GenForm {
     attachTokenCounter(this.q(".f-negative"));
     this.syncs.push(refreshTokenCounters); // prompts set from settings, another tab or an image
     chk(".f-save", "saveImages");
+    chk(".f-sheet", "batchSheet");
     num(".f-steps", "steps");
     num(".f-cfg", "cfg");
     num(".f-shift", "shift");
@@ -953,6 +955,7 @@ export class GenForm {
       cfg: s.cfg,
       shift: s.shift,
       save: s.saveImages,
+      sheet: s.batchSheet,
       tag: this.mode,
     };
     if (this.mode === "txt2img" && s.hr) job.hires = this.hrCard.job();
@@ -1034,9 +1037,10 @@ export class GenForm {
         },
         onPreview: (src) => { if (!this.picked) this.showPreview(src); },
       });
-      const fresh = entries({ ...done, images: finishedImages(done) });
+      const made = entries({ ...done, images: finishedImages(done) });
+      const fresh = sheetFirst(made); // the batch sheet leads, like Forge's grid
       this.results = [...fresh, ...older].slice(0, 60);
-      this.select(this.picked && this.current < fresh.length ? this.current : 0);
+      this.select(this.picked && this.current < made.length ? Math.min(fresh.length - 1, this.current + (fresh === made ? 0 : 1)) : 0);
     } catch (e) {
       if (e.message !== "Cancelled") toast(e.message);
       if (this.current >= 0) this.select(this.current);

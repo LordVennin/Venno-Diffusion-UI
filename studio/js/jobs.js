@@ -88,6 +88,16 @@ export function finishedImages(done) {
   return done.images;
 }
 
+const GRID_MARK = /, Grid: "/; // in the infotext of comparison grids and batch sheets
+
+/** A finished job's results for display: its batch sheet first, like Forge's grid. (The server adds the sheet
+ *  after the pictures, so the pictures shown while the job ran keep their places.) */
+export function sheetFirst(list) {
+  if (!list.length || GRID_MARK.test(list[0].info)) return list; // a comparison grid job: its grids already lead
+  const k = list.findIndex((r) => GRID_MARK.test(r.info));
+  return k > 0 ? [list[k], ...list.slice(0, k), ...list.slice(k + 1)] : list;
+}
+
 // Job summary → progress bar text
 export function jobProgress(j) {
   if (j.status === "queued") return { pct: 0, text: j.queue_position > 1 ? `Queued (#${j.queue_position})` : "Queued…" };

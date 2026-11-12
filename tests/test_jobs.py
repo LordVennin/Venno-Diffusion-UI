@@ -108,3 +108,38 @@ def test_out_of_memory_is_explained_and_recovered(monkeypatch):
     assert "Low VRAM" in rec.error and "Batch count" in rec.error and "hires" not in rec.error
     monkeypatch.setattr(config, "startup", {"vram_mode": "lowvram", "vram_from": "settings"})
     assert "No VRAM" in jobs.out_of_memory_message(jobs.Job())
+
+
+def test_batch_sheet():
+    import io
+
+    from PIL import Image
+
+    from venno.pipeline import generate, metadata, sheet
+
+    assert [sheet.layout(n) for n in (2, 3, 4, 6, 8, 9)] == [(1, 2), (2, 2), (2, 2), (2, 3), (3, 3), (3, 3)]  # as Forge
+    assert sheet.layout(6, cols=3) == (2, 3) and sheet.layout(2, cols=4) == (1, 2)
+    assert sheet.note([7, 8, 9, 10]) == "4 images, seeds 7-10" and sheet.note([5, 5]) == "2 images, seed 5" and sheet.note([3, 9]) == "2 images, seeds 3, 9"
+    big = sheet.tile([Image.new("RGB", (4096, 2048))] * 6)  # 3 × 2 of these would be 12288 wide: scaled to fit
+    assert big.size == (8190, 2730)
+
+    def result(n):
+        r = generate.Result()
+        for k in range(n):
+            r.images.append(metadata.png_bytes(Image.new("RGB", (64, 48), (40 * k, 0, 0)), f"a cat\nSteps: 4, Seed: {10 + k}"))
+            r.seeds.append(10 + k)
+            r.infotexts.append(f"a cat\nSteps: 4, Seed: {10 + k}")
+        return r
+
+    r = result(3)
+    jobs.add_sheet(jobs.Job(sheet=True, save=False), r)
+    assert len(r.images) == 4 and r.seeds[-1] == 10 and r.infotexts[-1].endswith('Seed: 10, Grid: "3 images, seeds 10-12"')
+    out = Image.open(io.BytesIO(r.images[-1]))
+    assert out.size == (128, 96) and out.getpixel((70, 10)) == (40, 0, 0) and out.getpixel((10, 60)) == (80, 0, 0) and out.info["parameters"] == r.infotexts[-1]
+    for job, n in ((jobs.Job(sheet=False), 3), (jobs.Job(sheet=True), 1), (jobs.Job(sheet=True, grid=jobs.Grid(x=jobs.GridAxis(type="seed", values="1,2"))), 3)):
+        r = result(n)
+        jobs.add_sheet(job, r)
+        assert len(r.images) == n  # off, a single picture, or a comparison grid job: no sheet
+    r = result(4)
+    jobs.add_sheet(jobs.Job(sheet=True, save=False, frames=2), r)  # consistent sets: one row per set
+    assert Image.open(io.BytesIO(r.images[-1])).size == (128, 96)

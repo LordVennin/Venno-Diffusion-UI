@@ -17,6 +17,8 @@ shows the sections newer than the installed version.
   tabs with Send to / Use as input.
 - Venno MOSS's Image Info tab has Venno's layout and also reads pictures from Venno, Forge and A1111 (prompt,
   negative prompt, seed and size carry over).
+- **Batch sheet** (Venno's form tabs and Venno MOSS): two or more pictures of a job are also stitched into one
+  picture for comparison, like Forge's grid; shown first, saved with the grids, switched off per tab.
 - Inpaint and Image to Image: the wheel zooms the input image where the pointer is (up to 8×); drag with the middle
   button or hold Space and drag to move around; the zoom button fits it again. Shift + wheel changes the brush
   size (the plain wheel did).
