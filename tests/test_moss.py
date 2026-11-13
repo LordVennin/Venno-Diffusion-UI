@@ -584,3 +584,57 @@ def test_moss_batch_sheet(folders, fake_engine):
     single = jobs.run(job.model_copy(update={"count": 1}), jobs.Progress())
     jobs.add_sheet(job, single)
     assert len(single.images) == 1
+
+
+# ---------------------------------------------------------------- LoRA browser
+
+
+def test_lora_browser_api(folders, monkeypatch):
+    """Venno's LoRA library serves Venno MOSS's folders: sub-folders, notes and previews next to the files."""
+    from fastapi.testclient import TestClient
+
+    from venno.engine import lora_library
+    from venno_moss import server
+
+    monkeypatch.setattr(lora_library, "_source", None)  # the app below points the library at Venno MOSS: undone after the test
+    monkeypatch.setattr(lora_library, "API", "/venno/v1")
+    root = config.default_lora_path()
+    os.makedirs(os.path.join(root, "style"))
+    save_file(trainer_lora(layers=1), os.path.join(root, "style", "ink-000002.safetensors"))
+    save_file(trainer_lora(layers=1), os.path.join(root, "hero.safetensors"), metadata={"ss_sd_model_name": "MOSS-Image-Base"})
+    save_file({"weight": torch.zeros(2)}, os.path.join(root, "not-a-lora.safetensors"))
+    client = TestClient(server.create_app(), client=("127.0.0.1", 50000))
+
+    items = {i["name"]: i for i in client.get("/moss/v1/loras").json()}
+    assert sorted(items) == ["hero.safetensors", "style/ink-000002.safetensors"]
+    assert items["style/ink-000002.safetensors"]["folder"] == "style" and items["hero.safetensors"]["preview"] is None
+    assert items["hero.safetensors"]["base"] == f"MOSS-Image-Base · rank {RANK}" and items["style/ink-000002.safetensors"]["base"] == f"rank {RANK}"
+    assert lora.LibrarySource.scan() == {i["name"]: i["path"] for i in lora.scan()}
+
+    saved = client.post("/moss/v1/loras/meta", json={"name": "hero.safetensors", "tags": ["character"], "activation": "hero, cape", "weight": 0.9}).json()
+    assert saved["tags"] == ["character"] and saved["activation"] == "hero, cape" and saved["weight"] == 0.9
+    with open(os.path.join(root, "hero.json")) as f:  # the A1111 / Forge notes file next to the LoRA
+        assert json.load(f)["activation text"] == "hero, cape"
+
+    saved = client.post("/moss/v1/loras/preview", json={"name": "hero.safetensors", "image": data_url(Image.new("RGB", (64, 48), (10, 200, 10)))}).json()
+    assert saved["preview"].startswith("/moss/v1/loras/preview?name=hero.safetensors")
+    picture = client.get(saved["preview"])
+    assert picture.status_code == 200 and Image.open(io.BytesIO(picture.content)).size == (64, 48)
+    assert client.post("/moss/v1/loras/preview", json={"name": "hero.safetensors", "image": None}).json()["preview"] is None
+    assert client.get("/moss/v1/loras/preview", params={"name": "hero.safetensors"}).status_code == 404
+    assert client.post("/moss/v1/loras/meta", json={"name": "missing.safetensors", "tags": []}).status_code == 404
+    assert TestClient(server.create_app(), client=("10.0.0.5", 50000)).post("/moss/v1/loras/meta", json={"name": "hero.safetensors", "tags": []}).status_code == 403
+
+
+def test_lora_scan_reads_each_file_once(folders, monkeypatch):
+    root = config.default_lora_path()
+    save_file(trainer_lora(layers=1), os.path.join(root, "a.safetensors"))
+    save_file({"weight": torch.zeros(2)}, os.path.join(root, "other.safetensors"))
+    reads = []
+    real = lora.summary
+    monkeypatch.setattr(lora, "summary", lambda path: reads.append(path) or real(path))
+    assert [i["name"] for i in lora.scan()] == ["a.safetensors"] and lora.scan()[0]["rank"] == RANK
+    assert len(reads) == 1
+    save_file(trainer_lora(seed=1, layers=1), os.path.join(root, "a.safetensors"), metadata={"ss_sd_model_name": "MOSS-Image-Base"})
+    os.utime(os.path.join(root, "a.safetensors"), (1, 1))  # a replaced file is read again
+    assert lora.scan()[0]["trained_on"] == "MOSS-Image-Base" and len(reads) == 2

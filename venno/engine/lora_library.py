@@ -20,13 +20,32 @@ from typing import Optional
 
 from PIL import Image
 
-from . import lora
-
 PREVIEW_NAMES = (".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp", ".png", ".jpg", ".jpeg", ".webp")
 PREVIEW_SIZE = 768  # longest side of saved previews
 HEADER_LIMIT = 8 * 1024 * 1024  # don't parse safetensors headers bigger than this (some embed huge tag lists)
 _lock = threading.Lock()
 _headers: dict[tuple, dict] = {}  # (path, mtime) → {"base": str, "thumbnail": data URL or ""}
+_source = None  # where the LoRAs come from: folders(), scan() → {name: path}, resolve(name); default venno.engine.lora
+API = "/venno/v1"  # the server's API path, for preview URLs
+
+
+def configure(source, api: str) -> None:
+    """Serve another LoRA collection (Venno MOSS has its own folders and names)."""
+    global _source, API
+    _source, API = source, api
+
+
+class _Lora:
+    """The LoRA source: the configured one, else Venno's engine (imported on first use: it needs the engine)."""
+
+    def __getattr__(self, name):
+        source = _source
+        if source is None:
+            from . import lora as source
+        return getattr(source, name)
+
+
+lora = _Lora()
 
 
 def _base(path: str) -> str:
@@ -122,7 +141,7 @@ def entries() -> list[dict]:
             "size": stat.st_size,
             "modified": int(stat.st_mtime),
             "base": header["base"],
-            "preview": f"/venno/v1/loras/preview?name={_quote(name)}&v={version}" if preview or header["thumbnail"] else None,
+            "preview": f"{API}/loras/preview?name={_quote(name)}&v={version}" if preview or header["thumbnail"] else None,
             **meta(path),
         })
     return out

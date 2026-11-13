@@ -128,6 +128,61 @@ def create_app() -> FastAPI:
         except (WebSocketDisconnect, RuntimeError):
             return
 
+    # ---- LoRA browser: Venno's LoRA library (previews, tags, notes next to the files) over Venno MOSS's LoRAs ----
+    from venno.engine import images as venno_images
+    from venno.engine import lora_library
+
+    lora_library.configure(lora.LibrarySource, V)
+
+    def library() -> list[dict]:
+        """The library's entries; the line under each card says what the file records about its training."""
+        about = {item["name"]: item for item in lora.scan()}
+        entries = lora_library.entries()
+        for e in entries:
+            a = about.get(e["name"], {})
+            e["base"] = " · ".join(x for x in (a.get("trained_on"), f"rank {a['rank']}" if a.get("rank") else "") if x) or e["base"]
+        return entries
+
+    def library_entry(name: str) -> dict:
+        return next((e for e in library() if e["name"] == name), {})
+
+    @app.get(f"{V}/loras")
+    def loras():
+        return library()
+
+    @app.get(f"{V}/loras/preview")
+    def lora_preview(name: str):
+        try:
+            data, media = lora_library.preview_bytes(name)
+        except (ValueError, FileNotFoundError):
+            raise HTTPException(404, "No preview")
+        return Response(data, media_type=media, headers={"Cache-Control": "private, max-age=86400"})  # the URL carries a version
+
+    @app.post(f"{V}/loras/preview")
+    def lora_set_preview(req: dict, request: Request):
+        _local_only(request)
+        name, image = str(req.get("name", "")), req.get("image")
+        try:
+            lora_library.set_preview(name, venno_images.load_rgb(image) if image else None)
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+        except OSError as e:
+            raise HTTPException(500, f"Could not save the preview: {e}")
+        return library_entry(name)
+
+    @app.post(f"{V}/loras/meta")
+    def lora_set_meta(req: dict, request: Request):
+        _local_only(request)
+        name = str(req.get("name", ""))
+        try:
+            lora_library.set_meta(name, tags=req.get("tags"), activation=req.get("activation"), weight=req.get("weight"),
+                                  description=req.get("description"), notes=req.get("notes"))
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+        except OSError as e:
+            raise HTTPException(500, f"Could not save: {e}")
+        return library_entry(name)
+
     # ---- helpers for the page ----
     @app.post(f"{V}/tokens")
     def tokens(req: dict):

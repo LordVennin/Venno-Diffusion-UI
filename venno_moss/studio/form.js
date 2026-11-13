@@ -6,6 +6,7 @@ import { cancelJob, finishedImages, jobProgress, runJob, sheetFirst, skipJob } f
 import { LoraChips } from "/studio/assets/js/loras.js";
 import { HIRES_DEFAULT, HiresCard, hiresJob } from "/studio/assets/js/cards.js";
 import { ZoomPane } from "/studio/assets/js/zoompane.js";
+import { openLoraBrowser } from "/studio/assets/js/lorabrowser.js";
 
 const V = "/moss/v1";
 const SIZES = [[1024, 1024], [832, 1216], [1216, 832], [896, 1152], [1152, 896], [768, 1344], [1344, 768], [512, 512]];
@@ -98,6 +99,7 @@ export class MossForm {
           <div class="hint f-tokens"></div>
           <div class="row">
             <select class="f-lora"></select>
+            <button class="f-lora-browse" title="Browse LoRAs: folders, previews, tags and search">🗂 Browse</button>
             <label class="check" title="Show the newest LoRAs first (handy while a training run saves epochs)"><input type="checkbox" class="f-newest"> newest first</label>
           </div>
           <div class="f-lora-chips"></div>
@@ -257,6 +259,11 @@ export class MossForm {
     // LoRAs
     this.chips = new LoraChips(this.q(".f-lora-chips"), { get: () => s.loras, set: (list) => { s.loras = list; this.persist(); this.renderAxes(); this.loraInfo(); } });
     this.q(".f-lora").onchange = (e) => { if (e.target.value) this.chips.add(e.target.value, 1); e.target.value = ""; };
+    this.q(".f-lora-browse").onclick = () => openLoraBrowser({
+      chips: this.chips, prompt: this.q(".f-prompt"), defaultWeight: 1,
+      current: () => this.results[this.current]?.src || null,
+      emptyHint: "No LoRAs found. Add your LoRA folders in ⚙ Settings → LoRAs (sub-folders become folders here) and press ⟳.",
+    });
 
     // fast preview
     this.q(".f-fast").onchange = (e) => {

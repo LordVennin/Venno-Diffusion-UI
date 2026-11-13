@@ -46,13 +46,44 @@ def scan() -> list[dict]:
                     continue
                 path = os.path.join(dirpath, n)
                 name = os.path.relpath(path, root).replace(os.sep, "/")
-                if name in seen or not is_lora_file(path):
+                if name in seen:
+                    continue
+                st = os.stat(path)
+                about = _about(path, st)
+                if about is None:  # a safetensors file that isn't a LoRA
                     continue
                 seen.add(name)
-                st = os.stat(path)
-                out.append({"name": name, "path": path, "folder": root, "size": st.st_size, "mtime": st.st_mtime, **summary(path)})
+                out.append({"name": name, "path": path, "folder": root, "size": st.st_size, "mtime": st.st_mtime, **about})
     out.sort(key=lambda x: x["name"].lower())
     return out
+
+
+_about_cache: dict[tuple, Optional[dict]] = {}  # (path, mtime, size) → summary, or None for a file that isn't a LoRA
+
+
+def _about(path: str, st: os.stat_result) -> Optional[dict]:
+    """summary(path) for a LoRA file, None for anything else; headers are read once per file version, so a
+    folder with hundreds of LoRAs lists quickly."""
+    key = (path, st.st_mtime, st.st_size)
+    with _lock:
+        if key in _about_cache:
+            return _about_cache[key]
+    about = summary(path) if is_lora_file(path) else None
+    with _lock:
+        _about_cache[key] = about
+    return about
+
+
+class LibrarySource:
+    """What Venno's LoRA library (venno/engine/lora_library.py: folders, previews, tags, notes next to the files)
+    needs to serve Venno MOSS's LoRAs."""
+
+    folders = staticmethod(config.lora_folders)
+    resolve = staticmethod(lambda name: resolve(name))
+
+    @staticmethod
+    def scan() -> dict[str, str]:
+        return {item["name"]: item["path"] for item in scan()}
 
 
 def find_turbo() -> Optional[str]:

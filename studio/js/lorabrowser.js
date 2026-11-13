@@ -5,6 +5,7 @@
 import { $, $$, api, escapeHtml, loadStore, saveStore, toast } from "./common.js";
 import { DEFAULT_WEIGHT } from "./loras.js";
 
+const V = globalThis.VENNO_API_BASE || "/venno/v1"; // Venno MOSS serves the same LoRA library API under /moss/v1
 const VIEW_KEY = "venno-lora-browser";
 const SORTS = { name: "Name", newest: "Newest", folder: "Folder" };
 
@@ -94,7 +95,8 @@ class LoraBrowser {
 
   saveView() { saveStore(VIEW_KEY, this.view); }
 
-  /** opts: { chips: LoraChips, prompt?: textarea for trigger words, current?: () => image src of the selected result } */
+  /** opts: { chips: LoraChips, prompt?: textarea for trigger words, current?: () => image src of the selected result,
+   *  defaultWeight?: weight of a LoRA without a preferred one, emptyHint?: where LoRAs go, shown when there are none } */
   async open(opts) {
     this.opts = opts;
     this.el.hidden = false;
@@ -115,7 +117,7 @@ class LoraBrowser {
 
   async load() {
     try {
-      this.items = await api("/venno/v1/loras");
+      this.items = await api(`${V}/loras`);
     } catch (e) {
       toast(`Could not list LoRAs: ${e.message}`);
       this.items = [];
@@ -131,6 +133,8 @@ class LoraBrowser {
     $(".lb-main", this.el).scrollTop = 0;
   }
 
+  get defaultWeight() { return this.opts?.defaultWeight ?? DEFAULT_WEIGHT; }
+
   inUse(name) { return this.opts?.chips.list.find((l) => l.name === name); }
 
   toggle(name) {
@@ -140,7 +144,7 @@ class LoraBrowser {
     if (this.inUse(name)) {
       chips.remove(name);
     } else {
-      chips.add(name, item?.weight || DEFAULT_WEIGHT);
+      chips.add(name, item?.weight || this.defaultWeight);
       this.addTriggerWords(item);
     }
     this.renderGrid();
@@ -250,7 +254,7 @@ class LoraBrowser {
     }
     const cards = list.map((i) => this.card(i, filtering)).join("");
     const grid = $(".lb-grid", this.el);
-    grid.innerHTML = tiles + cards || `<p class="lb-empty">${this.items.length ? "No LoRA matches." : "No LoRAs found. Put .safetensors files in models/Lora (sub-folders become folders here) and press ⟳."}</p>`;
+    grid.innerHTML = tiles + cards || `<p class="lb-empty">${this.items.length ? "No LoRA matches." : this.opts?.emptyHint || "No LoRAs found. Put .safetensors files in models/Lora (sub-folders become folders here) and press ⟳."}</p>`;
     $(".lb-count", this.el).textContent = filtering ? `${list.length} of ${this.items.length}` : `${this.items.length} LoRAs`;
   }
 
@@ -291,7 +295,7 @@ class LoraBrowser {
       </label>
       <datalist id="lb-taglist">${[...new Set(this.items.flatMap((x) => x.tags))].sort().map((t) => `<option value="${escapeHtml(t)}">`).join("")}</datalist>
       <label>Trigger words <span class="muted">(added to the prompt with the LoRA)</span><textarea class="lb-act" rows="2" data-noac>${escapeHtml(i.activation || "")}</textarea></label>
-      <label>Preferred weight <span class="muted">(0 = default ${DEFAULT_WEIGHT})</span><input type="number" class="lb-w" min="-2" max="3" step="0.05" value="${i.weight ?? 0}"></label>
+      <label>Preferred weight <span class="muted">(0 = default ${this.defaultWeight})</span><input type="number" class="lb-w" min="-2" max="3" step="0.05" value="${i.weight ?? 0}"></label>
       <label>Notes<textarea class="lb-notes" rows="4">${escapeHtml(i.notes || "")}</textarea></label>
       <div class="row"><button class="primary lb-save">Save</button><span class="muted lb-saved"></span></div>`;
     const tags = new Set(i.tags);
@@ -315,7 +319,7 @@ class LoraBrowser {
     $(".lb-save", ed).onclick = async () => {
       addTag();
       try {
-        const updated = await api("/venno/v1/loras/meta", {
+        const updated = await api(`${V}/loras/meta`, {
           name, tags: [...tags], activation: $(".lb-act", ed).value, weight: Number($(".lb-w", ed).value) || 0, notes: $(".lb-notes", ed).value,
         });
         this.replace(updated);
@@ -325,7 +329,7 @@ class LoraBrowser {
     // preview: upload, paste, drop, current result, remove
     const setPreview = async (image) => {
       try {
-        this.replace(await api("/venno/v1/loras/preview", { name, image }));
+        this.replace(await api(`${V}/loras/preview`, { name, image }));
         this.openEditor(name);
       } catch (e) { toast(e.message); }
     };
