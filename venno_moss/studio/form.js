@@ -335,7 +335,7 @@ export class MossForm {
     this.q(".r-use-settings").onclick = withCurrent(async (r) => this.applySettings((await readImage(await toDataURL(r.src))).settings));
     for (const target of ["img2img", "inpaint"]) {
       const b = this.q(`.r-to-${target}`);
-      if (b) b.onclick = withCurrent((r) => this.ctx.send(target, r.src));
+      if (b) b.onclick = withCurrent(async (r) => this.ctx.send(target, r.src, await this.settingsOf(r)));
     }
     const again = this.q(".r-to-input");
     if (again) again.onclick = withCurrent((r) => this.setInputImage(r.src));
@@ -343,6 +343,17 @@ export class MossForm {
     this.chips.render();
     this.renderFast();
     this.countTokens();
+  }
+
+  /** What a result was made with, for the tab it is sent to: the settings saved in the picture (it may be an
+   *  older result than the form shows), else this form's prompt and settings with the result's seed. */
+  async settingsOf(r) {
+    try {
+      const read = (await readImage(await toDataURL(r.src))).settings;
+      if (read && !read.partial) return read;
+    } catch {}
+    const s = this.s;
+    return { prompt: s.prompt, negative: s.negative, loras: s.loras, steps: s.steps, cfg: s.cfg, shift: s.shift, skip_layers: s.skip22 ? [22] : [], seed: r.seed, fast: s.fast };
   }
 
   setSize(w, h) {

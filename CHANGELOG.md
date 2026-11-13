@@ -20,6 +20,8 @@ shows the sections newer than the installed version.
 - Venno MOSS: **LoRA browser** (🗂 Browse next to the LoRA list), the same one as Venno's: folders, previews, search,
   tags, sorting, notes and trigger words per LoRA, for LoRA folders too big for a dropdown. Listing a large folder
   is also faster (each file is read once, not on every refresh).
+- Venno MOSS: *Send to Image to Image / Inpaint* takes the picture's prompts, LoRAs, seed and settings along (it
+  sent only the picture).
 - **Batch sheet** (Venno's form tabs and Venno MOSS): two or more pictures of a job are also stitched into one
   picture for comparison, like Forge's grid; shown first, saved with the grids, switched off per tab.
 - Inpaint and Image to Image: the wheel zooms the input image where the pointer is (up to 8×); drag with the middle
