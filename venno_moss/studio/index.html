@@ -52,18 +52,23 @@
 <div class="page settings-page" id="page-settings" hidden>
   <nav class="settings-nav">
     <h2>Settings</h2>
-    <button data-section="models" class="on"><b>Models</b><small>Download Base / SFT, model folders</small></button>
+    <button data-section="models" class="on"><b>Models</b><small>Downloads in three sizes, model folders</small></button>
     <button data-section="loras"><b>LoRAs</b><small>Folders to list LoRAs from</small></button>
-    <button data-section="memory"><b>Memory</b><small>24 GB or 12 GB cards</small></button>
+    <button data-section="memory"><b>Memory</b><small>24 GB, 12 GB and 8 GB cards</small></button>
     <button data-section="system"><b>System</b><small>Version, device, folders</small></button>
   </nav>
   <div class="settings-body">
     <section data-section="models"><div class="moss-settings">
       <section class="card">
         <h3>MOSS-Image models</h3>
-        <p>Each model is a 10 GB transformer; the first download also brings the Qwen3.5 9B text encoder and the VAE (17 GB), which all of them share. The turbo LoRA (for Fast preview) goes to the LoRA folder. Downloads resume if stopped.</p>
+        <p>Pick the size for your graphics card. <b>Full</b>: the 10 GB transformer as released (24 GB cards; on smaller ones Memory: Low stores it in fp8). <b>Q8</b> (5.5 GB, 12 GB cards) and <b>Q4</b> (3.2 GB, 8 GB cards) are quantized GGUF files: Q8 is very close to Full, Q4 loses some fine detail. The first download also brings the Qwen3.5 9B text encoder (in a size to match), the tokenizer and the VAE, which all models share. LoRAs work on every size. Downloads resume if stopped.</p>
         <ul class="catalog-list" id="catalog"></ul>
         <ul class="jobs" id="dl-jobs"></ul>
+      </section>
+      <section class="card" id="te-card" hidden>
+        <h3>Text encoder in use</h3>
+        <p>You have more than one size of the text encoder. The full one gives the model exactly what it was trained with; a smaller one needs less system RAM and loads faster. Changing it re-encodes your prompts.</p>
+        <select id="sel-te"></select>
       </section>
       <section class="card">
         <h3>Model folders</h3>
@@ -86,7 +91,8 @@
         <label class="check"><input type="radio" name="memory" value="auto"> <b>Automatic</b>: Full with 20 GB of VRAM or more, else Low</label>
         <label class="check"><input type="radio" name="memory" value="full"> <b>Full</b>: the transformer in bf16 (about 10 GB of VRAM); for 24 GB cards</label>
         <label class="check"><input type="radio" name="memory" value="low"> <b>Low</b>: the transformer's block weights in fp8 (about 5 GB); for 12 GB cards. Slightly different pictures</label>
-        <p>Either way the 9B text encoder stays in system RAM (about 17 GB) and only visits the graphics card a layer at a time when a new prompt is encoded; encoded prompts are reused. Applies from the next picture, no restart needed.</p>
+        <p>This is for the Full model files. The small downloads (Q8, Q4: ⚙ Settings → Models) stay as small as their file in either mode: about 5.5 GB of VRAM for Q8 (12 GB cards), 3.5 GB for Q4 (8 GB cards), plus 2 to 3 GB while a 1024 px picture is made.</p>
+        <p>Either way the 9B text encoder stays in system RAM (17 GB for the full one, 6 to 8 GB for a small one) and only visits the graphics card a layer at a time when a new prompt is encoded; encoded prompts are reused. Applies from the next picture, no restart needed.</p>
         <p class="hint" id="memory-now"></p>
       </section>
     </div></section>

@@ -2,12 +2,15 @@
 (the vendor pipeline's Euler on its snapped sigma grid, CFG with DiT block 22 skipped on the negative branch,
 fp32 noise from a CPU generator), so a seed and settings that made a training sample make the same picture.
 
-Memory (``config.memory_mode()``):
+Memory (``config.memory_mode()``), for bf16 model files:
 - full: the transformer in bf16 on the GPU (about 10 GB); for cards with about 20 GB or more.
 - low: the transformer's block weights in fp8 (about 5 GB), dequantized per layer; for 12 GB cards.
 - auto: full with 20 GB of VRAM or more, else low.
-The 9B text encoder (about 17 GB in bf16) stays in system RAM and only its layers visit the GPU, one at a
-time, when a prompt is encoded; encoded prompts are cached, so it only runs for new text.
+A GGUF transformer (the small downloads: Q8 about 5.5 GB for 12 GB cards, Q4 about 3.5 GB for 8 GB cards)
+stays as quantized as its file in either mode (gguf.py).
+The 9B text encoder (about 17 GB in bf16, 5 to 10 GB as a GGUF) stays in system RAM and only its layers
+visit the GPU, one at a time, when a prompt is encoded; encoded prompts are cached, so it only runs for new
+text.
 """
 
 from __future__ import annotations
@@ -26,8 +29,8 @@ import torch.nn.functional as F
 from safetensors import safe_open
 from safetensors.torch import load_file
 
-from . import config, lora, models, upscale
-from .model.fp8 import quantize_modules
+from . import config, gguf, lora, models, upscale
+from .model.fp8 import quantize_linear
 from .model.transformer import MossImageTransformer
 from .model.vae import AutoEncoder, convert_diffusers_state_dict
 
@@ -151,6 +154,143 @@ class LayerStreamer:
             t.data = self.cpu[id(layer)][name]  # the GPU copy is simply dropped
 
 
+# ---------------------------------------------------------------- GGUF (quantized) weights
+
+
+def gguf_transformer(path: str, dtype) -> MossImageTransformer:
+    """A MOSS-Image transformer from a GGUF file: the big matrices stay quantized (gguf.attach_linear), the rest
+    (norms, embedders, biases) is loaded as usual. Files store the blocks' q, k and v apart or fused."""
+    f = gguf.File(path)
+    names = {}  # name in the file → name here
+    for name in f.tensors:
+        short = next((name[len(p) :] for p in ("model.diffusion_model.", "diffusion_model.") if name.startswith(p)), name)
+        if short != "rope.bands":  # derived constants
+            names[short] = name
+    plain: dict[str, torch.Tensor] = {}
+    parts: dict[str, list] = {}  # Linear name → [(kind, shape, bytes)]
+    for short, name in names.items():
+        t = f.tensors[name]
+        gguf.check(t.kind, f"{os.path.basename(path)}: {name}")
+        stem = short[: -len(".weight")] if short.endswith(".weight") else ""
+        split = stem[-2:] in (".q", ".k", ".v") and stem[:-2].endswith(".proj") and stem.startswith("layers.")
+        if stem and len(t.shape) == 2 and (t.quantized or split):
+            parts.setdefault(f"{stem[:-2]}.qkv" if split else stem, []).append((stem[-1] if split else "", t.kind, t.shape, f.raw(name)))
+        else:
+            plain[short] = f.plain(name, dtype)
+    for module, items in parts.items():
+        if module.endswith(".qkv") and items[0][0]:
+            items.sort(key=lambda item: "qkv".index(item[0]))
+            if [item[0] for item in items] != ["q", "k", "v"]:
+                raise ValueError(f"{os.path.basename(path)}: {module} is missing one of its q, k, v weights")
+    shapes = {**plain, **{f"{module}.weight": torch.empty((sum(i[2][0] for i in items), items[0][2][1]), device="meta") for module, items in parts.items()}}
+    params = MossImageTransformer.aitk_config_from_state_dict(shapes)
+    with torch.device("meta"):
+        dit = MossImageTransformer(params)
+    for module, items in parts.items():
+        gguf.attach_linear(dit.get_submodule(module), [(kind, shape, raw) for _, kind, shape, raw in items], dtype)
+    result = dit.load_state_dict(plain, strict=False, assign=True)
+    if result.unexpected_keys:
+        raise ValueError(f"{os.path.basename(path)} has weights this transformer doesn't: {result.unexpected_keys[:5]}")
+    assert_materialized(dit, os.path.basename(path))
+    return dit
+
+
+def _v_head_order(key_heads: int, value_heads: int, head_dim: int) -> torch.Tensor:
+    """llama.cpp stores Qwen3.5's linear-attention value heads grouped the other way round (its conversion's
+    _reorder_v_heads): the index that takes transformers' order to the file's, file = ours[index]."""
+    per_key = value_heads // key_heads
+    return torch.arange(value_heads * head_dim).reshape(key_heads, per_key, head_dim).permute(1, 0, 2).reshape(-1)
+
+
+def _rows(raw: torch.Tensor, kind: str, shape, index: torch.Tensor) -> torch.Tensor:
+    """Rows of a (possibly quantized) matrix picked by `index`, as bytes: a row is a whole number of blocks."""
+    if kind in gguf.BLOCKS and shape[1] % gguf.BLOCKS[kind][0]:
+        raise ValueError(f"a {kind} matrix with rows of {shape[1]} values can't be reordered")
+    return raw.reshape(shape[0], -1)[index].reshape(-1)
+
+
+TE_LAYER_KEYS = {  # llama.cpp's tensor names → transformers' (Qwen3_5TextModel), inside a layer
+    "attn_norm.weight": "input_layernorm.weight", "post_attention_norm.weight": "post_attention_layernorm.weight",
+    "ffn_gate.weight": "mlp.gate_proj.weight", "ffn_up.weight": "mlp.up_proj.weight", "ffn_down.weight": "mlp.down_proj.weight",
+    "attn_q.weight": "self_attn.q_proj.weight", "attn_k.weight": "self_attn.k_proj.weight", "attn_v.weight": "self_attn.v_proj.weight",
+    "attn_output.weight": "self_attn.o_proj.weight", "attn_q_norm.weight": "self_attn.q_norm.weight", "attn_k_norm.weight": "self_attn.k_norm.weight",
+    "attn_qkv.weight": "linear_attn.in_proj_qkv.weight", "attn_gate.weight": "linear_attn.in_proj_z.weight", "ssm_out.weight": "linear_attn.out_proj.weight",
+    "ssm_alpha.weight": "linear_attn.in_proj_a.weight", "ssm_beta.weight": "linear_attn.in_proj_b.weight", "ssm_a": "linear_attn.A_log",
+    "ssm_dt.bias": "linear_attn.dt_bias", "ssm_conv1d.weight": "linear_attn.conv1d.weight", "ssm_norm.weight": "linear_attn.norm.weight",
+}
+
+
+def gguf_text_encoder(path: str, cfg, dtype):
+    """Qwen3.5's language tower from a llama.cpp GGUF (e.g. unsloth/Qwen3.5-9B-GGUF), as a transformers
+    Qwen3_5TextModel whose matrices stay quantized. llama.cpp's conversion (conversion/qwen.py) changes a few
+    tensors, undone here: norm weights are stored + 1, A_log as -exp(A_log), the conv kernel squeezed, and the
+    linear-attention value heads reordered (rows of in_proj_qkv's v part, in_proj_z, in_proj_a / b, the conv's v
+    channels, A_log and dt_bias; the columns of out_proj, for which the layer's input is reordered instead)."""
+    from transformers import Qwen3_5TextModel
+
+    f = gguf.File(path)
+    name = os.path.basename(path)
+    if f.architecture != "qwen35":
+        raise ValueError(f"{name} is not a Qwen3.5 text encoder (it says: {f.architecture or 'nothing'})")
+    key_heads, value_heads = cfg.linear_num_key_heads, cfg.linear_num_value_heads
+    key_dim, value_dim = cfg.linear_key_head_dim, cfg.linear_value_head_dim
+    order = _v_head_order(key_heads, value_heads, value_dim)  # file = ours[order]
+    back = torch.argsort(order)  # ours = file[back]
+    back_heads = torch.argsort(_v_head_order(key_heads, value_heads, 1))
+    qk = 2 * key_heads * key_dim  # rows of q and k in in_proj_qkv, channels of q and k in the conv
+    with torch.device("meta"):
+        model = Qwen3_5TextModel(cfg)
+    plain: dict[str, torch.Tensor] = {}
+
+    def linear(key: str, t: gguf.Tensor, raw: torch.Tensor, input_index=None):
+        gguf.attach_linear(model.get_submodule(key[: -len(".weight")]), [(t.kind, t.shape, raw)], dtype, input_index=input_index)
+
+    for tensor_name, t in f.tensors.items():
+        gguf.check(t.kind, f"{name}: {tensor_name}")
+        if tensor_name == "token_embd.weight":
+            if t.quantized:
+                gguf.attach_embedding(model.embed_tokens, t.kind, t.shape, f.raw(tensor_name), dtype)
+            else:
+                plain["embed_tokens.weight"] = f.plain(tensor_name, dtype)
+            continue
+        if tensor_name == "output_norm.weight":
+            plain["norm.weight"] = (f.plain(tensor_name, torch.float32) - 1).to(dtype)
+            continue
+        if tensor_name == "output.weight":  # the language head: not used for encoding
+            continue
+        piece = tensor_name.split(".", 2)
+        if piece[0] == "blk" and piece[1].isdigit() and int(piece[1]) >= cfg.num_hidden_layers:  # the next-token head's extra layer
+            continue
+        if piece[0] != "blk" or len(piece) < 3 or piece[2] not in TE_LAYER_KEYS:
+            raise ValueError(f"{name} has a tensor Venno MOSS doesn't know ({tensor_name}); it may be from a newer llama.cpp. Use the text encoder from Settings → Models.")
+        short = TE_LAYER_KEYS[piece[2]]
+        key = f"layers.{piece[1]}.{short}"
+        if short.endswith("norm.weight") and short != "linear_attn.norm.weight":
+            plain[key] = (f.plain(tensor_name, torch.float32) - 1).to(dtype)
+        elif short == "linear_attn.A_log":
+            plain[key] = torch.log(-f.plain(tensor_name, torch.float32))[back_heads].to(dtype)
+        elif short == "linear_attn.dt_bias":
+            plain[key] = f.plain(tensor_name, torch.float32)[back_heads].to(dtype)
+        elif short == "linear_attn.conv1d.weight":
+            kernel = f.plain(tensor_name, torch.float32)
+            plain[key] = torch.cat([kernel[:qk], kernel[qk:][back]]).unsqueeze(1).to(dtype)
+        elif len(t.shape) == 2 and (t.quantized or short.startswith("linear_attn.")):
+            raw = f.raw(tensor_name)
+            if short == "linear_attn.in_proj_qkv.weight":
+                raw = _rows(raw, t.kind, t.shape, torch.cat([torch.arange(qk), qk + back]))
+            elif short == "linear_attn.in_proj_z.weight":
+                raw = _rows(raw, t.kind, t.shape, back)
+            elif short in ("linear_attn.in_proj_a.weight", "linear_attn.in_proj_b.weight"):
+                raw = _rows(raw, t.kind, t.shape, back_heads)
+            linear(key, t, raw, input_index=order if short == "linear_attn.out_proj.weight" else None)
+        else:
+            plain[key] = f.plain(tensor_name, dtype)
+    result = model.load_state_dict(plain, strict=False, assign=True)
+    if result.unexpected_keys:
+        raise ValueError(f"{name} has weights this text encoder doesn't: {result.unexpected_keys[:5]}")
+    return model
+
+
 # ---------------------------------------------------------------- engine
 
 
@@ -166,6 +306,7 @@ class Engine:
         self.dit_parked = False  # moved to system RAM to make room for a VAE call
         self.loras: Optional[lora.LoraStack] = None
         self.te = self.tokenizer = None
+        self.te_path = None  # the text encoder loaded (a folder, or a .gguf file)
         self.te_streamed = False
         self.vae = None
         self.prompts: "OrderedDict[str, torch.Tensor]" = OrderedDict()  # prompt → (tokens, 4096) on the CPU
@@ -174,6 +315,11 @@ class Engine:
     # -- state --
     def rescan(self) -> models.Found:
         self.found = models.scan()
+        if self.te is not None and self.te_path != self.found.text_encoder:  # another text encoder was picked in Settings
+            with self.lock:
+                self.te, self.te_path, self.te_streamed = None, None, False
+                self.prompts.clear()  # its prompts were encoded by the other one
+                free_memory()
         return self.found
 
     def vram_gb(self) -> float:
@@ -195,6 +341,7 @@ class Engine:
             "memory": config.memory_mode(),
             "memory_resolved": self.resolved_memory(),
             "loaded": os.path.basename(os.path.dirname(self.dit_key[0])) if self.dit_key and os.path.isdir(self.dit_key[0]) else (os.path.basename(self.dit_key[0]) if self.dit_key else ""),
+            "quantized": bool(self.dit_key and self.dit_key[0].lower().endswith(".gguf")),
             "prompt_cache": len(self.prompts),
         }
 
@@ -207,17 +354,22 @@ class Engine:
         if not (self.found.text_encoder and self.found.tokenizer):
             raise FileNotFoundError("The MOSS-Image text encoder isn't there yet: download a model in ⚙ Settings → Models")
         t0 = time.time()
-        print(f"[Venno MOSS] loading the Qwen3.5 9B text encoder from {self.found.text_encoder}", flush=True)
+        path = self.found.text_encoder
+        quantized = path.lower().endswith(".gguf")
+        print(f"[Venno MOSS] loading the Qwen3.5 9B text encoder from {path}", flush=True)
         self.tokenizer = AutoTokenizer.from_pretrained(self.found.tokenizer)
-        cfg = AutoConfig.from_pretrained(self.found.text_encoder)
+        cfg = AutoConfig.from_pretrained(os.path.dirname(path) if quantized else path)
         cfg = getattr(cfg, "text_config", cfg)
-        dropped = ("visual.", "model.visual.", "lm_head.", "mtp.")  # the language tower only
-        sd = load_weights(self.found.text_encoder, key_filter=lambda k: not k.startswith(dropped))
-        sd = strip_prefixes(sd, ("model.language_model.", "language_model.", "model."))
-        with torch.device("meta"):
-            model = Qwen3_5TextModel(cfg)
-        model.load_state_dict({k: v.to(self.dtype) for k, v in sd.items()}, strict=False, assign=True)
-        del sd
+        if quantized:
+            model = gguf_text_encoder(path, cfg, self.dtype)
+        else:
+            dropped = ("visual.", "model.visual.", "lm_head.", "mtp.")  # the language tower only
+            sd = load_weights(path, key_filter=lambda k: not k.startswith(dropped))
+            sd = strip_prefixes(sd, ("model.language_model.", "language_model.", "model."))
+            with torch.device("meta"):
+                model = Qwen3_5TextModel(cfg)
+            model.load_state_dict({k: v.to(self.dtype) for k, v in sd.items()}, strict=False, assign=True)
+            del sd
         rotary = getattr(model, "rotary_emb", None)
         if rotary is not None and any(b.is_meta for b in rotary.buffers()):  # computed in __init__, not saved
             with torch.device("cpu"):
@@ -232,6 +384,7 @@ class Engine:
             LayerStreamer(model.layers, self.device)
             self.te_streamed = True
         self.te = model
+        self.te_path = path
         print(f"[Venno MOSS] text encoder ready in {time.time() - t0:.1f}s", flush=True)
 
     def _load_vae(self):
@@ -260,18 +413,24 @@ class Engine:
                 return self.dit
             self.unload_model()
             t0 = time.time()
-            print(f"[Venno MOSS] loading {model.name} ({key[1]} memory)", flush=True)
-            sd = load_weights(model.transformer)
-            sd = strip_prefixes(sd, ("model.diffusion_model.", "diffusion_model."))
-            sd = MossImageTransformer.convert_state_dict_on_load(sd)
-            params = MossImageTransformer.aitk_config_from_state_dict(sd)
-            with torch.device("meta"):
-                dit = MossImageTransformer(params)
-            dit.load_state_dict({k: v.to(self.dtype) for k, v in sd.items()}, strict=True, assign=True)
-            del sd
+            if model.transformer.lower().endswith(".gguf"):
+                print(f"[Venno MOSS] loading {model.name} (quantized: {model.size / 1024**3:.1f} GB)", flush=True)
+                dit = gguf_transformer(model.transformer, self.dtype)
+            else:
+                print(f"[Venno MOSS] loading {model.name} ({key[1]} memory)", flush=True)
+                sd = load_weights(model.transformer)
+                sd = strip_prefixes(sd, ("model.diffusion_model.", "diffusion_model."))
+                sd = MossImageTransformer.convert_state_dict_on_load(sd)
+                params = MossImageTransformer.aitk_config_from_state_dict(sd)
+                with torch.device("meta"):
+                    dit = MossImageTransformer(params)
+                dit.load_state_dict({k: v.to(self.dtype) for k, v in sd.items()}, strict=True, assign=True)
+                del sd
             dit = dit.eval().requires_grad_(False)
-            if key[1] == "low":
-                quantize_modules(dit, ["layers."], compute_dtype=self.dtype)  # on the CPU, before it moves
+            if key[1] == "low":  # on the CPU, before it moves; a GGUF's matrices are quantized already
+                for name, module in dit.named_modules():
+                    if isinstance(module, torch.nn.Linear) and name.startswith("layers.") and module.weight is not None:
+                        quantize_linear(module, self.dtype)
                 free_memory()
             self.dit = dit.to(self.device)
             self.dit_parked = False
@@ -291,6 +450,7 @@ class Engine:
         with self.lock:
             self.unload_model()
             self.te = self.tokenizer = self.vae = None
+            self.te_path = None
             self.te_streamed = False
             free_memory()
 

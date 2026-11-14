@@ -4,4 +4,4 @@ It runs in its own Python environment (venv-moss: MOSS-Image needs newer transfo
 port (7870), with Venno Studio's layout and styles.
 """
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"

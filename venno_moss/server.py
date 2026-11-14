@@ -40,9 +40,11 @@ def info() -> dict:
     found = eng.found
     return {
         "version": VERSION,
-        "models": [{"name": m.name, "size": m.size, "single_file": m.root is None} for m in found.models],
+        "models": [{"name": m.name, "size": m.size, "single_file": m.root is None, "quantized": m.transformer.lower().endswith(".gguf")} for m in found.models],
         "complete": found.complete,
         "have": {"model": bool(found.models), "text_encoder": bool(found.text_encoder), "tokenizer": bool(found.tokenizer), "vae": bool(found.vae)},
+        "text_encoders": [{"name": t.name, "size": t.size, "quantized": t.quantized} for t in found.text_encoders],
+        "text_encoder": found.text_encoder_name,
         "loras": [{k: v for k, v in item.items() if k != "path"} for item in lora.scan()],
         "defaults": engine_module.DEFAULTS,
         "engine": eng.info(),
@@ -228,6 +230,11 @@ def create_app() -> FastAPI:
             if req["memory"] not in config.MEMORY_MODES:
                 raise HTTPException(400, f"Memory must be one of {', '.join(config.MEMORY_MODES)}")
             updates["memory"] = req["memory"]
+        if "text_encoder" in req:  # "" = the default (the full one when it is there)
+            name = str(req["text_encoder"] or "")
+            if name and name not in {t.name for t in engine_module.get().found.text_encoders}:
+                raise HTTPException(400, f"Text encoder not found: {name}")
+            updates["text_encoder"] = name
         config.save_settings(**updates)
         engine_module.get().rescan()
         return {"settings": config.load_settings(), "info": info()}

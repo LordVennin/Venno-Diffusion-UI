@@ -14,3 +14,8 @@
 .moss-settings .kv th { text-align: left; font-weight: normal; padding: 3px 12px 3px 0; vertical-align: top; color: var(--muted); }
 .moss-settings .kv code { white-space: pre-wrap; word-break: break-all; }
 input.unused { opacity: .45; text-decoration: line-through; }
+
+/* Settings → Models: a button per download size */
+.catalog-list .sizes { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.catalog-list button.size { display: flex; flex-direction: column; align-items: center; min-width: 104px; padding: 5px 10px; line-height: 1.25; }
+.catalog-list button.size small { font-size: 11px; opacity: .75; font-weight: 400; }

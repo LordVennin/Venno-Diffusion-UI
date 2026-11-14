@@ -365,7 +365,7 @@ def test_fast_preview(folders, fake_engine):
                    hires=jobs.Hires(cfg=4.0))
     assert "turbo LoRA" in jobs.unsupported(job)  # not downloaded yet
     turbo = downloads.Download("turbo")
-    assert turbo.patterns == [config.TURBO_FILES[0]] and turbo.target == config.default_lora_path()
+    assert [(src.patterns, src.folder) for src in turbo.sources] == [([config.TURBO_FILES[0]], config.default_lora_path())]
     save_file(trainer_lora(layers=1), os.path.join(config.default_lora_path(), "8-steps-dmd-lora.safetensors"))
     save_file(trainer_lora(layers=1), os.path.join(config.default_lora_path(), "8-steps-dmd2-lora.safetensors"))
     assert jobs.unsupported(job) is None and [c["installed"] for c in downloads.catalog() if c["kind"] == "lora"] == [True]

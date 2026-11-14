@@ -17,6 +17,10 @@ shows the sections newer than the installed version.
   tabs with Send to / Use as input.
 - Venno MOSS's Image Info tab has Venno's layout and also reads pictures from Venno, Forge and A1111 (prompt,
   negative prompt, seed and size carry over).
+- Venno MOSS: **smaller downloads for 12 GB and 8 GB cards.** Every model (Base, SFT, Kromoss) now comes as Full (10 GB), Q8 (5.5 GB) or
+  Q4 (3.2 GB); the small ones are GGUF files that stay quantized on the graphics card, with a small GGUF text encoder
+  (a first download is 13 GB or 9 GB instead of 27 GB). Settings → Models picks the text encoder when there are several.
+  Other MOSS-Image GGUF files (Q8_0, Q6_K, Q5_K, Q4_K …) in a model folder are listed too.
 - Venno MOSS: **LoRA browser** (🗂 Browse next to the LoRA list), the same one as Venno's: folders, previews, search,
   tags, sorting, notes and trigger words per LoRA, for LoRA folders too big for a dropdown. Listing a large folder
   is also faster (each file is read once, not on every refresh).

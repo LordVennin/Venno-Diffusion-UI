@@ -102,9 +102,12 @@ let dlTimer = 0;
 async function loadCatalog() {
   try {
     const c = await api(`${V}/models/catalog`);
+    // one row per model, a button per size: "Q4 · 9.2 GB" with the cards it is for underneath
+    const button = (x, first) => `<button class="size${x.installed ? "" : first ? " primary" : ""}" data-variant="${x.variant}"${x.installed ? " disabled" : ""} title="${x.installed ? "Already here" : `Download ${x.size_gb} GB`}">
+        <b>${escapeHtml(x.label)}${x.installed ? " ✓" : ` · ${x.size_gb} GB`}</b>${x.hint ? `<small>${escapeHtml(x.hint)}</small>` : ""}</button>`;
     $("#catalog").innerHTML = c.catalog.map((m) => `
-      <li><div style="flex:1"><b>${escapeHtml(m.name)}</b> <span class="hint">${m.kind === "lora" ? "· LoRA " : ""}${m.installed ? "· installed" : `· ${m.size_gb} GB`}</span><br><span class="hint">${escapeHtml(m.description)}</span></div>
-      <button class="${m.installed ? "" : "primary"}" data-variant="${m.variant}"${m.installed ? " disabled" : ""}>${m.installed ? "Installed" : "Download"}</button></li>`).join("");
+      <li><div style="flex:1"><b>${escapeHtml(m.name)}</b>${m.kind === "lora" ? ` <span class="hint">· LoRA</span>` : ""}<br><span class="hint">${escapeHtml(m.description)}${m.small_repo ? ` Q8 / Q4: ${escapeHtml(m.small_repo)}.` : ""}</span></div>
+      <div class="sizes">${m.sizes.map((x) => button(x, m.sizes.length === 1 || !m.sizes.some((y) => y.installed))).join("")}</div></li>`).join("");
     $$("#catalog button[data-variant]").forEach((b) => (b.onclick = async () => {
       try { await api(`${V}/models/download`, { variant: b.dataset.variant }); pollDownloads(); } catch (e) { toast(e.message); }
     }));
@@ -140,6 +143,7 @@ const lines = (id) => $(`#${id}`).value.split("\n").map((x) => x.trim()).filter(
 $("#save-model-dirs").onclick = () => saveSettings({ model_dirs: lines("model-dirs") });
 $("#save-lora-dirs").onclick = () => saveSettings({ lora_dirs: lines("lora-dirs") });
 $$("input[name=memory]").forEach((r) => (r.onchange = () => saveSettings({ memory: r.value })));
+$("#sel-te").onchange = (e) => saveSettings({ text_encoder: e.target.value });
 
 function renderSettings(saved) {
   $("#model-dirs").value = (saved.model_dirs || []).join("\n");
@@ -160,11 +164,13 @@ function applyInfo(i) {
   const mem = e.memory === "auto" ? `auto → ${e.memory_resolved}` : e.memory_resolved;
   $("#status").textContent = i.complete ? `${i.models.length} model(s) · ${i.loras.length} LoRA(s) · memory ${mem}` : "No MOSS-Image model yet: ⚙ Settings → Models";
   $("#lora-default").textContent = i.folders.loras[0] ? i.folders.loras.at(-1) : "";
+  $("#te-card").hidden = i.text_encoders.length < 2;
+  fillSelect($("#sel-te"), i.text_encoders.map((t) => ({ value: t.name, label: `${t.name} · ${formatBytes(t.size)}` })), i.text_encoder);
   $("#memory-now").textContent = e.device === "cuda" ? `Your graphics card: ${e.gpu}, ${e.vram_gb} GB. Now using: ${e.memory_resolved}.` : "No graphics card in use: running on the CPU (very slow).";
   const row = (k, v) => `<tr><th>${k}</th><td><code>${escapeHtml(String(v))}</code></td></tr>`;
   $("#system").innerHTML = row("Version", i.version) + row("Device", e.device === "cuda" ? `${e.gpu} (${e.vram_gb} GB)` : "CPU") + row("Memory", mem)
     + row("Model folders", i.folders.models.join("\n")) + row("LoRA folders", i.folders.loras.join("\n")) + row("Outputs", i.folders.outputs)
-    + row("Loaded", e.loaded || "nothing yet") + row("Prompts cached", e.prompt_cache);
+    + row("Text encoder", i.text_encoder || "none yet") + row("Loaded", e.loaded || "nothing yet") + row("Prompts cached", e.prompt_cache);
 }
 
 async function loadInfo(refresh = false) {
