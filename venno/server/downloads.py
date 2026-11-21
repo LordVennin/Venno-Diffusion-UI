@@ -48,6 +48,7 @@ CATALOG = [
     ("lllite-scribble", "controlnet", "LLLite scribble", "Rough scribbles (Venno inverts the lines automatically). Preview3-era weights.", f"{LLLITE}/anima-lllite-scribble-1.safetensors", 7864128),
     ("lllite-depth", "controlnet", "LLLite depth", "Depth maps (white = near). Preview3-era weights.", f"{LLLITE}/anima-lllite-depth-1.safetensors", 7864128),
     ("lllite-pose", "controlnet", "LLLite pose", "DWPose skeletons. Preview3-era weights.", f"{LLLITE}/anima-lllite-pose-1.safetensors", 23310040),
+    ("lllite-regional", "controlnet", "LLLite regional (experimental)", "Region layout guide: pushes each subject into its Canvas region (Settings → Regions turns it on; the colour mask is drawn from your regions). By Sen-sou; trained on 580 pictures, mostly close-up characters.", f"{HF}/Sen-sou/Anima-LLLite-Regional-Controlnet/resolve/main/anima-lllite-regional-exp-v3.safetensors", 51133504),
     ("lllite-inpaint", "controlnet", "LLLite inpainting v2", "Inpainting helper for large masked areas.", f"{LLLITE}/anima-lllite-inpainting-v2.safetensors", 65772872),
     ("up-animesharp-v3", "upscaler", "2x AnimeSharp V3", "Fast 2× anime upscaler for hires fix.", f"{HF}/Kim2091/AnimeSharpV3/resolve/main/2x-AnimeSharpV3.safetensors", 33478206),
     ("up-animesharp", "upscaler", "4x AnimeSharp", "Sharp 4× anime upscaler.", f"{HF}/Kim2091/AnimeSharp/resolve/main/4x-AnimeSharp.pth", 67010245),

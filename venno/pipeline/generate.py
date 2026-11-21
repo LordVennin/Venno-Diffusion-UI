@@ -133,8 +133,24 @@ def guide_map(job, g, src: Optional[Source], width: int, height: int) -> Image.I
     return img
 
 
-def make_guides(engine, job, src: Optional[Source], width: int, height: int):
-    if not job.guides:
+def region_guide_on(job) -> bool:
+    return job.region_guide > 0 and bool(job.regions)
+
+
+def region_guide_model(job, known: Optional[dict] = None) -> str:
+    """The region layout guide model of a job that asks for one; a clear error when it isn't installed."""
+    name = guides.regional_model(known, job.region_guide_model)
+    if name is None:
+        raise ValueError(f'Region layout guide model "{job.region_guide_model}" not found' if job.region_guide_model else
+                         "The region layout guide needs its model: ⚙ Settings → Models → LLLite regional (or turn it off in Settings → Regions)")
+    return name
+
+
+def make_guides(engine, job, src: Optional[Source], width: int, height: int, regional=None, layout: bool = True):
+    """The job's guides, and (first pass only: `layout`) the region layout guide, whose colour mask is drawn from
+    the regions' masks at this pass's size."""
+    layout = layout and region_guide_on(job) and regional is not None
+    if not job.guides and not layout:
         return None
     known = guides.models()
     items = []
@@ -143,7 +159,12 @@ def make_guides(engine, job, src: Optional[Source], width: int, height: int):
             raise ValueError(f'Guide model "{g.model}" not found')
         image = fit_to_source(job, src, guide_map(job, g, src, width, height), width, height)
         items.append(guides.Guide(known[g.model], image, g.weight, g.start, g.end, g.mode))
-    return guides.GuideSet(engine, items)
+    if layout:
+        shapes = [r.mask for r in regional.regions]
+        if any(m is not None for m in shapes):
+            image = guides.layout_map(shapes, regional.backgrounds())
+            items.append(guides.Guide(known[region_guide_model(job, known)], image, job.region_guide, 0.0, job.region_guide_end, "balanced", flat=True))
+    return guides.GuideSet(engine, items) if items else None
 
 
 def uses_wildcards(job) -> bool:
@@ -251,7 +272,9 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
     steps_run = sampling.run_steps(job.steps, denoise if src is not None else 1.0)
     cond = make_conditioning(engine, job, steps_run, W, H, tensors)
     regional = make_regional(engine, job, src, steps_run, W, H, cond, frames)
-    guide_set = make_guides(engine, job, src, W, H)
+    guide_set = make_guides(engine, job, src, W, H, regional)
+    # the hires pass refines a picture whose layout is set: the job's own guides, not the region layout guide
+    hires_guides = make_guides(engine, job, src, W, H, layout=False) if region_guide_on(job) else guide_set
     guide_mask = src.hard_mask if src is not None and src.mask is not None else None
 
     hires = job.hires if job.mode == "txt2img" else None
@@ -310,6 +333,8 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
             params["Region separation"] = job.region_separation
         if job.region_couple > 0:
             params["Region own passes"] = job.region_couple
+        if region_guide_on(job) and regional is not None:
+            params["Region layout guide"] = f"{region_guide_model(job)}, weight {job.region_guide:g}, steps 0-{job.region_guide_end:g}"
         if job.region_refine > 0:
             params["Region pass"] = job.region_refine
         if job.region_redraw:
@@ -375,7 +400,7 @@ def run(job, progress: Progress, extra_params: Optional[dict] = None) -> Result:
                 latents = sample_pass(
                     engine, job, progress, seeds, with_frames(vae.latent_shape(engine, TW, TH), frames), cond2, regional2,
                     steps=hires_steps, cfg=hires.cfg or job.cfg, init_latent=latents, denoise=hires.denoise,
-                    on_step=stepper(steps_run), guides=guide_set, reference=refs,
+                    on_step=stepper(steps_run), guides=hires_guides, reference=refs,
                 )
         except sampling.Cancelled:
             if progress.stop(result):

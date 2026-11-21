@@ -94,6 +94,8 @@ AXES: dict[str, AxisType] = {a.key: a for a in [
     AxisType("region_base", "Region base", "float", lambda j, v, t: {"region_base": v}),
     AxisType("region_separation", "Region separation", "float", lambda j, v, t: {"region_separation": v}),
     AxisType("region_refine", "Region pass", "float", lambda j, v, t: {"region_refine": v}),
+    AxisType("region_couple", "Region own passes", "float", lambda j, v, t: {"region_couple": v}),
+    AxisType("region_guide", "Region layout guide", "float", lambda j, v, t: {"region_guide": v}),
     AxisType("frame_separation", "Frame separation", "float", lambda j, v, t: {"frame_separation": v}),
     AxisType("reference_strength", "Reference strength", "float", lambda j, v, t: {"reference_strength": v}),
     AxisType("reference_noise", "Reference noise", "float", lambda j, v, t: {"reference_noise": v}),

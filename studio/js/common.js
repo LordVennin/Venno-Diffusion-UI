@@ -41,6 +41,12 @@ export function formatBytes(n) {
   return `${n.toFixed(i > 1 ? 1 : 0)} ${u[i]}`;
 }
 
+/** Region layout guide models (colour masks drawn from the Canvas regions): not a default for sketch guides. */
+export const isRegionalGuide = (name) => /regional/i.test(name || "");
+export const regionalGuide = (info) => (info?.controlnets || []).find(isRegionalGuide) || "";
+/** The guide model a new sketch guide starts with. */
+export const firstSketchGuide = (models) => models.find((m) => !isRegionalGuide(m)) || models[0] || "";
+
 export function withQualityPrefix(prompt, enabled, info) {
   prompt = prompt.trim();
   const prefix = info?.prompt_defaults?.positive_prefix;

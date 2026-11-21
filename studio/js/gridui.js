@@ -23,6 +23,8 @@ export const AXES = [
   { key: "region_base", label: "Main prompt in regions", hint: "0, 0.25, 0.5 (Canvas regions)" },
   { key: "region_separation", label: "Region separation", hint: "0, 0.5, 1 (Canvas regions)" },
   { key: "region_refine", label: "Region pass", hint: "0, 0.35, 0.5 (denoising, 0 = off; Canvas regions)" },
+  { key: "region_couple", label: "Region own passes", hint: "0, 0.3, 0.5 (share of the first steps; Canvas regions)" },
+  { key: "region_guide", label: "Region layout guide", hint: "0, 0.5, 1 (weight, 0 = off; needs the LLLite regional model)" },
   { key: "frame_separation", label: "Frame separation", hint: "0, 0.2, 0.4 (consistent sets with frame texts)" },
   { key: "reference_strength", label: "Reference strength", hint: "1, 0.6, 0.3 (with reference pictures)" },
   { key: "reference_noise", label: "Reference noise", hint: "0.3, 0.5, 0.8 (with reference pictures)" },

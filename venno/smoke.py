@@ -179,6 +179,15 @@ class Smoke:
         s = infotext.settings(r.infotexts[0])
         assert s["region_couple"] == 0.3 and s["raw"]["Main prompt"] == "masterpiece, best quality, safe, park" and '"girl1"' in s["prompt"], s["prompt"]
         print(f"[smoke]       redraw check: {r.detection_notes[0] or 'every character region held a character'}")
+        if guides.regional_model() is None:
+            print("[smoke]       region layout guide: skipped (no LLLite regional model)")
+            return
+        plain = self.run("regions (for the layout guide)", prompt="masterpiece, best quality, safe, 2girls, standing, park", regions=regions, seed=5)
+        r = self.run("regions + layout guide", prompt="masterpiece, best quality, safe, 2girls, standing, park", regions=regions, seed=5, region_guide=1.0)
+        assert_picture(pictures(r)[0], (self.S, self.S))
+        s = infotext.settings(r.infotexts[0])
+        assert s["region_guide"] == 1.0 and s["region_guide_model"] == guides.regional_model(), s
+        assert pictures(r)[0].tobytes() != pictures(plain)[0].tobytes(), "the layout guide changes the picture"
 
     def check_region_pass(self):
         left, right = self._halves()

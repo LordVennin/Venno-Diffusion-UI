@@ -17,6 +17,9 @@ shows the sections newer than the installed version.
   tabs with Send to / Use as input.
 - Venno MOSS's Image Info tab has Venno's layout and also reads pictures from Venno, Forge and A1111 (prompt,
   negative prompt, seed and size carry over).
+- **Region layout guide** (Canvas, Settings → Regions; experimental, off by default): Sen-sou's *LLLite regional* guide model
+  (⚙ Settings → Models) is shown your regions as flat coloured shapes and pushes each subject into its region, next to or
+  instead of own passes. New comparison grid axes: Region layout guide, Region own passes.
 - Venno MOSS: **smaller downloads for 12 GB and 8 GB cards.** Every model (Base, SFT, Kromoss) now comes as Full (10 GB), Q8 (5.5 GB) or
   Q4 (3.2 GB); the small ones are GGUF files that stay quantized on the graphics card, with a small GGUF text encoder
   (a first download is 13 GB or 9 GB instead of 27 GB). Settings → Models picks the text encoder when there are several.

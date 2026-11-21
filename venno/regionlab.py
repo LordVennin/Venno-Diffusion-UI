@@ -17,7 +17,8 @@ Variants (see docs/REGIONS_HANDOFF.md):
     own30/own50 one pass with region own passes in the first 30% / 50% of the steps (the Canvas default is 30%);
                 suffixes: -x character regions found empty are drawn anew (the Canvas's redraw), -l48 own-pass
                 crops of at least 48 latents a side, -s0.5 crops grown by half the region's size, -q quality tags
-                in front of the region prompts, -r40 the region pass afterwards at 40%; e.g. own30-q-x
+                in front of the region prompts, -r40 the region pass afterwards at 40%, -g100 the region layout
+                guide (the LLLite regional model) at weight 100%; e.g. own30-q-x, own0-g100
 Results are cached per scene, variant, seed and settings (outputs/region_lab/cache), so re-running a sheet only
 computes what is new; each run writes a labelled sheet to outputs/region_lab/.
 """
@@ -163,7 +164,7 @@ class Lab:
 
         defaults = {k: getattr(sampling, k) for k in ("COUPLE_SHARE", "COUPLE_LEAST")}
         keys = {"s": "COUPLE_SHARE", "l": "COUPLE_LEAST"}
-        quality, refine, redraw = False, 0.0, False
+        quality, refine, redraw, guide = False, 0.0, False, 0.0
         try:
             for opt in m.group(2).split("-")[1:]:
                 if opt == "q":
@@ -172,10 +173,12 @@ class Lab:
                     redraw = True  # character regions found empty are drawn anew
                 elif opt[0] == "r":
                     refine = float(opt[1:]) / 100  # the region pass afterwards, at this denoise
+                elif opt[0] == "g":
+                    guide = float(opt[1:]) / 100  # the region layout guide (the LLLite regional model) at this weight
                 else:
                     key = keys[opt[0]]
                     setattr(sampling, key, type(defaults[key])(float(opt[1:])))
-            return self.run(seed=seed, regions=self.regions(opts.overlap, quality), region_couple=int(m.group(1)) / 100, region_refine=refine, region_redraw=redraw, region_compose=opts.compose)
+            return self.run(seed=seed, regions=self.regions(opts.overlap, quality), region_couple=int(m.group(1)) / 100, region_refine=refine, region_redraw=redraw, region_compose=opts.compose, region_guide=guide)
         finally:
             for k, v in defaults.items():
                 setattr(sampling, k, v)

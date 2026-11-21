@@ -1,7 +1,7 @@
 // ControlNet card for the form tabs: up to three guide units, each a picture (or the tab's input image) turned
 // into a map by a preprocessor (venno/engine/preprocess.py) and applied by an Anima ControlLLLite model.
 
-import { $, $$, api, escapeHtml, fillSelect, toast } from "./common.js";
+import { $, $$, api, escapeHtml, fillSelect, firstSketchGuide, toast } from "./common.js";
 
 const UNIT_DEFAULT = { enabled: false, useInput: false, preprocessor: "lineart", model: "", weight: 0.8, start: 0, end: 0.8, mode: "balanced", resize: 1, cannyLow: 100, cannyHigh: 200 };
 export const CONTROLNET_DEFAULT = { enabled: false, unit: 0, units: [0, 1, 2].map(() => ({ ...UNIT_DEFAULT })) };
@@ -199,7 +199,7 @@ export class ControlNetCard {
     this.models = info.controlnets || [];
     this.preprocessors = info.preprocessors || [{ key: "none", label: "None", suits: [] }];
     for (const unit of this.o.state().units) {
-      if (!unit.model || !this.models.includes(unit.model)) unit.model = this.suggested(unit.preprocessor) || this.models[0] || "";
+      if (!unit.model || !this.models.includes(unit.model)) unit.model = this.suggested(unit.preprocessor) || firstSketchGuide(this.models);
     }
     this.render();
   }

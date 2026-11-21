@@ -143,3 +143,55 @@ def test_background_gives_way_to_subjects():
     grid = reg.reshape(2, H, W)
     assert grid[1, :, inside].min() > 0.85 and grid[0, :, inside].max() < 0.05  # the subject's prompt rules its area
     assert grid[0, :, outside].min() > 0.85  # the scenery everywhere else
+
+
+# ---------------------------------------------------------------- region layout guide
+
+
+def test_layout_map_and_guide_for_regions(monkeypatch):
+    """The colour mask a region layout guide (LLLite regional) reads, drawn from a job's regions."""
+    import numpy as np
+
+    from venno.engine import guides
+    from venno.pipeline import generate, infotext
+    from venno.pipeline import grid as grid_module
+    from venno.server.jobs import Job
+
+    scenery = torch.ones(32, 48)  # spans the picture: stays white
+    left, right, small = torch.zeros(32, 48), torch.zeros(32, 48), torch.zeros(32, 48)
+    left[4:28, 2:22] = 1
+    right[4:28, 26:46] = 0.8
+    small[10:16, 16:30] = 1  # overlaps both: the smaller shape stays whole
+    image = guides.layout_map([scenery, left, None, right, small, torch.zeros(32, 48)], background=[0])
+    px = np.asarray(image)
+    assert image.size == (48, 32) and image.mode == "RGB"
+    assert tuple(px[0, 0]) == (255, 255, 255) and tuple(px[20, 5]) == (255, 0, 0) and tuple(px[20, 40]) == (0, 0, 255)
+    assert tuple(px[12, 20]) == (0, 255, 0) and tuple(px[12, 28]) == (0, 255, 0)
+    assert len({tuple(c) for c in px.reshape(-1, 3)}) == 4  # flat colours only
+    with pytest.raises(ValueError):
+        guides.layout_map([None])
+
+    known = {"anima-lllite-any-test-like-v2": "/a", "anima-lllite-regional-exp-v3": "/r", "other": "/o"}
+    assert guides.regional_model(known) == "anima-lllite-regional-exp-v3" and guides.regional_model(known, "other") == "other"
+    assert guides.regional_model(known, "gone") is None and guides.regional_model({"lineart": "/l"}) is None
+
+    # the pipeline adds it as a guide over the first steps, on the first pass only
+    made = []
+    monkeypatch.setattr(guides, "models", lambda: known)
+    monkeypatch.setattr(guides, "GuideSet", lambda engine, items: made.append(items) or items)
+    regional = regions.RegionalAttention([regions.Region(plan=Plan("bg"), contexts={}, mask=scenery), region(True), region(False)])
+    mask = "data:image/png;base64,"  # not read here: the masks come from `regional`
+    job = Job(prompt="x", regions=[{"prompt": p, "mask": mask} for p in ("bg", "l", "r")], region_guide=0.9, region_guide_end=0.4)
+    items = generate.make_guides(None, job, None, 48, 32, regional)
+    assert len(items) == 1 and (items[0].path, items[0].weight, items[0].start, items[0].end, items[0].flat) == ("/r", 0.9, 0.0, 0.4, True)
+    assert {tuple(c) for c in np.asarray(items[0].image).reshape(-1, 3)} == {(255, 0, 0), (0, 0, 255)}  # two subjects fill the picture
+    assert generate.make_guides(None, job, None, 48, 32, layout=False) is None  # the hires pass: the job's own guides only
+    assert generate.make_guides(None, job.model_copy(update={"region_guide": 0.0}), None, 48, 32, regional) is None
+    assert generate.make_guides(None, job.model_copy(update={"regions": []}), None, 48, 32, None) is None
+    monkeypatch.setattr(guides, "models", lambda: {"lineart": "/l"})
+    with pytest.raises(ValueError, match="LLLite regional"):
+        generate.make_guides(None, job, None, 48, 32, regional)
+
+    parsed = infotext.settings("x\nSteps: 8, Region layout guide: \"anima-lllite-regional-exp-v3, weight 0.9, steps 0-0.4\", Regions: 2")
+    assert (parsed["region_guide_model"], parsed["region_guide"], parsed["region_guide_end"]) == ("anima-lllite-regional-exp-v3", 0.9, 0.4)
+    assert grid_module.AXES["region_guide"].apply(job, 0.5, "") == {"region_guide": 0.5}

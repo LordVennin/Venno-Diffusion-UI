@@ -12,6 +12,11 @@ Control modes (as in Forge's ControlNet):
   Forge's soft injection), so it sets the layout and the prompt decides the details.
 - guide ("ControlNet is more important"): the guide acts on the prompt rows only, so CFG amplifies it.
   Needs CFG > 1 (with CFG 1 there is no negative pass and it equals balanced).
+
+Region layout guide: a ControlLLLite trained on flat colour masks (Sen-sou's Anima-LLLite-Regional-Controlnet:
+white background, one solid colour per region) pushes separate subjects into the regions' shapes. It doesn't
+know which prompt belongs to which colour; Venno's regional prompting does that part, so the two are used
+together: `layout_map` draws the mask from a job's regions and `regional_model` finds the model.
 """
 
 from __future__ import annotations
@@ -45,6 +50,34 @@ def models() -> dict[str, str]:
                 if f.lower().endswith(EXTENSIONS):
                     found.setdefault(os.path.splitext(f)[0], os.path.join(dirpath, f))
     return found
+
+
+REGIONAL_KEY = "regional"  # in the file name of a region layout guide model
+LAYOUT_COLOURS = ((255, 0, 0), (0, 0, 255), (0, 255, 0), (255, 255, 0), (255, 0, 255), (0, 255, 255), (255, 128, 0), (128, 0, 255))
+
+
+def regional_model(known: Optional[dict] = None, wanted: str = "") -> Optional[str]:
+    """The region layout guide model to use: `wanted` when it is there, else the first one named so."""
+    known = models() if known is None else known
+    if wanted:
+        return wanted if wanted in known else None
+    return next((name for name in sorted(known) if REGIONAL_KEY in name.lower()), None)
+
+
+def layout_map(masks: list, background: Optional[list[int]] = None) -> Image.Image:
+    """The colour mask a region layout guide reads: white, with every subject region as a flat shape in its own
+    basic colour. `masks` are (H, W) arrays or tensors (above 0.5 = inside; None = no shape, e.g. a frame
+    prompt); `background` lists the regions that are scenery, which stay white. Where regions overlap the
+    smaller one stays whole (it is drawn last)."""
+    arrays = [None if m is None else np.asarray(m.detach().float().cpu() if hasattr(m, "detach") else m, dtype=np.float32) > 0.5 for m in masks]
+    shape = next((a.shape for a in arrays if a is not None), None)
+    if shape is None:
+        raise ValueError("no region has a shape")
+    out = np.full((*shape, 3), 255, dtype=np.uint8)
+    subjects = [k for k, a in enumerate(arrays) if a is not None and k not in (background or []) and a.any()]
+    for k in sorted(subjects, key=lambda k: -int(arrays[k].sum())):
+        out[arrays[k]] = LAYOUT_COLOURS[subjects.index(k) % len(LAYOUT_COLOURS)]
+    return Image.fromarray(out, "RGB")
 
 
 def release():
@@ -83,6 +116,7 @@ class Guide:
     start: float = 0.0
     end: float = 0.8
     mode: str = "balanced"  # balanced | prompt | guide
+    flat: bool = False  # a map of flat colours (a region layout): resized without blending the colours at edges
 
 
 SOFT_DECAY = 0.825  # Forge's soft injection: 0.825 ** 12 ≈ 0.1 for the last blocks
@@ -110,7 +144,7 @@ class GuideSet:
         device, dtype = unet.load_device, unet.model.computation_dtype
         self.ranges = []
         for g, net in zip(self.guides, self.nets):
-            img = g.image.convert("RGB").resize((width, height), Image.LANCZOS)
+            img = g.image.convert("RGB").resize((width, height), Image.NEAREST if g.flat else Image.LANCZOS)
             x = torch.from_numpy(np.asarray(img, dtype=np.float32) / 127.5 - 1.0).permute(2, 0, 1)[None]
             if net.conditioning1.conv1.weight.shape[1] == 4:  # inpaint LLLite: masked image + mask channel
                 m = mask.resize((width, height), Image.BILINEAR) if mask is not None else Image.new("L", (width, height), 0)

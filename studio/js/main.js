@@ -3,7 +3,7 @@ import { Generator } from "./generate.js";
 import { jobProgress } from "./jobs.js";
 import { TOOLS, View } from "./view.js";
 import { GenForm } from "./forms.js";
-import { ADETAILER_DEFAULT, api, presetForCheckpoint, showLightbox, withQualityPrefix } from "./common.js";
+import { ADETAILER_DEFAULT, api, firstSketchGuide, presetForCheckpoint, regionalGuide, showLightbox, withQualityPrefix } from "./common.js";
 import { DetailerCard, HIRES_DEFAULT, HiresCard } from "./cards.js";
 import { GRID_DEFAULT, GridCard } from "./gridui.js";
 import { ModelsPage } from "./models.js";
@@ -32,7 +32,7 @@ const state = {
   gen: {
     prompt: "", negative: "", loras: [], switchPrompt: "", switchAt: 0.4, strength: 1, batch: 2, steps: 10, cfg: 1, shift: 3, sampler: "Euler", scheduler: "Simple",
     seed: 0, seedLocked: false, resolution: 1024, context: 0.5, feather: 12, qualityPrefix: true, saveImages: true, softInpaint: true,
-    regionSeparation: 0.7, regionRefine: false, regionRefineDenoise: 0.4, regionCouple: 0.3, regionRedraw: true, regionCompose: true, preset: "", ...HIRES_DEFAULT,
+    regionSeparation: 0.7, regionRefine: false, regionRefineDenoise: 0.4, regionCouple: 0.3, regionGuide: 0, regionRedraw: true, regionCompose: true, preset: "", ...HIRES_DEFAULT,
     ...(saved.gen || {}),
   },
   showProgressPreview: saved.showProgressPreview ?? true,
@@ -241,7 +241,7 @@ const actions = {
   "add-paint": () => doc.addLayer(LAYER_PAINT),
   "add-region": () => addRegion(),
   "add-control": () => { const l = doc.addLayer(LAYER_CONTROL); const cns = state.info?.controlnets || [];
-    l.controlModel = cns.find((m) => /any-?test|lineart|sketch/i.test(m)) || cns[0] || ""; setTool("brush"); setColor("#000000"); renderLayers(); },
+    l.controlModel = cns.find((m) => /any-?test|lineart|sketch/i.test(m)) || firstSketchGuide(cns); setTool("brush"); setColor("#000000"); renderLayers(); },
   "layer-up": () => doc.moveLayer(doc.active, 1),
   "layer-down": () => doc.moveLayer(doc.active, -1),
   "layer-dup": () => doc.duplicateLayer(doc.active),
@@ -683,6 +683,7 @@ bindRange("context", () => Math.round(g.context * 100), (v) => (g.context = v / 
 bindRange("feather", () => g.feather, (v) => (g.feather = v));
 bindRange("region-sep", () => Math.round(g.regionSeparation * 100), (v) => (g.regionSeparation = v / 100), (v) => `${v}%`);
 bindRange("region-couple", () => Math.round((g.regionCouple ?? 0.3) * 100), (v) => { g.regionCouple = v / 100; gen.scheduleLive(); }, (v) => `${v}%`);
+bindRange("region-guide", () => Math.round((g.regionGuide ?? 0) * 100), (v) => { g.regionGuide = v / 100; gen.scheduleLive(); }, (v) => (Number(v) ? `${v}%` : "off"));
 bindRange("region-refine-denoise", () => Math.round(g.regionRefineDenoise * 100), (v) => (g.regionRefineDenoise = v / 100), (v) => `${v}%`);
 const hrCard = new HiresCard($("#canvas-hr-card"), {
   state: () => g, persist, size: () => { const p = gen.plan(); return [p.gw, p.gh]; },
@@ -834,6 +835,7 @@ async function loadInfo(refresh = false) {
     setStatus(refresh ? "Rescanning models…" : "Connecting…");
     const info = refresh ? await api("/venno/v1/refresh", {}) : await api("/venno/v1/info");
     state.info = info;
+    $("#region-guide-note").hidden = !!regionalGuide(info);
     showRestartBanner(info.restart_needed, info.restart_reason);
     refreshTokenCounters(); // the quality prefix comes with the info
     const ckpts = info.checkpoints.map((c) => ({ value: c.title, label: c.name }));

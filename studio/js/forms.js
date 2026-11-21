@@ -1,8 +1,6 @@
 // "Text to Image" and "Image to Image" tabs: classic form-style generation pages.
 
-import {
-  $, $$, ADETAILER_DEFAULT, downloadDataURL, escapeHtml, fillSelect, loadStore, presetForCheckpoint, saveStore, toast, withQualityPrefix,
-} from "./common.js";
+import { $, $$, ADETAILER_DEFAULT, downloadDataURL, escapeHtml, fillSelect, firstSketchGuide, loadStore, presetForCheckpoint, saveStore, toast, withQualityPrefix } from "./common.js";
 import { cancelJob, finishedImages, jobModel, jobProgress, runJob, sheetFirst, skipJob } from "./jobs.js";
 import { jobLoras, LoraChips } from "./loras.js";
 import { runSteps, SchedulePreview } from "./schedule.js";
@@ -536,7 +534,7 @@ export class GenForm {
     const gsel = this.q(".f-guide-model");
     if (gsel) {
       const models = info.controlnets || [];
-      if (!s.guide.model && models.length) s.guide.model = models[0];
+      if (!s.guide.model && models.length) s.guide.model = firstSketchGuide(models);
       fillSelect(gsel, models.map((x) => ({ value: x, label: x })), s.guide.model, { empty: models.length ? "— none —" : "— none: download one in Models —" });
       this.updateGuideSummary();
     }

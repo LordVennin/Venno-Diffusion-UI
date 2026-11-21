@@ -1,7 +1,7 @@
 // Turns the canvas state into Venno jobs and manages results / live mode.
 
 import { LAYER_CONTROL, LAYER_PAINT, alphaToMask, ctx2d, hasContentIn, loadImage, makeCanvas, regionMasks } from "./doc.js";
-import { withQualityPrefix } from "./common.js";
+import { regionalGuide, withQualityPrefix } from "./common.js";
 import { detailerJob, hiresJob } from "./cards.js";
 import { gridJob } from "./gridui.js";
 import { cancelJob, finishedImages, jobModel, runJob, skipJob } from "./jobs.js";
@@ -130,6 +130,7 @@ export class Generator {
     job.region_base = REGION_BASE;
     job.region_separation = g.regionSeparation ?? 0.7;
     job.region_couple = g.regionCouple ?? 0.3; // live mode too: without it the preview shows a different picture
+    job.region_guide = regionalGuide(st.info) ? g.regionGuide ?? 0 : 0; // the layout guide, when its model is installed
     job.region_refine = g.regionRefine && !plan.live && job.regions.length ? g.regionRefineDenoise : 0;
     job.region_redraw = (g.regionRedraw ?? true) && !plan.live && job.regions.length > 0;
     job.region_compose = (g.regionCompose ?? true) && job.regions.length > 0;

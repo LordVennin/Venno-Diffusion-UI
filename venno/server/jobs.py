@@ -164,6 +164,10 @@ class Job(BaseModel):
     region_compose: bool = False  # the main prompt becomes a structured one composed from the regions (venno/pipeline/compose.py)
     region_separation: float = 0.0  # 0..1: keep regions apart in self-attention in the middle steps
     region_couple: float = Field(0.0, ge=0.0, le=1.0)  # share of the first steps where each region gets its own model pass (0 = off)
+    # region layout guide: a ControlLLLite fed a colour mask drawn from the regions (venno/engine/guides.py layout_map)
+    region_guide: float = Field(0.0, ge=0.0, le=2.0)  # its weight (0 = off)
+    region_guide_end: float = Field(0.5, ge=0.05, le=1.0)  # share of the steps it acts on, from the first
+    region_guide_model: str = ""  # "" = the installed model with "regional" in its name
     guides: list[Guide] = []
     # Cosmos time axis (venno/engine/reference.py)
     frames: int = Field(1, ge=1, le=4)  # consistent set: frames generated together, as one sequence (text to image)

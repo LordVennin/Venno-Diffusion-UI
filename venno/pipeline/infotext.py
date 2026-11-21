@@ -138,6 +138,8 @@ def settings(text: str) -> dict:
     out["region_separation"] = _num(prm.get("Region separation"))
     out["region_refine"] = _num(prm.get("Region pass"))
     out["region_couple"] = _num(prm.get("Region own passes"))
+    if m := re.fullmatch(r"(.+), weight ([\d.]+), steps 0-([\d.]+)", prm.get("Region layout guide", "")):
+        out["region_guide_model"], out["region_guide"], out["region_guide_end"] = m.group(1), float(m.group(2)), float(m.group(3))
     if frames := _num(prm.get("Frames"), int):
         out["frames"] = frames
         out["frame_prompts"] = [prm.get(f"Frame {k + 1} prompt", "") for k in range(frames)]
