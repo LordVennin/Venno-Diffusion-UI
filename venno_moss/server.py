@@ -259,6 +259,17 @@ def create_app() -> FastAPI:
             engine_module.get().rescan()
         return downloads.jobs()
 
+    # ---- Upscale tab (venno/pipeline/upscaler.py; the models are the ones in Venno's upscaler folders) ----
+    from venno.pipeline import upscaler
+
+    def _gpu_name() -> str:
+        import torch
+
+        return torch.cuda.get_device_name(engine_module.get().device) if engine_module.get().device.type == "cuda" else ""
+
+    upscaler.add_routes(app, V, folders=config.upscaler_folders, device=lambda: engine_module.get().device, gpu_name=_gpu_name, guard=_local_only,
+                        save_dir=lambda: os.path.join(config.outputs_path(), "upscale"))
+
     # ---- page ----
     app.mount("/moss/assets", NoCacheStatic(directory=PAGE_DIR), name="moss_assets")
     app.mount("/studio/assets", NoCacheStatic(directory=SHARED_DIR), name="venno_shared")

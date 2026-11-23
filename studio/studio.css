@@ -376,6 +376,11 @@ details.card > summary > span { color: var(--text); }
 .f-resize-by .slider output { min-width: 44px; }
 
 /* Image Info tab */
+/* Upscale tab (studio/js/upscaletab.js; also in Venno MOSS) */
+.upscale-page .u-drop { flex: 1; min-height: 0; overflow: hidden; background: #141518; position: relative; }
+.upscale-page .u-drop img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.upscale-page .u-status { min-height: 16px; }
+.upscale-page .u-info { margin: 0; white-space: pre-wrap; word-break: break-all; }
 .info-page { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 520px); gap: 12px; padding: 12px; overflow: hidden; }
 .info-drop { display: grid; place-items: center; min-height: 0; border: 1px dashed var(--line); border-radius: 8px; background: #141518; overflow: hidden; cursor: pointer; }
 .info-drop.dragging { border-color: var(--accent); background: rgba(255,138,61,.08); }

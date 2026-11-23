@@ -3,6 +3,7 @@
 
 import { $, $$, api, escapeHtml, fillSelect, formatBytes, loadStore, saveStore, toast } from "/studio/assets/js/common.js";
 import { MossForm, readImage } from "/moss/assets/form.js";
+import { UpscaleTab } from "/studio/assets/js/upscaletab.js";
 
 const V = "/moss/v1";
 const FORMS = ["txt2img", "img2img", "inpaint"];
@@ -11,10 +12,11 @@ let info = null;
 
 // ---------------- tabs ----------------
 function showTab(name) {
-  for (const p of [...FORMS, "info", "settings"]) $(`#page-${p}`).hidden = p !== name;
+  for (const p of [...FORMS, "upscale", "info", "settings"]) $(`#page-${p}`).hidden = p !== name;
   $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
   $("#btn-settings").classList.toggle("on", name === "settings");
   if (name === "settings") loadCatalog();
+  if (name === "upscale") upscaleTab.show();
   if (forms[name]?.image) forms[name].fitStage();
 }
 const visibleForm = () => forms[FORMS.find((m) => !$(`#page-${m}`).hidden)];
@@ -34,6 +36,7 @@ const ctx = {
   info: () => info,
   model,
   show: showTab,
+  upscale: (src) => { showTab("upscale"); upscaleTab.setImage(src); },
   /** A picture (and optionally the settings read from it) to another tab. */
   send: async (target, src, settings) => {
     showTab(target);
@@ -42,6 +45,14 @@ const ctx = {
   },
 };
 const forms = Object.fromEntries(FORMS.map((m) => [m, new MossForm($(`#page-${m}`), m, ctx)]));
+const upscaleTab = new UpscaleTab($("#page-upscale"), {
+  storeKey: "venno-moss-upscale",
+  modelsHint: "Upscaler models are the ones in Venno's upscaler folders: download one in Venno's ⚙ Settings → Models, or put a model file (ESRGAN, DAT, SwinIR, …) in the folder and press ⟳.",
+  send: [
+    { label: "Send to Image to Image", run: (src) => ctx.send("img2img", src) },
+    { label: "Send to Inpaint", run: (src) => ctx.send("inpaint", src) },
+  ],
+});
 
 $$("#tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 $("#btn-settings").onclick = () => showTab($("#page-settings").hidden ? "settings" : "txt2img");
@@ -86,6 +97,7 @@ async function openInfo(file) {
     if (!f) return;
     const form = visibleForm();
     if (!$("#page-info").hidden) openInfo(f);
+    else if (!$("#page-upscale").hidden) upscaleTab.setImage(f);
     else if (form?.image) form.setInputImage(URL.createObjectURL(f));
     else return;
     e.preventDefault();

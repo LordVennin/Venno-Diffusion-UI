@@ -575,6 +575,32 @@ def create_app() -> FastAPI:
     app.add_api_route(f"{V}/models/jobs", download_jobs, methods=["GET"])
     app.add_api_route(f"{V}/models/cancel", download_cancel, methods=["POST"])
 
+    # ---- Upscale tab (venno/pipeline/upscaler.py) ----
+    def _upscale_device():
+        from backend import memory_management
+
+        return memory_management.get_torch_device()
+
+    def _upscale_gpu_name() -> str:
+        import torch
+
+        return torch.cuda.get_device_name(_upscale_device()) if _upscale_device().type == "cuda" else _upscale_device().type
+
+    def _upscale_folders() -> list[str]:
+        from venno.engine import upscale
+
+        return upscale.folders()
+
+    def _upscale_prepare():
+        from backend import memory_management
+
+        memory_management.free_memory(3 * 1024**3, _upscale_device())  # the loaded checkpoint makes room if it must
+
+    from venno.pipeline import upscaler
+
+    upscaler.add_routes(app, V, folders=_upscale_folders, device=_upscale_device, gpu_name=_upscale_gpu_name, prepare=_upscale_prepare,
+                        save_dir=lambda: os.path.join(config.outputs_path(), "upscale-images"))
+
     app.mount("/studio/assets", RevalidatedStaticFiles(directory=STUDIO_DIR), name="venno_studio_assets")
 
     def studio_index():

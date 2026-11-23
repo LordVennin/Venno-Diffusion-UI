@@ -224,6 +224,7 @@ export class GenForm {
           ${i2i ? `<button class="r-to-input" disabled>Use as input</button>` : ""}
           ${this.mode !== "img2img" ? `<button class="r-to-i2i" disabled>Send to Image to Image</button>` : ""}
           ${this.mode !== "inpaint" ? `<button class="r-to-inpaint" disabled>Send to Inpaint</button>` : ""}
+          <button class="r-to-upscale" disabled title="Make it larger with an upscaler model (Upscale tab)">Send to Upscale</button>
           <button class="r-to-ref" disabled title="Add this image to the Reference pictures">Use as reference</button>
           <button class="r-use-settings" disabled title="Load this image's prompt and settings into the form">Use settings</button>
           <button class="r-download" disabled>Download</button>
@@ -418,6 +419,7 @@ export class GenForm {
     this.q(".r-to-input")?.addEventListener("click", () => this.withCurrent((r) => this.setInputImage(r.src)));
     this.q(".r-to-i2i")?.addEventListener("click", () => this.withCurrent((r) => this.ctx.onSend("img2img", r.src, this.exportState(r))));
     this.q(".r-to-inpaint")?.addEventListener("click", () => this.withCurrent((r) => this.ctx.onSend("inpaint", r.src, this.exportState(r))));
+    this.q(".r-to-upscale").onclick = () => this.withCurrent((r) => this.ctx.onUpscale(r.src));
     this.q(".r-download").onclick = () => this.withCurrent((r) => downloadDataURL(r.src, `venno-${r.seed}.png`));
     this.q(".r-to-ref").onclick = () => this.withCurrent((r) => this.refCard.add(r.src).then(() => toast("Added to the Reference pictures", "info"), (e) => toast(e.message)));
     this.q(".r-use-settings").onclick = () => this.withCurrent((r) => this.loadSettingsFrom(r.src));

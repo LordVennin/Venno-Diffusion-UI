@@ -10,6 +10,7 @@ import { ModelsPage } from "./models.js";
 import { SettingsPage } from "./settings.js";
 import { SetupDialog } from "./setup.js";
 import { InfoPage } from "./info.js";
+import { UpscaleTab } from "./upscaletab.js";
 import { LoraChips } from "./loras.js";
 import { describeSettings, hasQualityTags, offerSettings } from "./params.js";
 import { enableAutocomplete, setWildcards } from "./autocomplete.js";
@@ -69,6 +70,7 @@ function showTab(name, section = undefined) {
   $$(".canvas-only").forEach((el) => (el.style.visibility = name === "canvas" ? "" : "hidden"));
   if (name === "canvas") view.resize();
   if (name === "settings") settingsPage.show(section);
+  if (name === "upscale") upscaleTab.show();
 }
 $$("#tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 $("#btn-settings").onclick = () => showTab("settings");
@@ -78,12 +80,22 @@ const formCtx = {
   onSendToCanvas: async (src) => { showTab("canvas"); await addImageAsLayer(src, "From gallery"); },
   // a result (and the sending tab's settings) to another tab
   onSend: (target, src, formState) => { showTab(target); forms[target].receive(src, formState); },
+  onUpscale: (src) => { showTab("upscale"); upscaleTab.setImage(src); },
   selectCheckpoint: (name) => selectCheckpoint(name),
 };
 const txt2imgForm = new GenForm($("#page-txt2img"), "txt2img", formCtx);
 const img2imgForm = new GenForm($("#page-img2img"), "img2img", formCtx);
 const inpaintForm = new GenForm($("#page-inpaint"), "inpaint", formCtx);
 const forms = { txt2img: txt2imgForm, img2img: img2imgForm, inpaint: inpaintForm };
+const upscaleTab = new UpscaleTab($("#page-upscale"), {
+  storeKey: "venno-upscale",
+  modelsHint: "Download one in ⚙ Settings → Models (Upscalers), or put a model file in the upscaler folder and press ⟳.",
+  send: [
+    { label: "Open in Canvas", run: (src) => formCtx.onSendToCanvas(src) },
+    { label: "Send to Image to Image", run: (src) => formCtx.onSend("img2img", src) },
+    { label: "Send to Inpaint", run: (src) => formCtx.onSend("inpaint", src) },
+  ],
+});
 const infoPage = new InfoPage($("#page-info"), {
   // Image Info → a tab: the image (where it has one) and the settings read from it
   send: async (target, src, settings) => {
@@ -1002,6 +1014,7 @@ document.addEventListener("paste", (e) => {
   const src = URL.createObjectURL(file);
   if (activeTab === "img2img" || activeTab === "inpaint") forms[activeTab].setInputImage(src, { offer: true });
   else if (activeTab === "info") infoPage.load(file);
+  else if (activeTab === "upscale") upscaleTab.setImage(file);
   else if (activeTab === "canvas") { addImageAsLayer(src, "Pasted"); offerSettings(file, applyCanvasSettings); }
 });
 

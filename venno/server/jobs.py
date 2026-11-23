@@ -359,7 +359,10 @@ def _work_loop():
             _running = job_id
         oom = False
         try:
-            cancelled = _run(rec)
+            from venno.pipeline import upscaler
+
+            with upscaler.gpu_lock:  # an upscale on the graphics card (Upscale tab) waits for the picture, and the other way round
+                cancelled = _run(rec)
             rec.status = "cancelled" if cancelled or rec.cancel_event.is_set() else "done"
         except Exception as e:  # report, keep the worker alive
             oom = _is_oom(e)

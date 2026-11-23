@@ -17,6 +17,9 @@ shows the sections newer than the installed version.
   tabs with Send to / Use as input.
 - Venno MOSS's Image Info tab has Venno's layout and also reads pictures from Venno, Forge and A1111 (prompt,
   negative prompt, seed and size carry over).
+- **Upscale tab** (Venno and Venno MOSS): a picture through an upscaler model from the upscaler folder (`models/ESRGAN`), with
+  Scale by, Tile size and **CPU mode**, which keeps the whole upscale on the processor (no VRAM; runs while pictures are
+  being generated). Results keep the picture's settings; *Send to Upscale* on the result of every generation tab.
 - **Region layout guide** (Canvas, Settings → Regions; experimental, off by default): Sen-sou's *LLLite regional* guide model
   (⚙ Settings → Models) is shown your regions as flat coloured shapes and pushes each subject into its region, next to or
   instead of own passes. New comparison grid axes: Region layout guide, Region own passes.

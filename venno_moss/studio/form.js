@@ -212,6 +212,7 @@ export class MossForm {
           ${i2i ? `<button class="r-to-input" disabled title="Continue from this result">Use as input</button>` : ""}
           ${this.mode !== "img2img" ? `<button class="r-to-img2img" disabled>Send to Image to Image</button>` : ""}
           ${this.mode !== "inpaint" ? `<button class="r-to-inpaint" disabled>Send to Inpaint</button>` : ""}
+          <button class="r-to-upscale" disabled title="Make it larger with an upscaler model (Upscale tab)">Send to Upscale</button>
           <button class="r-use-settings" disabled title="Load this picture's prompt and settings into the form">Use settings</button>
           <button class="r-view" disabled title="Full window">View</button>
           <button class="r-download" disabled>Download</button>
@@ -331,6 +332,7 @@ export class MossForm {
     this.q(".f-skip").onclick = () => this.jobId && skipJob(this.jobId);
     const withCurrent = (fn) => () => { const r = this.results[this.current]; if (r) fn(r); };
     this.q(".r-view").onclick = withCurrent((r) => showLightbox(r.src, `moss-${r.seed}.png`));
+    this.q(".r-to-upscale").onclick = withCurrent((r) => this.ctx.upscale(r.src));
     this.q(".r-download").onclick = withCurrent((r) => downloadDataURL(r.src, `moss-${r.seed}.png`));
     this.q(".r-use-settings").onclick = withCurrent(async (r) => this.applySettings((await readImage(await toDataURL(r.src))).settings));
     for (const target of ["img2img", "inpaint"]) {
